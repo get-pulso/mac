@@ -1,0 +1,60 @@
+name: Pulso
+configs:
+  Debug: debug
+  Release: release    
+packages:
+  Dependencies:
+    url: https://github.com/pointfreeco/swift-dependencies
+    exactVersion: 1.9.2
+  Realm:
+    url: https://github.com/realm/realm-swift.git
+    exactVersion: 20.0.2
+  IsCameraOn:
+    url: https://github.com/sindresorhus/is-camera-on.git
+    exactVersion: 2.0.2
+fileGroups:
+  - App
+targets:
+  Pulso:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+        excludes:
+          - Resources/Info.plist
+          - Resources/Pulso.entitlements
+    dependencies:
+      - package: Dependencies
+      - package: IsCameraOn
+      - package: Realm
+        product: RealmSwift
+        embed: True
+    preBuildScripts:
+      - name: SwiftFormat
+        basedOnDependencyAnalysis: False
+        script: |
+                ~/bin/swiftformat --swiftversion 5.10 --config Scripts/.swiftformat "${SRCROOT}/App"
+    settings:
+      base:
+        MARKETING_VERSION: 0.0.1
+        CURRENT_PROJECT_VERSION: 1
+        DEVELOPMENT_TEAM: XSCH3APH3M
+        SWIFT_VERSION: 5
+        SDKROOT: macosx
+        CLANG_ENABLE_MODULES: YES
+        MACOSX_DEPLOYMENT_TARGET: 15.0
+        ENABLE_TESTABILITY: YES
+        CLANG_USE_OPTIMIZATION_PROFILE: NO
+        CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
+        DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+        SWIFT_OPTIMIZE_OBJECT_LIFETIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_FILE: App/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/Resources/Pulso.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.get-pulso.mac
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
+schemes:
+  Pulso:
+    build:
+      targets:
+        Pulso: all

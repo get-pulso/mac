@@ -1,0 +1,11 @@
+--indent 4
+--self insert
+--importgrouping testable-bottom
+--stripunusedargs closure-only
+--wraparguments before-first
+--wrapcollections before-first
+--ifdef no-indent
+--header strip
+--maxwidth 120
+--enable wrapSwitchCases
+--enable organizeDeclarations
