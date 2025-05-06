@@ -1,21 +1,17 @@
 import Dependencies
 import SwiftUI
+import WindowAnimation
 
 @main
 struct Pulso: App {
-    // MARK: Lifecycle
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
-    init() {
-        self.tracker.bootstrap()
-    }
-
-    // MARK: Internal
-
-    @Dependency(\.tracker) var tracker: Tracker
+    @Dependency(\.appRouter) var appRouter: AppRouter
 
     var body: some Scene {
-        MenuBarExtra("Pulso", systemImage: "star.leadinghalf.filled") {
-            RootView()
+        MenuBarExtra("Pulso", systemImage: "bolt.heart.fill") {
+            AppView(appRouter: self.appRouter)
+                .modifier(WindowAnimationModifier(speed: 10))
         }
         .menuBarExtraStyle(.window)
     }

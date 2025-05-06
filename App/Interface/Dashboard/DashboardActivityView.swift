@@ -26,13 +26,13 @@ private struct EntryView: View {
 
     var body: some View {
         HStack {
-            Text(self.activity.startedAt, format: Date.FormatStyle().hour().minute().second())
+            Text(self.activity.startedAt, format: Date.FormatStyle().hour().minute())
                 .font(.callout.monospacedDigit())
             Spacer()
             Text(" - ")
                 .font(.callout.monospacedDigit())
             Spacer()
-            Text(self.activity.endedAt, format: Date.FormatStyle().hour().minute().second())
+            Text(self.activity.endedAt, format: Date.FormatStyle().hour().minute())
                 .font(.callout.monospacedDigit())
                 .contentTransition(.numericText(countsDown: false))
         }

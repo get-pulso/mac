@@ -12,6 +12,9 @@ packages:
   IsCameraOn:
     url: https://github.com/sindresorhus/is-camera-on.git
     exactVersion: 2.0.2
+  WindowAnimation:
+    url: https://github.com/Lakr233/WindowAnimation.git
+    exactVersion: 1.0.5
 fileGroups:
   - App
 targets:
@@ -26,6 +29,7 @@ targets:
     dependencies:
       - package: Dependencies
       - package: IsCameraOn
+      - package: WindowAnimation
       - package: Realm
         product: RealmSwift
         embed: True

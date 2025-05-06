@@ -3,7 +3,7 @@ import Combine
 import Dependencies
 import SwiftUI
 
-final class DataProvider: ObservableObject {
+final class DashboardViewModel: ObservableObject {
     // MARK: Lifecycle
 
     init() throws {

@@ -12,7 +12,7 @@ final class Tracker {
 
     // MARK: Internal
 
-    func bootstrap() {
+    func activate() {
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(self.hanleSystemWakeUp),
@@ -155,7 +155,7 @@ final class Tracker {
 
 private extension Tracker {
     enum Constants {
-        static let hearbeatInterval = 1.0
+        static let hearbeatInterval = 30.0
         static let idleTimeout = 60.0 * 5.0
     }
 }

@@ -26,8 +26,9 @@ struct HeaderView: View {
 
     private let formatter: DateComponentsFormatter = {
         let formatter = DateComponentsFormatter()
-        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.allowedUnits = [.hour, .minute]
         formatter.unitsStyle = .positional
+        formatter.zeroFormattingBehavior = .pad
         return formatter
     }()
 
