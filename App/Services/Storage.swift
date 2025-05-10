@@ -50,7 +50,7 @@ final class Storage {
     // MARK: Private
 
     private func write(action: (Realm) -> some Any) throws {
-        let realm = try Realm(configuration: .pulso)
+        let realm = try Realm(configuration: .activity)
 
         try realm.write {
             action(realm)
@@ -58,13 +58,14 @@ final class Storage {
     }
 
     private func read<Result>(action: (Realm) -> Result) throws -> Result {
-        let realm = try Realm(configuration: .pulso)
+        let realm = try Realm(configuration: .activity)
         return action(realm)
     }
 }
 
 private extension Realm.Configuration {
-    static let pulso: Realm.Configuration = .init(
+    static let activity: Realm.Configuration = .init(
+        fileURL: URL.applicationSupportDirectory.appending(path: "Activity.realm"),
         encryptionKey: nil,
         schemaVersion: 1,
         objectTypes: [
