@@ -21,7 +21,7 @@ final class DashboardViewModel: ObservableObject {
 
     func terminate() {
         try? self.tracker.stop()
-        NSApp.terminate(nil)
+        NSApp.terminate(self)
     }
 
     // MARK: Private

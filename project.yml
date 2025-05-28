@@ -3,18 +3,30 @@ configs:
   Debug: debug
   Release: release    
 packages:
+  Alamofire:
+    url: https://github.com/Alamofire/Alamofire.git
+    exactVersion: 5.10.2
   Dependencies:
     url: https://github.com/pointfreeco/swift-dependencies
     exactVersion: 1.9.2
-  Realm:
-    url: https://github.com/realm/realm-swift.git
-    exactVersion: 20.0.2
   IsCameraOn:
     url: https://github.com/sindresorhus/is-camera-on.git
     exactVersion: 2.0.2
+  KeychainAccess:
+    url: https://github.com/kishikawakatsumi/KeychainAccess.git
+    exactVersion: 4.2.2
+  MenuBarExtraAccess:
+    url: https://github.com/orchetect/MenuBarExtraAccess
+    exactVersion: 1.2.1
+  Realm:
+    url: https://github.com/realm/realm-swift.git
+    exactVersion: 20.0.2
   WindowAnimation:
     url: https://github.com/Lakr233/WindowAnimation.git
     exactVersion: 1.0.5
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle.git
+    exactVersion: 2.7.0
 fileGroups:
   - App
 targets:
@@ -27,12 +39,16 @@ targets:
           - Resources/Info.plist
           - Resources/Pulso.entitlements
     dependencies:
+      - package: Alamofire
       - package: Dependencies
       - package: IsCameraOn
-      - package: WindowAnimation
+      - package: KeychainAccess
+      - package: MenuBarExtraAccess
       - package: Realm
         product: RealmSwift
         embed: True
+      - package: WindowAnimation
+      - package: Sparkle
     preBuildScripts:
       - name: SwiftFormat
         basedOnDependencyAnalysis: False
