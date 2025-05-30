@@ -40,6 +40,42 @@ final class Storage {
         }
     }
 
+    func activity(inWeekOf date: Date) throws -> [Activity] {
+        let calendar = Calendar.current
+        let startOfWeek = calendar
+            .date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)) ?? date
+        let nextWeek = calendar.date(byAdding: .day, value: 7, to: startOfWeek) ?? date
+
+        return try self.read { realm in
+            realm.objects(ActivityObject.self)
+                .where { $0.startedAt >= startOfWeek && $0.endedAt < nextWeek }
+                .sorted(by: \ .startedAt, ascending: false)
+                .map { Activity(object: $0) }
+        }
+    }
+
+    func activityStream(inWeekOf date: Date) -> AnyPublisher<[Activity], Error> {
+        do {
+            let calendar = Calendar.current
+            let startOfWeek = calendar.date(from: calendar.dateComponents(
+                [.yearForWeekOfYear, .weekOfYear],
+                from: date
+            )) ?? date
+            let nextWeek = calendar.date(byAdding: .day, value: 7, to: startOfWeek) ?? date
+
+            return try self.read { realm in
+                realm.objects(ActivityObject.self)
+                    .where { $0.startedAt >= startOfWeek && $0.endedAt < nextWeek }
+                    .sorted(by: \ .startedAt, ascending: false)
+                    .collectionPublisher
+                    .map { $0.map { Activity(object: $0) } }
+                    .eraseToAnyPublisher()
+            }
+        } catch {
+            return Fail(error: error).eraseToAnyPublisher()
+        }
+    }
+
     func update(activity: Activity) throws {
         try self.write { realm in
             let object = ActivityObject(activity: activity)

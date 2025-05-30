@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Dependencies
+import Foundation
 import SwiftUI
 
 final class DashboardViewModel: ObservableObject {
@@ -9,15 +10,28 @@ final class DashboardViewModel: ObservableObject {
     init() throws {
         @Dependency(\.storage) var storage
         let activities = try storage.activity(in: .now)
-        self.todayTime = activities.totalTime
-        self.todayActivities = activities
+        let weekActivities = try storage.activity(inWeekOf: .now)
+        self.timeData = TimeData(today: activities.totalTime, week: weekActivities.totalTime)
+        self.weeklyChartData = Self.generateChartData(storage: storage)
         self.subscribeForActivities()
     }
 
     // MARK: Internal
 
-    @Published var todayTime: Double
-    @Published var todayActivities: [Activity]
+    struct TimeData {
+        let today: Double
+        let week: Double
+    }
+
+    struct ChartEntry: Identifiable {
+        let id: String
+        let day: String
+        let duration: Double
+        let isToday: Bool
+    }
+
+    @Published var timeData: TimeData
+    @Published private(set) var weeklyChartData: [ChartEntry]
 
     func terminate() {
         try? self.tracker.stop()
@@ -30,6 +44,26 @@ final class DashboardViewModel: ObservableObject {
     @Dependency(\.storage) private var storage: Storage
     private var subcriptions = [AnyCancellable]()
 
+    private static func generateChartData(storage: Storage) -> [ChartEntry] {
+        let calendar = Calendar.current
+        let now = Date()
+        let startOfWeek = calendar
+            .date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) ?? now
+        return (0 ..< 7).compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: offset, to: startOfWeek) else { return nil }
+            let dayLabel = DateFormatter.shortWeekday.string(from: day)
+            let activities = (try? storage.activity(in: day)) ?? []
+            let duration = activities.totalTime
+            let isToday = calendar.isDate(day, inSameDayAs: now)
+            return ChartEntry(
+                id: dayLabel,
+                day: dayLabel,
+                duration: duration / 3600,
+                isToday: isToday
+            )
+        }
+    }
+
     private func subscribeForActivities() {
         NotificationCenter.default.publisher(
             for: NSNotification.Name.NSCalendarDayChanged
@@ -39,14 +73,24 @@ final class DashboardViewModel: ObservableObject {
         .prepend(Date.now)
         .flatMap { date in
             @Dependency(\.storage) var storage
-            return storage.activityStream(in: date).ignoreError()
+            return Publishers.CombineLatest(
+                storage.activityStream(in: date),
+                storage.activityStream(inWeekOf: date)
+            )
+            .map { activities, weekActivities in
+                TimeData(
+                    today: activities.totalTime,
+                    week: weekActivities.totalTime
+                )
+            }
+            .ignoreError()
         }
         .receive(on: DispatchQueue.main)
-        .sink(receiveValue: { [weak self] activities in
+        .sink(receiveValue: { [weak self] timeData in
             guard let self else { return }
             withAnimation {
-                self.todayTime = activities.totalTime
-                self.todayActivities = activities
+                self.timeData = timeData
+                self.weeklyChartData = Self.generateChartData(storage: self.storage)
             }
         })
         .store(in: &self.subcriptions)
@@ -57,4 +101,13 @@ private extension [Activity] {
     var totalTime: Double {
         self.reduce(0.0) { $0 + $1.endedAt.timeIntervalSince($1.startedAt) }
     }
+}
+
+private extension DateFormatter {
+    static let shortWeekday: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.setLocalizedDateFormatFromTemplate("E")
+        return formatter
+    }()
 }

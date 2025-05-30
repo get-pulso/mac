@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 struct DashboardView: View {
@@ -5,10 +6,12 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HeaderView(time: self.$viewModel.todayTime, onTerminate: self.viewModel.terminate)
-            ActivityView(activities: self.$viewModel.todayActivities)
+            DashboardHeaderView(
+                timeData: self.$viewModel.timeData,
+                onTerminate: self.viewModel.terminate
+            )
+            DashboardChartView(data: self.viewModel.weeklyChartData)
         }
         .frame(width: 290)
-        .frame(minHeight: 300)
     }
 }

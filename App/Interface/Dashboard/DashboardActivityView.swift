@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct ActivityView: View {
+struct DashboardActivityView: View {
     @Binding var activities: [Activity]
 
     var body: some View {
