@@ -16,6 +16,21 @@ struct DashboardChartView: View {
         .frame(height: 120)
         .padding(.horizontal, 8)
         .padding(.bottom, 16)
+        .chartYAxis {
+            AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                AxisGridLine()
+                AxisTick()
+                AxisValueLabel {
+                    if let hours = value.as(Double.self) {
+                        if hours < 1 {
+                            Text("\(Int(hours * 60))m")
+                        } else {
+                            Text("\(Int(hours))h")
+                        }
+                    }
+                }
+            }
+        }
         .chartOverlay { proxy in
             GeometryReader { _ in
                 Rectangle()
