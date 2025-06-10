@@ -8,8 +8,8 @@ struct AppView: View {
             UpdateNotificationView()
 
             switch self.appRouter.destination {
-            case let .singIn(viewModel):
-                SignInView(viewModel: viewModel)
+            case let .login(viewModel):
+                LoginView(viewModel: viewModel)
                     .transition(.opacity)
             case let .dashboard(viewModel):
                 DashboardView(viewModel: viewModel)

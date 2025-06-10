@@ -1,7 +1,7 @@
 import SwiftUI
 
-struct SignInView: View {
-    let viewModel: SignInViewModel
+struct LoginView: View {
+    @StateObject var viewModel: LoginViewModel
 
     var body: some View {
         VStack(spacing: 12) {
@@ -19,7 +19,14 @@ struct SignInView: View {
             .multilineTextAlignment(.center)
             .foregroundStyle(.secondary)
 
-            Button("Sing In", action: self.viewModel.startLogin)
+            if self.viewModel.isWaitingForLogin {
+                ProgressView("Waiting for web login…")
+                    .controlSize(.small)
+                    .font(.subheadline)
+                    .transition(.opacity.animation(.easeOut(duration: 0.2)))
+            } else {
+                Button("Sing In", action: self.viewModel.startLogin)
+            }
 
             Spacer()
         }

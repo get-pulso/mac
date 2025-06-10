@@ -6,6 +6,9 @@ packages:
   Alamofire:
     url: https://github.com/Alamofire/Alamofire.git
     exactVersion: 5.10.2
+  Defaults:
+    url: https://github.com/sindresorhus/Defaults.git
+    exactVersion: 9.0.2
   Dependencies:
     url: https://github.com/pointfreeco/swift-dependencies
     exactVersion: 1.9.2
@@ -40,6 +43,7 @@ targets:
           - Resources/Pulso.entitlements
     dependencies:
       - package: Alamofire
+      - package: Defaults
       - package: Dependencies
       - package: IsCameraOn
       - package: KeychainAccess

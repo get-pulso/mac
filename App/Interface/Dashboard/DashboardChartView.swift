@@ -17,7 +17,7 @@ struct DashboardChartView: View {
         .padding(.horizontal, 8)
         .padding(.bottom, 16)
         .chartYAxis {
-            AxisMarks(values: .automatic(desiredCount: 5)) { value in
+            AxisMarks(values: .automatic(desiredCount: 3)) { value in
                 AxisGridLine()
                 AxisTick()
                 AxisValueLabel {

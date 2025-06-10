@@ -6,8 +6,12 @@ import IsCameraOn
 final class Tracker {
     // MARK: Lifecycle
 
-    init(storage: Storage) {
+    init(
+        storage: Storage,
+        network: Network
+    ) {
         self.storage = storage
+        self.network = network
     }
 
     // MARK: Internal
@@ -53,12 +57,12 @@ final class Tracker {
     // MARK: Private
 
     private let storage: Storage
+    private let network: Network
     private var pendingActivityStart: Date?
     private var timer: Timer?
 
     private func startTracking() {
         if self.timer?.isValid == true {
-            print("skipping timer starting")
             return
         }
 
@@ -84,22 +88,18 @@ final class Tracker {
     }
 
     @objc private func handleSystemSleep() throws {
-        print("sleep")
         try self.stopTracking()
     }
 
     @objc private func hanleSystemWakeUp() {
-        print("wake")
         self.startTracking()
     }
 
     @objc private func handleScreenLock() throws {
-        print("screen lock")
         try self.stopTracking()
     }
 
     @objc private func handleScreenUnlock() {
-        print("screen unlock")
         self.startTracking()
     }
 
@@ -117,11 +117,9 @@ final class Tracker {
 
         if minTime > Constants.idleTimeout, !isCameraOn() {
             self.pendingActivityStart = nil
-            print("idle")
             return
         }
 
-        print("heartbeat: \(minTime)")
         let now = Date.now
 
         let startDate: Date

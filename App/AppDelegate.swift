@@ -1,14 +1,41 @@
 import Cocoa
+import Combine
+import Defaults
 import Dependencies
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    @Dependency(\.tracker) var tracker: Tracker
-    @Dependency(\.appRouter) var appRouter: AppRouter
-    @Dependency(\.updater) var updater: Updater
+    // MARK: Internal
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         self.tracker.activate()
-        try? self.appRouter.dashboard()
         self.updater.start()
+        Defaults[.sessionCounter] += 1
+        Task {
+            if await self.auth.hasToken {
+                // cleaning auth from previos installations
+                if Defaults[.sessionCounter] == 1 {
+                    try? await self.auth.invalidateTokens()
+                    self.appRouter.login()
+                } else {
+                    try self.appRouter.dashboard()
+                }
+            } else {
+                self.appRouter.login()
+            }
+
+            // observing logout
+            for await _ in await self.auth.invalidationPublisher.values {
+                await MainActor.run {
+                    self.appRouter.login()
+                }
+            }
+        }
     }
+
+    // MARK: Private
+
+    @Dependency(\.auth) private var auth: Auth
+    @Dependency(\.tracker) private var tracker: Tracker
+    @Dependency(\.appRouter) private var appRouter: AppRouter
+    @Dependency(\.updater) private var updater: Updater
 }

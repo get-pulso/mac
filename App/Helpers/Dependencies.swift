@@ -1,11 +1,22 @@
 import Dependencies
 
 extension Tracker: DependencyKey {
-    static let liveValue = Tracker(storage: .liveValue)
+    static let liveValue = Tracker(
+        storage: .liveValue,
+        network: .liveValue
+    )
 }
 
 extension Storage: DependencyKey {
     static let liveValue = Storage()
+}
+
+extension Auth: DependencyKey {
+    static let liveValue = Auth()
+}
+
+extension Network: DependencyKey {
+    static let liveValue = Network(auth: .liveValue)
 }
 
 extension Updater: DependencyKey {
@@ -30,6 +41,16 @@ extension DependencyValues {
     var appRouter: AppRouter {
         get { self[AppRouter.self] }
         set { self[AppRouter.self] = newValue }
+    }
+
+    var auth: Auth {
+        get { self[Auth.self] }
+        set { self[Auth.self] = newValue }
+    }
+
+    var network: Network {
+        get { self[Network.self] }
+        set { self[Network.self] = newValue }
     }
 
     var updater: Updater {

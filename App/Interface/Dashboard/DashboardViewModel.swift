@@ -14,6 +14,13 @@ final class DashboardViewModel: ObservableObject {
         self.timeData = TimeData(today: activities.totalTime, week: weekActivities.totalTime)
         self.weeklyChartData = Self.generateChartData(storage: storage)
         self.subscribeForActivities()
+
+        #warning("Cleanup")
+        Task {
+            @Dependency(\.network) var network
+            let user = try await network.userInfo()
+            print("current user: \(user)")
+        }
     }
 
     // MARK: Internal

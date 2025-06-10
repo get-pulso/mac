@@ -4,8 +4,9 @@ import SwiftUI
 final class AppRouter: ObservableObject {
     // MARK: Internal
 
+    #warning("move away from view model? at least here")
     enum Destination {
-        case singIn(SignInViewModel)
+        case login(LoginViewModel)
         case dashboard(DashboardViewModel)
     }
 
@@ -16,9 +17,9 @@ final class AppRouter: ObservableObject {
     }
 
     func login() {
-        if case .singIn = self.destination { return }
+        if case .login = self.destination { return }
         withAnimation {
-            self.destination = .singIn(SignInViewModel())
+            self.destination = .login(LoginViewModel())
         }
     }
 
