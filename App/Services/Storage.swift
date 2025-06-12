@@ -6,6 +6,14 @@ import RealmSwift
 final class Storage {
     // MARK: Internal
 
+    func activity() throws -> [Activity] {
+        try self.read { realm in
+            realm.objects(ActivityObject.self)
+                .sorted(by: \.startedAt, ascending: true)
+                .map { Activity(object: $0) }
+        }
+    }
+
     func activity(in day: Date) throws -> [Activity] {
         let startDay = Calendar.current.startOfDay(for: day)
         var components = DateComponents()
@@ -76,10 +84,19 @@ final class Storage {
         }
     }
 
-    func update(activity: Activity) throws {
+    func store(activity: Activity) throws {
         try self.write { realm in
             let object = ActivityObject(activity: activity)
             realm.add(object, update: .all)
+        }
+    }
+
+    func deleteActivity(with id: String) throws {
+        try self.write { realm in
+            guard let object = realm.object(ofType: ActivityObject.self, forPrimaryKey: id) else {
+                return
+            }
+            realm.delete(object)
         }
     }
 

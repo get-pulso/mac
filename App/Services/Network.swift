@@ -28,15 +28,34 @@ struct Network {
         )
     }
 
-    func userActivity() async throws {}
+    func userActivity() async throws -> ActivityResponse {
+        try await self.request(
+            path: "/api/user/activity",
+            method: .get
+        )
+    }
 
-    func publishActivity(start: Date, end: Date) async throws {}
+    func publishActivity(start: Date, end: Date) async throws -> UpdateResponse {
+        try await self.request(
+            path: "/api/user/activity",
+            method: .post,
+            body: [
+                "startTime": start,
+                "endTime": end,
+            ]
+        )
+    }
 
     // MARK: Private
 
     private static let baseURL = URL(string: "https://pulso.sh")!
 
-    private let jsonEncoder = JSONEncoder()
+    private let jsonEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
     private let jsonDecoder = JSONDecoder()
 
     private let auth: Auth

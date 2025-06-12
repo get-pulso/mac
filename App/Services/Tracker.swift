@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import IsCameraOn
+import Logging
 
 final class Tracker {
     // MARK: Lifecycle
@@ -56,9 +57,9 @@ final class Tracker {
 
     // MARK: Private
 
+    private let logger = Logger(label: "pulso.tracker")
     private let storage: Storage
     private let network: Network
-    private var pendingActivityStart: Date?
     private var timer: Timer?
 
     private func startTracking() {
@@ -73,18 +74,11 @@ final class Tracker {
         }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
-        try? self.heartbeat()
     }
 
     private func stopTracking() throws {
         self.timer?.invalidate()
         self.timer = nil
-
-        guard let pendingActivityStart else { return }
-        self.pendingActivityStart = nil
-
-        let activity = Activity(id: pendingActivityStart.id, startedAt: pendingActivityStart, endedAt: .now)
-        try self.storage.update(activity: activity)
     }
 
     @objc private func handleSystemSleep() throws {
@@ -104,6 +98,8 @@ final class Tracker {
     }
 
     private func heartbeat() throws {
+        self.logger.info("Heartbeat")
+
         let trackedEvents: [CGEventType] = [.mouseMoved, .keyDown, .scrollWheel]
 
         var minTime = Double.greatestFiniteMagnitude
@@ -116,44 +112,43 @@ final class Tracker {
         }
 
         if minTime > Constants.idleTimeout, !isCameraOn() {
-            self.pendingActivityStart = nil
+            self.logger.info("App is idle")
             return
         }
 
         let now = Date.now
+        let start = now.addingTimeInterval(-Constants.hearbeatInterval)
+        let activity = Activity(id: start.id, startedAt: start, endedAt: now)
+        try self.storage.store(activity: activity)
 
-        let startDate: Date
-        if let pendingActivityStart {
-            startDate = pendingActivityStart
-        } else {
-            startDate = now
-            self.pendingActivityStart = startDate
+        Task {
+            for activity in try self.storage.activity() {
+                self.logger.info("Publishing activity \(activity.startedAt) - \(activity.endedAt)")
+                let response = try await self.network.publishActivity(
+                    start: activity.startedAt,
+                    end: activity.endedAt
+                )
+
+                if response.success == true {
+                    self.logger.info("Successfully published activity: \(activity.startedAt) - \(activity.endedAt)")
+                }
+                if let error = response.error {
+                    self.logger.error(
+                        "Failed to publish activity \(activity.startedAt) - \(activity.endedAt)",
+                        metadata: [
+                            "error": .string(error),
+                        ]
+                    )
+                }
+                try self.storage.deleteActivity(with: activity.id)
+            }
         }
-
-        if Calendar.current.isDate(startDate, inSameDayAs: now) {
-            let activity = Activity(id: startDate.id, startedAt: startDate, endedAt: now)
-            try self.storage.update(activity: activity)
-            return
-        }
-
-        self.pendingActivityStart = nil
-
-        guard now > startDate else {
-            return
-        }
-
-        let activity = Activity(
-            id: startDate.id,
-            startedAt: startDate,
-            endedAt: Calendar.current.endOfTheDay(for: startDate)
-        )
-        try self.storage.update(activity: activity)
     }
 }
 
 private extension Tracker {
     enum Constants {
-        static let hearbeatInterval = 30.0
+        static let hearbeatInterval = 60.0
         static let idleTimeout = 60.0 * 5.0
     }
 }

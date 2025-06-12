@@ -15,6 +15,9 @@ packages:
   IsCameraOn:
     url: https://github.com/sindresorhus/is-camera-on.git
     exactVersion: 2.0.2
+  Logging:
+    url: https://github.com/apple/swift-log.git
+    exactVersion: 1.6.3
   KeychainAccess:
     url: https://github.com/kishikawakatsumi/KeychainAccess.git
     exactVersion: 4.2.2
@@ -53,6 +56,7 @@ targets:
         embed: True
       - package: WindowAnimation
       - package: Sparkle
+      - package: Logging
     preBuildScripts:
       - name: SwiftFormat
         basedOnDependencyAnalysis: False

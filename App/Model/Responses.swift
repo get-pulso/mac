@@ -18,3 +18,12 @@ struct UserResponse: Decodable {
 
     let user: User
 }
+
+struct UpdateResponse: Decodable {
+    let success: Bool?
+    let error: String?
+}
+
+struct ActivityResponse: Decodable {
+    let active_minutes: Int
+}
