@@ -1,35 +1,35 @@
 import SwiftUI
 
 struct AppIcon: View {
-    @State private var phase: Double = 0
-    @State private var image: NSImage?
+    @State private var currentFrameIndex: Int = 0
+    @State private var frames: [NSImage] = []
     let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+    private let totalFrames = 40
 
-    #warning("prerender to asset images")
     var body: some View {
         Group {
-            if let image {
-                Image(nsImage: image)
+            if !self.frames.isEmpty {
+                Image(nsImage: self.frames[self.currentFrameIndex])
             }
         }
         .onAppear {
-            self.updateImage()
+            self.prerenderFrames()
         }
         .onReceive(self.timer) { _ in
-            self.phase += 0.025
-            self.updateImage()
+            self.currentFrameIndex = (self.currentFrameIndex + 1) % self.totalFrames
         }
     }
 
-    private func updateImage() {
-        let renderer = ImageRenderer(
-            content:
-            WaveformView(phase: phase)
+    private func prerenderFrames() {
+        self.frames = (0 ..< self.totalFrames).map { frameIndex in
+            let phase = Double(frameIndex) / Double(self.totalFrames)
+            let view = WaveformView(phase: phase)
                 .frame(width: 20, height: 20)
-        )
-        renderer.scale = 2
-        if let image = renderer.nsImage {
-            self.image = image
+
+            let frameRenderer = ImageRenderer(content: view)
+            frameRenderer.scale = 2
+
+            return frameRenderer.nsImage ?? NSImage()
         }
     }
 }
