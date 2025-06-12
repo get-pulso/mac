@@ -15,18 +15,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 // cleaning auth from previos installations
                 if Defaults[.sessionCounter] == 1 {
                     try? await self.auth.invalidateTokens()
-                    self.appRouter.login()
+                    self.appRouter.move(to: .login)
                 } else {
-                    try self.appRouter.dashboard()
+                    self.appRouter.move(to: .dashboard)
                 }
             } else {
-                self.appRouter.login()
+                self.appRouter.move(to: .login)
             }
 
             // observing logout
             for await _ in await self.auth.invalidationPublisher.values {
                 await MainActor.run {
-                    self.appRouter.login()
+                    self.appRouter.move(to: .login)
                 }
             }
         }

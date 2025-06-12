@@ -1,4 +1,3 @@
-import AppKit
 import Combine
 import Dependencies
 import Foundation
@@ -40,13 +39,13 @@ final class DashboardViewModel: ObservableObject {
     @Published var timeData: TimeData
     @Published private(set) var weeklyChartData: [ChartEntry]
 
-    func terminate() {
-        try? self.tracker.stop()
-        NSApp.terminate(self)
+    func openSettings() {
+        self.router.move(to: .settings)
     }
 
     // MARK: Private
 
+    @Dependency(\.appRouter) private var router: AppRouter
     @Dependency(\.tracker) private var tracker: Tracker
     @Dependency(\.storage) private var storage: Storage
     private var subcriptions = [AnyCancellable]()

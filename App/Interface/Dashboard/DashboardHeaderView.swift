@@ -5,7 +5,7 @@ struct DashboardHeaderView: View {
 
     @Binding var timeData: DashboardViewModel.TimeData
 
-    let onTerminate: () -> Void
+    let onSettings: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -26,7 +26,14 @@ struct DashboardHeaderView: View {
                 }
             }
             Spacer()
-            Button("Quit", role: .destructive, action: self.onTerminate)
+            VStack(spacing: 0) {
+                Button(action: self.onSettings) {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+
+                Spacer()
+            }
         }
         .padding(12)
     }

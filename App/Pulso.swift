@@ -11,11 +11,19 @@ struct Pulso: App {
 
     var body: some Scene {
         MenuBarExtra {
-            AppView(appRouter: self.appRouter)
-                .modifier(WindowAnimationModifier(speed: 10))
-                .onReceive(self.appRouter.visibilityPublisher) {
-                    self.isMenuPresented = $0
-                }
+            VStack(spacing: 0) {
+                AppView(appRouter: self.appRouter)
+                    .modifier(
+                        WindowAnimationModifier(
+                            speed: 10,
+                            animation: .forInterfaceAnimation
+                        )
+                    )
+                    .onReceive(self.appRouter.visibilityPublisher) {
+                        self.isMenuPresented = $0
+                    }
+                Spacer() // ensures content is top aligned during window animation
+            }
         } label: {
             AppIcon()
         }

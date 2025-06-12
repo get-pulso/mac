@@ -8,15 +8,19 @@ struct AppView: View {
             UpdateNotificationView()
 
             switch self.appRouter.destination {
-            case let .login(viewModel):
-                LoginView(viewModel: viewModel)
+            case .login:
+                LoginView()
                     .transition(.opacity)
-            case let .dashboard(viewModel):
-                DashboardView(viewModel: viewModel)
+            case .dashboard:
+                DashboardView()
                     .transition(.opacity.combined(with: .blur))
-            default:
+            case .settings:
+                SettingsView()
+                    .transition(.opacity)
+            case .none:
                 EmptyView()
             }
         }
+        .frame(width: 290)
     }
 }

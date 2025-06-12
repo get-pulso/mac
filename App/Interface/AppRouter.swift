@@ -4,10 +4,10 @@ import SwiftUI
 final class AppRouter: ObservableObject {
     // MARK: Internal
 
-    #warning("move away from view model? at least here")
-    enum Destination {
-        case login(LoginViewModel)
-        case dashboard(DashboardViewModel)
+    enum Destination: Equatable {
+        case login
+        case dashboard
+        case settings
     }
 
     @Published var destination: Destination?
@@ -16,17 +16,10 @@ final class AppRouter: ObservableObject {
         self.visibilitySubject.eraseToAnyPublisher()
     }
 
-    func login() {
-        if case .login = self.destination { return }
-        withAnimation {
-            self.destination = .login(LoginViewModel())
-        }
-    }
-
-    func dashboard() throws {
-        if case .dashboard = self.destination { return }
-        try withAnimation {
-            self.destination = try .dashboard(DashboardViewModel())
+    func move(to destination: Destination) {
+        guard self.destination != destination else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            self.destination = destination
         }
     }
 

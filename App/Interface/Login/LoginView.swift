@@ -1,12 +1,10 @@
 import SwiftUI
 
 struct LoginView: View {
-    @StateObject var viewModel: LoginViewModel
+    @StateObject var viewModel = LoginViewModel()
 
     var body: some View {
         VStack(spacing: 12) {
-            Spacer()
-
             Text("Pulso")
                 .font(.system(.title, weight: .bold))
                 .foregroundStyle(.primary)
@@ -27,10 +25,7 @@ struct LoginView: View {
             } else {
                 Button("Sing In", action: self.viewModel.startLogin)
             }
-
-            Spacer()
         }
-        .padding(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
-        .frame(width: 290)
+        .padding(12)
     }
 }

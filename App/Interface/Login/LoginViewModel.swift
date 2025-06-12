@@ -50,7 +50,9 @@ final class LoginViewModel: ObservableObject {
         else { return }
 
         Task {
-            self.appRouter.show()
+            await MainActor.run {
+                self.appRouter.show()
+            }
 
             do {
                 let response = try await self.network.verify(loginToken: token)
@@ -59,7 +61,7 @@ final class LoginViewModel: ObservableObject {
                     refreshToken: response.refreshToken
                 )
                 await MainActor.run {
-                    try? self.appRouter.dashboard()
+                    self.appRouter.move(to: .dashboard)
                     NSAppleEventManager.shared().removeEventHandler(
                         forEventClass: AEEventClass(kInternetEventClass),
                         andEventID: AEEventID(kAEGetURL)
