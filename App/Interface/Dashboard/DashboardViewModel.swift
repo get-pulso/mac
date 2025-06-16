@@ -6,38 +6,16 @@ import SwiftUI
 final class DashboardViewModel: ObservableObject {
     // MARK: Lifecycle
 
-    init() throws {
-        @Dependency(\.storage) var storage
-        let activities = try storage.activity(in: .now)
-        let weekActivities = try storage.activity(inWeekOf: .now)
-        self.timeData = TimeData(today: activities.totalTime, week: weekActivities.totalTime)
-        self.weeklyChartData = Self.generateChartData(storage: storage)
-        self.subscribeForActivities()
-
-        #warning("Cleanup")
-        Task {
-            @Dependency(\.network) var network
-            let user = try await network.userInfo()
-            print("current user: \(user)")
-        }
+    init() {
+        self.bindData()
     }
 
     // MARK: Internal
 
-    struct TimeData {
-        let today: Double
-        let week: Double
-    }
-
-    struct ChartEntry: Identifiable {
-        let id: String
-        let day: String
-        let duration: Double
-        let isToday: Bool
-    }
-
-    @Published var timeData: TimeData
-    @Published private(set) var weeklyChartData: [ChartEntry]
+    @Published var filter: TimeFilter = .last24h
+    @Published var selectedGroup: String?
+    @Published var groups: [UserGroup] = []
+    @Published var leaderboard: [DashboardUserItem] = []
 
     func openSettings() {
         self.router.move(to: .settings)
@@ -48,72 +26,109 @@ final class DashboardViewModel: ObservableObject {
     @Dependency(\.appRouter) private var router: AppRouter
     @Dependency(\.tracker) private var tracker: Tracker
     @Dependency(\.storage) private var storage: Storage
-    private var subcriptions = [AnyCancellable]()
+    @Dependency(\.network) private var network: Network
 
-    private static func generateChartData(storage: Storage) -> [ChartEntry] {
-        let calendar = Calendar.current
-        let now = Date()
-        let startOfWeek = calendar
-            .date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) ?? now
-        return (0 ..< 7).compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: startOfWeek) else { return nil }
-            let dayLabel = DateFormatter.shortWeekday.string(from: day)
-            let activities = (try? storage.activity(in: day)) ?? []
-            let duration = activities.totalTime
-            let isToday = calendar.isDate(day, inSameDayAs: now)
-            return ChartEntry(
-                id: dayLabel,
-                day: dayLabel,
-                duration: duration / 3600,
-                isToday: isToday
-            )
-        }
-    }
+    private var subscriptions = Set<AnyCancellable>()
 
-    private func subscribeForActivities() {
-        NotificationCenter.default.publisher(
-            for: NSNotification.Name.NSCalendarDayChanged
-        )
-        .delay(for: 0.5, scheduler: DispatchQueue.main)
-        .map { _ in Date.now }
-        .prepend(Date.now)
-        .flatMap { date in
-            @Dependency(\.storage) var storage
-            return Publishers.CombineLatest(
-                storage.activityStream(in: date),
-                storage.activityStream(inWeekOf: date)
-            )
-            .map { activities, weekActivities in
-                TimeData(
-                    today: activities.totalTime,
-                    week: weekActivities.totalTime
-                )
-            }
+    private func bindData() {
+        self.storage.groupsStream()
             .ignoreError()
+            .receive(on: DispatchQueue.main)
+            .sink(receiveValue: { [weak self] groups in
+                guard let self else { return }
+                self.groups = groups
+                if !groups.contains(where: { $0.id == self.selectedGroup }) {
+                    self.selectedGroup = nil
+                }
+            })
+            .store(in: &self.subscriptions)
+
+        Publishers.CombineLatest(
+            self.$selectedGroup,
+            self.$filter
+        ).flatMap { group, filter in
+            @Dependency(\.storage) var storage
+            if let group {
+                return storage.friendStream(in: group, filter: filter)
+                    .map { $0.map { DashboardUserItem(friend: $0, filter: filter) }}
+            } else {
+                return storage.friendsStream(filter: filter)
+                    .map { $0.map { DashboardUserItem(friend: $0, filter: filter) }}
+            }
         }
+        .ignoreError()
         .receive(on: DispatchQueue.main)
-        .sink(receiveValue: { [weak self] timeData in
-            guard let self else { return }
+        .sink(receiveValue: { [weak self] leaderboard in
             withAnimation {
-                self.timeData = timeData
-                self.weeklyChartData = Self.generateChartData(storage: self.storage)
+                self?.leaderboard = leaderboard
             }
         })
-        .store(in: &self.subcriptions)
+        .store(in: &self.subscriptions)
+
+        Timer.publish(every: 60, on: .main, in: .common)
+            .autoconnect()
+            .sink(receiveValue: { [weak self] _ in
+                Task.detached {
+                    try await self?.sync()
+                }
+            })
+            .store(in: &self.subscriptions)
+
+        Task.detached {
+            try await self.sync()
+        }
+    }
+
+    private func sync() async throws {
+        let userInfo = try await self.network.userInfo()
+        let leaderboard24h = try await self.network.leaderboard(filter: .last24h)
+        let leaderboard7d = try await self.network.leaderboard(filter: .last7d)
+
+        var friends: [Friend] = []
+        for friend in leaderboard7d {
+            guard let l24h = leaderboard24h.first(where: { $0.id == friend.id }) else {
+                continue
+            }
+            let friend = Friend(
+                id: friend.id,
+                name: friend.name,
+                avatar: friend.avatar,
+                rank24h: l24h.rank,
+                rank7d: friend.rank,
+                minutes24h: l24h.activeMinutes,
+                minutes7d: friend.activeMinutes
+            )
+            friends.append(friend)
+        }
+
+        try self.storage.store(friends: friends)
+
+        var groups = [UserGroup]()
+        for (index, group) in userInfo.groups.enumerated() {
+            let leaderboard = try await self.network.leaderboard(groupId: group.id, filter: .last24h)
+            let group = UserGroup(
+                id: group.id,
+                name: group.name,
+                index: index,
+                users: leaderboard.map(\.id)
+            )
+            groups.append(group)
+        }
+
+        try self.storage.store(groups: groups)
     }
 }
 
-private extension [Activity] {
-    var totalTime: Double {
-        self.reduce(0.0) { $0 + $1.endedAt.timeIntervalSince($1.startedAt) }
+private extension DashboardUserItem {
+    init(friend: Friend, filter: TimeFilter) {
+        self.id = friend.id
+        self.name = friend.name
+        self.avatar = friend.avatar
+        switch filter {
+        case .last24h:
+            self.minutes = friend.minutes24h
+        case .last7d:
+            self.minutes = friend.minutes7d
+        }
     }
-}
-
-private extension DateFormatter {
-    static let shortWeekday: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        formatter.setLocalizedDateFormatFromTemplate("E")
-        return formatter
-    }()
 }

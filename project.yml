@@ -24,6 +24,9 @@ packages:
   MenuBarExtraAccess:
     url: https://github.com/orchetect/MenuBarExtraAccess
     exactVersion: 1.2.1
+  Nuke:
+    url: https://github.com/kean/Nuke.git
+    exactVersion: 12.8.0
   Realm:
     url: https://github.com/realm/realm-swift.git
     exactVersion: 20.0.2
@@ -50,13 +53,17 @@ targets:
       - package: Dependencies
       - package: IsCameraOn
       - package: KeychainAccess
+      - package: Logging
       - package: MenuBarExtraAccess
+      - package: Nuke
+        product: Nuke
+      - package: Nuke
+        product: NukeUI
       - package: Realm
         product: RealmSwift
         embed: True
-      - package: WindowAnimation
       - package: Sparkle
-      - package: Logging
+      - package: WindowAnimation
     preBuildScripts:
       - name: SwiftFormat
         basedOnDependencyAnalysis: False
@@ -64,8 +71,8 @@ targets:
                 ~/bin/swiftformat --swiftversion 5.10 --config Scripts/.swiftformat "${SRCROOT}/App"
     settings:
       base:
-        MARKETING_VERSION: 0.0.2
-        CURRENT_PROJECT_VERSION: 2
+        MARKETING_VERSION: 0.0.3
+        CURRENT_PROJECT_VERSION: 3
         DEVELOPMENT_TEAM: XSCH3APH3M
         SWIFT_VERSION: 5
         SDKROOT: macosx

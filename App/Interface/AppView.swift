@@ -13,7 +13,7 @@ struct AppView: View {
                     .transition(.opacity)
             case .dashboard:
                 DashboardView()
-                    .transition(.opacity.combined(with: .blur))
+                    .transition(.opacity)
             case .settings:
                 SettingsView()
                     .transition(.opacity)

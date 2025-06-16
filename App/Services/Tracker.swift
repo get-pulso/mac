@@ -118,11 +118,11 @@ final class Tracker {
 
         let now = Date.now
         let start = now.addingTimeInterval(-Constants.hearbeatInterval)
-        let activity = Activity(id: start.id, startedAt: start, endedAt: now)
+        let activity = PendingActivity(id: start.id, startedAt: start, endedAt: now)
         try self.storage.store(activity: activity)
 
         Task {
-            for activity in try self.storage.activity() {
+            for activity in try self.storage.pendingActivity() {
                 self.logger.info("Publishing activity \(activity.startedAt) - \(activity.endedAt)")
                 let response = try await self.network.publishActivity(
                     start: activity.startedAt,
@@ -140,7 +140,7 @@ final class Tracker {
                         ]
                     )
                 }
-                try self.storage.deleteActivity(with: activity.id)
+                try self.storage.deletePendingActivity(with: activity.id)
             }
         }
     }

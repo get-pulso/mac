@@ -2,15 +2,29 @@ import Charts
 import SwiftUI
 
 struct DashboardView: View {
-    @StateObject var viewModel = try! DashboardViewModel()
+    // MARK: Internal
 
     var body: some View {
         VStack(spacing: 0) {
             DashboardHeaderView(
-                timeData: self.$viewModel.timeData,
+                groups: self.$viewModel.groups,
+                selectedGroup: self.$viewModel.selectedGroup,
+                timeFilter: self.$viewModel.filter,
                 onSettings: self.viewModel.openSettings
             )
-            DashboardChartView(data: self.viewModel.weeklyChartData)
+
+            DashboardUsersView(users: self.viewModel.leaderboard)
         }
+    }
+
+    // MARK: Private
+
+    @StateObject private var viewModel = DashboardViewModel()
+}
+
+// Safe array subscript
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

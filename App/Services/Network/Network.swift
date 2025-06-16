@@ -46,6 +46,22 @@ struct Network {
         )
     }
 
+    func leaderboard(filter: TimeFilter) async throws -> [FriendResponse] {
+        try await self.request(
+            path: "/api/friends/leaderboard",
+            method: .get,
+            query: ["period": filter.rawValue]
+        )
+    }
+
+    func leaderboard(groupId: String, filter: TimeFilter) async throws -> [FriendResponse] {
+        try await self.request(
+            path: "/api/friends/leaderboard",
+            method: .get,
+            query: ["group_id": groupId, "period": filter.rawValue]
+        )
+    }
+
     // MARK: Private
 
     private static let baseURL = URL(string: "https://pulso.sh")!
