@@ -6,9 +6,17 @@ struct DashboardUsersView: View {
 
     var body: some View {
         List {
-            ForEach(self.users) { user in
-                UserRow(user: user)
-                    .listRowSeparatorTint(Color(NSColor.separatorColor))
+            if self.users.isEmpty {
+                ForEach([DashboardUserItem].placeholder) { user in
+                    UserRow(user: user)
+                        .listRowSeparatorTint(Color(NSColor.separatorColor))
+                        .redacted(reason: .placeholder)
+                }
+            } else {
+                ForEach(self.users) { user in
+                    UserRow(user: user)
+                        .listRowSeparatorTint(Color(NSColor.separatorColor))
+                }
             }
         }
         .frame(height: 160)
@@ -60,4 +68,14 @@ private struct UserRow: View {
         formatter.zeroFormattingBehavior = .dropLeading
         return formatter
     }()
+}
+
+private extension [DashboardUserItem] {
+    static var placeholder: Self {
+        [
+            .init(id: "1", name: "Some long name", avatar: nil, minutes: 3000),
+            .init(id: "2", name: "Some long name", avatar: nil, minutes: 3000),
+            .init(id: "3", name: "Some long name", avatar: nil, minutes: 3000),
+        ]
+    }
 }
