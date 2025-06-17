@@ -2,6 +2,7 @@ import Cocoa
 import Combine
 import Defaults
 import Dependencies
+import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Internal
@@ -30,6 +31,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+
+        self.windowManager.configure()
     }
 
     // MARK: Private
@@ -38,4 +41,5 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @Dependency(\.tracker) private var tracker: Tracker
     @Dependency(\.appRouter) private var appRouter: AppRouter
     @Dependency(\.updater) private var updater: Updater
+    @Dependency(\.windowManager) private var windowManager: WindowManager
 }

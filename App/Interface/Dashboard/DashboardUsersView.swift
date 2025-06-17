@@ -19,6 +19,7 @@ struct DashboardUsersView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
         .frame(height: 160)
     }
 }

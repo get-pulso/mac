@@ -1,4 +1,5 @@
 import SwiftUI
+import WindowAnimation
 
 struct AppView: View {
     @StateObject var appRouter: AppRouter
@@ -21,6 +22,12 @@ struct AppView: View {
                 EmptyView()
             }
         }
-        .frame(width: 290)
+        .frame(width: 300)
+        .modifier(
+            WindowAnimationModifier(
+                speed: 10,
+                animation: .forInterfaceAnimation
+            )
+        )
     }
 }

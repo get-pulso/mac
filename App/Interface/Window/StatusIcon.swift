@@ -1,40 +1,6 @@
 import SwiftUI
 
-struct AppIcon: View {
-    @State private var currentFrameIndex: Int = 0
-    @State private var frames: [NSImage] = []
-    let timer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
-    private let totalFrames = 40
-
-    var body: some View {
-        Group {
-            if !self.frames.isEmpty {
-                Image(nsImage: self.frames[self.currentFrameIndex])
-            }
-        }
-        .onAppear {
-            self.prerenderFrames()
-        }
-        .onReceive(self.timer) { _ in
-            self.currentFrameIndex = (self.currentFrameIndex + 1) % self.totalFrames
-        }
-    }
-
-    private func prerenderFrames() {
-        self.frames = (0 ..< self.totalFrames).map { frameIndex in
-            let phase = Double(frameIndex) / Double(self.totalFrames)
-            let view = WaveformView(phase: phase)
-                .frame(width: 20, height: 20)
-
-            let frameRenderer = ImageRenderer(content: view)
-            frameRenderer.scale = 2
-
-            return frameRenderer.nsImage ?? NSImage()
-        }
-    }
-}
-
-struct WaveformView: View {
+struct StatusIcon: View {
     // MARK: Internal
 
     let phase: Double

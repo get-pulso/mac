@@ -11,7 +11,7 @@ final class LoginViewModel: ObservableObject {
             self.isWaitingForLogin = true
         }
 
-        self.appRouter.hide()
+        self.windowManager.hide()
 
         NSAppleEventManager.shared().setEventHandler(
             self,
@@ -36,9 +36,10 @@ final class LoginViewModel: ObservableObject {
 
     // MARK: Private
 
-    @Dependency(\.appRouter) private var appRouter: AppRouter
-    @Dependency(\.auth) private var auth: Auth
-    @Dependency(\.network) private var network: Network
+    @Dependency(\.appRouter) private var appRouter
+    @Dependency(\.windowManager) private var windowManager
+    @Dependency(\.auth) private var auth
+    @Dependency(\.network) private var network
 
     @objc private func handleAppleEvent(_ event: NSAppleEventDescriptor, replyEvent: NSAppleEventDescriptor) {
         guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
@@ -51,7 +52,7 @@ final class LoginViewModel: ObservableObject {
 
         Task {
             await MainActor.run {
-                self.appRouter.show()
+                self.windowManager.show()
             }
 
             do {

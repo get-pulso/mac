@@ -27,6 +27,10 @@ extension AppRouter: DependencyKey {
     static let liveValue = AppRouter()
 }
 
+extension WindowManager: DependencyKey {
+    static let liveValue = WindowManager()
+}
+
 extension DependencyValues {
     var tracker: Tracker {
         get { self[Tracker.self] }
@@ -56,5 +60,10 @@ extension DependencyValues {
     var updater: Updater {
         get { self[Updater.self] }
         set { self[Updater.self] = newValue }
+    }
+
+    var windowManager: WindowManager {
+        get { self[WindowManager.self] }
+        set { self[WindowManager.self] = newValue }
     }
 }
