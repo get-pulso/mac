@@ -2,60 +2,42 @@ import SwiftUI
 
 struct StatusIcon: View {
     let phase: Double
-    let avatars: [NSImage?]
-    let iconSize: CGFloat
+    let avatars: [NSImage]
+    let containerHeight: CGFloat
 
     var body: some View {
         if self.avatars.isEmpty {
             RotatingIconView(phase: self.phase)
-                .frame(width: self.iconSize, height: self.iconSize)
-                .background(Color.clear)
+                .frame(width: self.containerHeight, height: self.containerHeight)
         } else {
-            let avatarDiameter = self.iconSize * 0.7
+            let avatarDiameter = self.containerHeight * 0.8
             let overlap: CGFloat = avatarDiameter * 0.35 // 35% overlap
-            let count = min(self.avatars.count, 3)
-            let totalWidth = StatusIcon.totalWidth(forAvatarCount: count, iconSize: self.iconSize)
-            HStack(spacing: self.iconSize * 0.18) { // Always a gap between icon and avatars
-                RotatingIconView(phase: self.phase)
-                    .frame(width: self.iconSize, height: self.iconSize)
-                ZStack(alignment: .leading) {
-                    ForEach(Array(self.avatars.prefix(3).enumerated()), id: \ .offset) { index, image in
-                        if let image {
-                            ZStack {
-                                Image(nsImage: image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: avatarDiameter, height: avatarDiameter)
-                                    .clipShape(Circle())
-                                Circle()
-                                    .stroke(Color.green, lineWidth: 1.5)
-                                    .frame(width: avatarDiameter, height: avatarDiameter)
-                            }
-                            .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
-                            .offset(x: CGFloat(index) * (avatarDiameter - overlap))
-                            .zIndex(Double(index))
-                        }
+            let totalWidth = avatarDiameter + CGFloat(self.avatars.count - 1) * (avatarDiameter - overlap) + 4
+            ZStack(alignment: .leading) {
+                ForEach(Array(self.avatars.enumerated()), id: \.offset) { index, image in
+                    ZStack {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: avatarDiameter, height: avatarDiameter)
+                            .clipShape(Circle())
+                        Circle()
+                            .stroke(Color.green, lineWidth: 1.5)
+                            .frame(width: avatarDiameter, height: avatarDiameter)
                     }
+                    .frame(width: avatarDiameter, height: avatarDiameter)
+                    .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
+                    .offset(x: CGFloat(index) * (avatarDiameter - overlap) + 2)
+                    .zIndex(Double(index))
                 }
-                .frame(width: totalWidth, height: self.iconSize, alignment: .leading)
             }
-            .frame(height: self.iconSize)
-            .background(Color.clear)
+            .frame(width: totalWidth, height: self.containerHeight, alignment: .leading)
         }
-    }
-
-    static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat) -> CGFloat {
-        let avatarDiameter = iconSize * 0.7
-        let overlap: CGFloat = avatarDiameter * 0.35
-        let count = min(count, 3)
-        let border: CGFloat = 2 // 1.5pt border, add a bit more for shadow
-        return (count > 0 ? avatarDiameter + CGFloat(count - 1) * (avatarDiameter - overlap) : 0) + border
     }
 }
 
 private struct RotatingIconView: View {
     let phase: Double
-    let rotationAngle: Double = 45 // base degrees
 
     var body: some View {
         GeometryReader { geometry in
@@ -84,7 +66,7 @@ private struct RotatingIconView: View {
                     .translatedBy(x: offsetX / scale, y: offsetY / scale)
             )
             .fill(Color.white)
-            .rotationEffect(.degrees(self.rotationAngle + self.phase * 90), anchor: .center)
+            .rotationEffect(.degrees(self.phase * 90), anchor: .center)
             .frame(width: width, height: height)
         }
     }

@@ -12,7 +12,6 @@ final class StatusIconAnimator {
     init() {
         self.statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.observeLiveUsers()
-        self.startAnimationTimer()
     }
 
     deinit {
@@ -36,7 +35,6 @@ final class StatusIconAnimator {
 
     // MARK: Private
 
-    private static let iconSize: CGFloat = 20
     private static let totalFrames = 40
     private static let frameInterval: TimeInterval = 0.1
     private static let maxAvatars = 3
@@ -64,7 +62,7 @@ final class StatusIconAnimator {
                     .compactMap { $0 }
                     .prefix(Self.maxAvatars)
             }
-            .flatMap { [weak self] urls -> AnyPublisher<[NSImage?], Never> in
+            .flatMap { [weak self] urls -> AnyPublisher<[NSImage], Never> in
                 guard let self else { return Just([]).eraseToAnyPublisher() }
                 return self.fetchAvatars(for: Array(urls))
             }
@@ -73,7 +71,7 @@ final class StatusIconAnimator {
             }
     }
 
-    private func fetchAvatars(for urls: [URL]) -> AnyPublisher<[NSImage?], Never> {
+    private func fetchAvatars(for urls: [URL]) -> AnyPublisher<[NSImage], Never> {
         let pipeline = ImagePipeline.shared
         let publishers = urls.enumerated().map { index, url -> AnyPublisher<(Int, NSImage?), Never> in
             let request = ImageRequest(url: url)
@@ -87,25 +85,36 @@ final class StatusIconAnimator {
         return Publishers.MergeMany(publishers)
             .collect()
             .map { results in
-                results.sorted { $0.0 < $1.0 }.map(\.1)
+                results.sorted { $0.0 < $1.0 }.compactMap(\.1)
             }
             .eraseToAnyPublisher()
     }
 
-    private func rerenderIconFrames(with avatarImages: [NSImage?]) {
-        let width = StatusIcon.totalWidth(forAvatarCount: avatarImages.count, iconSize: Self.iconSize) + Self
-            .iconSize * 1.18 // add icon + spacing
-        self.iconFrames = (0 ..< Self.totalFrames).map { frameIndex in
-            let phase = Double(frameIndex) / Double(Self.totalFrames)
+    private func rerenderIconFrames(with avatarImages: [NSImage]) {
+        guard let containerHeight = self.statusBarButton?.bounds.height, containerHeight > 0 else { return }
+
+        let needsAnimation = avatarImages.isEmpty
+        let targetFramesCount = needsAnimation ? Self.totalFrames : 1
+        self.iconFrames = (0 ..< targetFramesCount).map { frameIndex in
+            let phase = Double(frameIndex) / Double(targetFramesCount)
             let view = StatusIcon(
                 phase: phase,
                 avatars: avatarImages,
-                iconSize: Self.iconSize
+                containerHeight: containerHeight
             )
-            .frame(width: width, height: Self.iconSize)
             let renderer = ImageRenderer(content: view)
             renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
             return renderer.nsImage ?? NSImage()
+        }
+
+        self.iconTimer?.invalidate()
+        self.iconTimer = nil
+
+        if needsAnimation {
+            self.startAnimationTimer()
+        } else {
+            let image = self.iconFrames.first
+            self.statusBarItem.button?.image = image
         }
     }
 
