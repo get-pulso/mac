@@ -23,7 +23,7 @@ struct LoginView: View {
                     .font(.subheadline)
                     .transition(.opacity.animation(.easeOut(duration: 0.2)))
             } else {
-                Button("Sing In", action: self.viewModel.startLogin)
+                Button("Sign In", action: self.viewModel.startLogin)
             }
         }
         .padding(12)
