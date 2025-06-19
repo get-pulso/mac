@@ -38,6 +38,7 @@ final class Storage {
         do {
             return try self.read(from: .friends) { realm in
                 realm.objects(FriendObject.self)
+                    .where { !$0.isGlobal }
                     .sorted(by: filter.friendSortingKeyPath, ascending: true)
                     .collectionPublisher
                     .map { $0.map { Friend(object: $0) }}

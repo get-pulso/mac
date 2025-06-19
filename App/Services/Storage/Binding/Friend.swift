@@ -3,6 +3,7 @@ import RealmSwift
 
 struct Friend: Identifiable {
     let id: String
+    let isGlobal: Bool
     let name: String
     let avatar: URL?
     let rank24h: Int
@@ -18,6 +19,7 @@ final class FriendObject: Object {
     convenience init(friend: Friend) {
         self.init()
         self.id = friend.id
+        self.isGlobal = friend.isGlobal
         self.name = friend.name
         self.avatar = friend.avatar?.absoluteString
         self.rank24h = friend.rank24h
@@ -30,6 +32,7 @@ final class FriendObject: Object {
     // MARK: Internal
 
     @Persisted(primaryKey: true) var id: String
+    @Persisted var isGlobal: Bool
     @Persisted var name: String
     @Persisted var avatar: String?
     @Persisted var rank24h: Int
@@ -42,6 +45,7 @@ final class FriendObject: Object {
 extension Friend {
     init(object: FriendObject) {
         self.id = object.id
+        self.isGlobal = object.isGlobal
         self.name = object.name
         self.avatar = object.avatar.flatMap { URL(string: $0) }
         self.rank24h = object.rank24h

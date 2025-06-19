@@ -13,7 +13,7 @@ struct DashboardHeaderView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 2) {
                     GroupPickerButton(
-                        label: "All Friends",
+                        label: "Friends",
                         isSelected: self.selectedGroup == nil,
                         action: { self.selectedGroup = nil }
                     )

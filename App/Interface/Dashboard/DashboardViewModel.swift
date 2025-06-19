@@ -88,8 +88,9 @@ final class DashboardViewModel: ObservableObject {
     private func sync() async throws {
         let userInfo = try await self.network.userInfo()
         Defaults[.currentUserID] = userInfo.user.id
-        let leaderboard24h = try await self.network.leaderboard(filter: .last24h)
-        let leaderboard7d = try await self.network.leaderboard(filter: .last7d)
+        let leaderboard24h = try await self.network.leaderboard(groupId: "global", filter: .last24h)
+        let leaderboard7d = try await self.network.leaderboard(groupId: "global", filter: .last7d)
+        let friendIds = try await self.network.leaderboard(filter: .last7d).map(\.id)
 
         var friends: [Friend] = []
         for friend in leaderboard7d {
@@ -98,6 +99,7 @@ final class DashboardViewModel: ObservableObject {
             }
             let friend = Friend(
                 id: friend.id,
+                isGlobal: !friendIds.contains(friend.id),
                 name: friend.name,
                 avatar: friend.avatar,
                 rank24h: l24h.rank,
