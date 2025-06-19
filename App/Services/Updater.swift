@@ -47,6 +47,10 @@ final class Updater {
         self.driver.pendingUpdateSubject.value?.actionCallback(.skip)
     }
 
+    func checkForUpdates() {
+        self.updater.checkForUpdates()
+    }
+
     // MARK: Private
 
     private let sparkleDelegate: SparkleDelegate

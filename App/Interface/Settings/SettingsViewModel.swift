@@ -20,9 +20,14 @@ final class SettingsViewModel: ObservableObject {
         self.router.move(to: .dashboard)
     }
 
+    func checkForUpdates() {
+        self.updater.checkForUpdates()
+    }
+
     // MARK: Private
 
     @Dependency(\.auth) private var auth: Auth
     @Dependency(\.appRouter) private var router: AppRouter
     @Dependency(\.tracker) private var tracker: Tracker
+    @Dependency(\.updater) private var updater: Updater
 }

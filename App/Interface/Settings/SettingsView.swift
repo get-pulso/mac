@@ -23,6 +23,13 @@ struct SettingsView: View {
             Divider()
 
             self.section(
+                title: "Check for Updates",
+                desc: "Manually check if a new version of Pulso is available.",
+                button: "Check",
+                action: self.viewModel.checkForUpdates
+            )
+
+            self.section(
                 title: "Terminate",
                 desc: "Stop the app and all activity tracking immediately.",
                 button: "Kill App",
