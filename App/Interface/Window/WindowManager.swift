@@ -1,12 +1,17 @@
 import AppKit
+import Combine
 import Dependencies
 import SwiftUI
 
 final class WindowManager {
     // MARK: Internal
 
+    var isVisiblePublisher: AnyPublisher<Bool, Never> {
+        self.visibilitySubject.eraseToAnyPublisher()
+    }
+
     var isVisible: Bool {
-        self.window?.isVisible ?? false
+        self.visibilitySubject.value
     }
 
     @MainActor
@@ -25,11 +30,13 @@ final class WindowManager {
         window.orderFront(nil)
         self.statusBarItem?.button?.highlight(true)
         NSApp.activate()
+        self.visibilitySubject.send(true)
     }
 
     func hide() {
         self.statusBarItem?.button?.highlight(false)
         self.window?.orderOut(nil)
+        self.visibilitySubject.send(false)
     }
 
     // MARK: Private
@@ -40,6 +47,7 @@ final class WindowManager {
     }
 
     private var statusBarItem: NSStatusItem?
+    private var visibilitySubject = CurrentValueSubject<Bool, Never>(false)
     private var window: AppWindow?
     private var iconFrames: [NSImage] = []
     private var iconFrameIndex: Int = 0

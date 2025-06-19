@@ -23,10 +23,11 @@ final class DashboardViewModel: ObservableObject {
 
     // MARK: Private
 
-    @Dependency(\.appRouter) private var router: AppRouter
-    @Dependency(\.tracker) private var tracker: Tracker
-    @Dependency(\.storage) private var storage: Storage
-    @Dependency(\.network) private var network: Network
+    @Dependency(\.appRouter) private var router
+    @Dependency(\.tracker) private var tracker
+    @Dependency(\.storage) private var storage
+    @Dependency(\.network) private var network
+    @Dependency(\.windowManager) private var window
 
     private var subscriptions = Set<AnyCancellable>()
 
@@ -65,18 +66,16 @@ final class DashboardViewModel: ObservableObject {
         })
         .store(in: &self.subscriptions)
 
-        Timer.publish(every: 60, on: .main, in: .common)
-            .autoconnect()
-            .sink(receiveValue: { [weak self] _ in
-                Task.detached {
-                    try await self?.sync()
-                }
-            })
-            .store(in: &self.subscriptions)
-
-        Task.detached {
-            try await self.sync()
-        }
+        Publishers.CombineLatest(
+            self.window.isVisiblePublisher.filter { $0 }.removeDuplicates(),
+            Timer.publish(every: 60, on: .main, in: .common).autoconnect().map { _ in }.prepend(())
+        )
+        .sink(receiveValue: { [weak self] _ in
+            Task.detached {
+                try await self?.sync()
+            }
+        })
+        .store(in: &self.subscriptions)
     }
 
     private func sync() async throws {
