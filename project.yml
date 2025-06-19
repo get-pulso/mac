@@ -71,8 +71,8 @@ targets:
                 ~/bin/swiftformat --swiftversion 5.10 --config Scripts/.swiftformat "${SRCROOT}/App"
     settings:
       base:
-        MARKETING_VERSION: 0.1.1
-        CURRENT_PROJECT_VERSION: 5
+        MARKETING_VERSION: 0.1.2
+        CURRENT_PROJECT_VERSION: 6
         DEVELOPMENT_TEAM: XSCH3APH3M
         SWIFT_VERSION: 5
         SDKROOT: macosx
