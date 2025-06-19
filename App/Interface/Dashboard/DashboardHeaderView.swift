@@ -110,6 +110,7 @@ private struct TimeFilterPicker: View {
             }
         }
         .buttonStyle(PlainButtonStyle())
+        .clipped()
         .accessibilityLabel("Time Filter")
     }
 

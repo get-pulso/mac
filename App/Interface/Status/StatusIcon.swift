@@ -11,38 +11,45 @@ struct StatusIcon: View {
                 .frame(width: self.iconSize, height: self.iconSize)
                 .background(Color.clear)
         } else {
-            HStack(spacing: 0) {
+            let avatarDiameter = self.iconSize * 0.7
+            let overlap: CGFloat = avatarDiameter * 0.35 // 35% overlap
+            let count = min(self.avatars.count, 3)
+            let totalWidth = StatusIcon.totalWidth(forAvatarCount: count, iconSize: self.iconSize)
+            HStack(spacing: self.iconSize * 0.18) { // Always a gap between icon and avatars
                 RotatingIconView(phase: self.phase)
                     .frame(width: self.iconSize, height: self.iconSize)
-                ZStack {
-                    ForEach(Array(self.avatars.enumerated()), id: \ .offset) { index, image in
+                ZStack(alignment: .leading) {
+                    ForEach(Array(self.avatars.prefix(3).enumerated()), id: \ .offset) { index, image in
                         if let image {
                             ZStack {
                                 Image(nsImage: image)
                                     .resizable()
                                     .aspectRatio(contentMode: .fill)
-                                    .frame(width: self.iconSize * 0.7, height: self.iconSize * 0.7)
+                                    .frame(width: avatarDiameter, height: avatarDiameter)
                                     .clipShape(Circle())
                                 Circle()
-                                    .stroke(Color.accentColor, lineWidth: 1.5)
-                                    .frame(width: self.iconSize * 0.7, height: self.iconSize * 0.7)
+                                    .stroke(Color.green, lineWidth: 1.5)
+                                    .frame(width: avatarDiameter, height: avatarDiameter)
                             }
                             .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
-                            .offset(x: CGFloat(index) * (self.iconSize * 0.45))
+                            .offset(x: CGFloat(index) * (avatarDiameter - overlap))
                             .zIndex(Double(index))
                         }
                     }
                 }
-                .frame(
-                    width: (self.iconSize * 0.7) + CGFloat(max(self.avatars.count - 1, 0)) * (self.iconSize * 0.45),
-                    height: self.iconSize
-                )
-                .padding(.leading, -self.iconSize * 0.2)
-                .padding(.trailing, self.iconSize * 0.35)
+                .frame(width: totalWidth, height: self.iconSize, alignment: .leading)
             }
             .frame(height: self.iconSize)
             .background(Color.clear)
         }
+    }
+
+    static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat) -> CGFloat {
+        let avatarDiameter = iconSize * 0.7
+        let overlap: CGFloat = avatarDiameter * 0.35
+        let count = min(count, 3)
+        let border: CGFloat = 2 // 1.5pt border, add a bit more for shadow
+        return (count > 0 ? avatarDiameter + CGFloat(count - 1) * (avatarDiameter - overlap) : 0) + border
     }
 }
 

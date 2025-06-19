@@ -56,8 +56,8 @@ final class StatusIconAnimator {
                 friends
                     .filter { $0.id != Defaults[.currentUserID] }
                     .filter { friend in
-                        guard let updatedAt = friend.updatedAt else { return false }
-                        return Date().timeIntervalSince(updatedAt) <= 120 // 2 min online threshold
+                        guard let lastActiveAt = friend.lastActiveAt else { return false }
+                        return Date().timeIntervalSince(lastActiveAt) <= 120 // 2 min online threshold
                     }
                     .sorted { ($0.minutes24h ?? 0) > ($1.minutes24h ?? 0) }
                     .map(\.avatar)
@@ -93,6 +93,8 @@ final class StatusIconAnimator {
     }
 
     private func rerenderIconFrames(with avatarImages: [NSImage?]) {
+        let width = StatusIcon.totalWidth(forAvatarCount: avatarImages.count, iconSize: Self.iconSize) + Self
+            .iconSize * 1.18 // add icon + spacing
         self.iconFrames = (0 ..< Self.totalFrames).map { frameIndex in
             let phase = Double(frameIndex) / Double(Self.totalFrames)
             let view = StatusIcon(
@@ -100,7 +102,7 @@ final class StatusIconAnimator {
                 avatars: avatarImages,
                 iconSize: Self.iconSize
             )
-            .frame(width: Self.iconSize + CGFloat(avatarImages.count) * (Self.iconSize * 0.6), height: Self.iconSize)
+            .frame(width: width, height: Self.iconSize)
             let renderer = ImageRenderer(content: view)
             renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
             return renderer.nsImage ?? NSImage()

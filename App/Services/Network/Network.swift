@@ -72,7 +72,11 @@ struct Network {
         return encoder
     }()
 
-    private let jsonDecoder = JSONDecoder()
+    private let jsonDecoder: JSONDecoder = {
+        let encoder = JSONDecoder()
+        encoder.dateDecodingStrategy = .iso8601
+        return encoder
+    }()
 
     private let auth: Auth
 

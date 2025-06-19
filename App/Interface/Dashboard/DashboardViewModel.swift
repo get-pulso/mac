@@ -74,7 +74,7 @@ final class DashboardViewModel: ObservableObject {
         .store(in: &self.subscriptions)
 
         Publishers.CombineLatest(
-            self.window.isVisiblePublisher.filter { $0 }.removeDuplicates(),
+            self.window.isVisiblePublisher.filter { $0 },
             Timer.publish(every: 60, on: .main, in: .common).autoconnect().map { _ in }.prepend(())
         )
         .sink(receiveValue: { [weak self] _ in
@@ -104,7 +104,7 @@ final class DashboardViewModel: ObservableObject {
                 rank7d: friend.rank,
                 minutes24h: l24h.activeMinutes,
                 minutes7d: friend.activeMinutes,
-                updatedAt: friend.updatedAt
+                lastActiveAt: friend.lastActiveAt
             )
             friends.append(friend)
         }
@@ -132,7 +132,12 @@ private extension DashboardUserItem {
         self.id = friend.id
         self.name = friend.name
         self.avatar = friend.avatar
-        self.updatedAt = friend.updatedAt
+
+        if Defaults[.currentUserID] == friend.id {
+            self.lastActiveAt = .now
+        } else {
+            self.lastActiveAt = friend.lastActiveAt
+        }
         switch filter {
         case .last24h:
             self.minutes = friend.minutes24h

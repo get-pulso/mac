@@ -5,10 +5,10 @@ struct DashboardUserItem: Identifiable {
     let name: String
     let avatar: URL?
     let minutes: Int?
-    let updatedAt: Date?
+    let lastActiveAt: Date?
 
     var isOnline: Bool {
-        guard let updatedAt else { return false }
-        return Date().timeIntervalSince(updatedAt) <= 120 // 2 minutes threshold
+        guard let lastActiveAt else { return false }
+        return Date().timeIntervalSince(lastActiveAt) <= 120 // 2 minutes threshold
     }
 }

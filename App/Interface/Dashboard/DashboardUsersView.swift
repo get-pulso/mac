@@ -52,7 +52,7 @@ private struct UserRow: View {
 
                 if self.user.isOnline {
                     Circle()
-                        .fill(Color.accentColor)
+                        .fill(Color.green)
                         .frame(width: 8, height: 8)
                         .overlay(
                             Circle()
@@ -96,14 +96,9 @@ private struct UserRow: View {
 private extension [DashboardUserItem] {
     static var placeholder: Self {
         [
-            .init(id: "1", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
-            .init(id: "2", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
-            .init(id: "3", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
-            .init(id: "4", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
-            .init(id: "5", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
-            .init(id: "6", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
-            .init(id: "7", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
-            .init(id: "8", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "1", name: "Some long name", avatar: nil, minutes: 3000, lastActiveAt: nil),
+            .init(id: "2", name: "Some long name", avatar: nil, minutes: 3000, lastActiveAt: nil),
+            .init(id: "3", name: "Some long name", avatar: nil, minutes: 3000, lastActiveAt: nil),
         ]
     }
 }
