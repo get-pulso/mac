@@ -6,21 +6,29 @@ struct DashboardUsersView: View {
 
     var body: some View {
         List {
-            if self.users.isEmpty {
-                ForEach([DashboardUserItem].placeholder) { user in
+            let needsPlaceholder = self.users.isEmpty
+            let users: [DashboardUserItem] = needsPlaceholder ? .placeholder : self.users
+            ForEach(Array(users.enumerated()), id: \ .element.id) { index, user in
+                if needsPlaceholder {
                     UserRow(user: user)
-                        .listRowSeparatorTint(Color(NSColor.separatorColor))
+                        .listRowSeparator(index == users.count - 1 ? .hidden : .visible)
                         .redacted(reason: .placeholder)
-                }
-            } else {
-                ForEach(self.users) { user in
+                } else {
                     UserRow(user: user)
-                        .listRowSeparatorTint(Color(NSColor.separatorColor))
+                        .listRowSeparator(index == users.count - 1 ? .hidden : .visible)
                 }
             }
+
+            // bottom inset
+            Spacer()
+                .frame(height: 24)
+                .listRowSeparator(.hidden)
         }
         .scrollContentBackground(.hidden)
         .frame(height: 160)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Spacer().frame(height: 16)
+        }
     }
 }
 
@@ -31,15 +39,28 @@ private struct UserRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            LazyImage(url: self.user.avatar) { state in
-                if let image = state.image {
-                    image.resizable().aspectRatio(contentMode: .fill)
-                } else {
-                    Color.gray.opacity(0.3)
+            ZStack(alignment: .bottomTrailing) {
+                LazyImage(url: self.user.avatar) { state in
+                    if let image = state.image {
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Color.gray.opacity(0.3)
+                    }
+                }
+                .clipShape(Circle())
+                .frame(width: 28, height: 28)
+
+                if self.user.isOnline {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                        .overlay(
+                            Circle()
+                                .stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1)
+                        )
+                        .offset(x: 1, y: 1)
                 }
             }
-            .clipShape(Circle())
-            .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(self.user.name)
@@ -58,6 +79,7 @@ private struct UserRow: View {
             }
         }
         .padding(.vertical, 4)
+        .listRowSeparatorTint(Color(NSColor.separatorColor))
     }
 
     // MARK: Private
@@ -74,9 +96,14 @@ private struct UserRow: View {
 private extension [DashboardUserItem] {
     static var placeholder: Self {
         [
-            .init(id: "1", name: "Some long name", avatar: nil, minutes: 3000),
-            .init(id: "2", name: "Some long name", avatar: nil, minutes: 3000),
-            .init(id: "3", name: "Some long name", avatar: nil, minutes: 3000),
+            .init(id: "1", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "2", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "3", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "4", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "5", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "6", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "7", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
+            .init(id: "8", name: "Some long name", avatar: nil, minutes: 3000, updatedAt: nil),
         ]
     }
 }

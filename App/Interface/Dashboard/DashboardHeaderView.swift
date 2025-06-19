@@ -6,6 +6,7 @@ struct DashboardHeaderView: View {
     @Binding var timeFilter: TimeFilter
 
     let onSettings: () -> Void
+    let onGroupAdd: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -23,6 +24,7 @@ struct DashboardHeaderView: View {
                             action: { self.selectedGroup = group.id }
                         )
                     }
+                    PlusButton(action: self.onGroupAdd)
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -116,4 +118,24 @@ private struct TimeFilterPicker: View {
     @State private var transitionEdge: Edge = .top
 
     private let filters: [TimeFilter] = [.last24h, .last7d]
+}
+
+private struct PlusButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: self.action) {
+            ZStack {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.primary)
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background(Color.clear)
+            .cornerRadius(8)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Add Group")
+    }
 }

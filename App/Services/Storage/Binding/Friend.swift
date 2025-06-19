@@ -9,6 +9,7 @@ struct Friend: Identifiable {
     let rank7d: Int
     let minutes24h: Int?
     let minutes7d: Int?
+    let updatedAt: Date?
 }
 
 final class FriendObject: Object {
@@ -23,6 +24,7 @@ final class FriendObject: Object {
         self.rank7d = friend.rank7d
         self.minutes24h = friend.minutes24h
         self.minutes7d = friend.minutes7d
+        self.updatedAt = friend.updatedAt
     }
 
     // MARK: Internal
@@ -34,6 +36,7 @@ final class FriendObject: Object {
     @Persisted var rank7d: Int
     @Persisted var minutes24h: Int?
     @Persisted var minutes7d: Int?
+    @Persisted var updatedAt: Date?
 }
 
 extension Friend {
@@ -45,5 +48,6 @@ extension Friend {
         self.rank7d = object.rank7d
         self.minutes24h = object.minutes24h
         self.minutes7d = object.minutes7d
+        self.updatedAt = object.updatedAt
     }
 }

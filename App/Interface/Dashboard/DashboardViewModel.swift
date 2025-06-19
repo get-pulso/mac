@@ -21,6 +21,11 @@ final class DashboardViewModel: ObservableObject {
         self.router.move(to: .settings)
     }
 
+    func openWebClient() {
+        NSWorkspace.shared.open(URL(string: "https://pulso.sh")!)
+        self.window.hide()
+    }
+
     // MARK: Private
 
     @Dependency(\.appRouter) private var router
@@ -95,7 +100,8 @@ final class DashboardViewModel: ObservableObject {
                 rank24h: l24h.rank,
                 rank7d: friend.rank,
                 minutes24h: l24h.activeMinutes,
-                minutes7d: friend.activeMinutes
+                minutes7d: friend.activeMinutes,
+                updatedAt: friend.updatedAt
             )
             friends.append(friend)
         }
@@ -123,6 +129,7 @@ private extension DashboardUserItem {
         self.id = friend.id
         self.name = friend.name
         self.avatar = friend.avatar
+        self.updatedAt = friend.updatedAt
         switch filter {
         case .last24h:
             self.minutes = friend.minutes24h

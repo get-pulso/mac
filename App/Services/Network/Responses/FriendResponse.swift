@@ -7,6 +7,7 @@ struct FriendResponse: Decodable, Identifiable {
         case avatar = "avatar_url"
         case rank
         case activeMinutes = "active_minutes"
+        case updatedAt = "updated_at"
     }
 
     let id: String
@@ -14,4 +15,5 @@ struct FriendResponse: Decodable, Identifiable {
     let avatar: URL?
     let rank: Int
     let activeMinutes: Int?
+    let updatedAt: Date?
 }
