@@ -123,6 +123,12 @@ final class Storage {
         }
     }
 
+    func cleanFriendsStore() throws {
+        try self.write(to: .friends) { realm in
+            realm.deleteAll()
+        }
+    }
+
     // MARK: Private
 
     private func write(to store: RealmStore, action: (Realm) throws -> some Any) throws {

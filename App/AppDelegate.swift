@@ -26,6 +26,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // observing logout
             for await _ in await self.auth.invalidationPublisher.values {
+                Defaults[.currentUserID] = nil
+                try? self.storage.cleanFriendsStore()
+
                 await MainActor.run {
                     self.appRouter.move(to: .login)
                 }
@@ -37,9 +40,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Private
 
-    @Dependency(\.auth) private var auth: Auth
-    @Dependency(\.tracker) private var tracker: Tracker
-    @Dependency(\.appRouter) private var appRouter: AppRouter
-    @Dependency(\.updater) private var updater: Updater
-    @Dependency(\.windowManager) private var windowManager: WindowManager
+    @Dependency(\.auth) private var auth
+    @Dependency(\.storage) private var storage
+    @Dependency(\.tracker) private var tracker
+    @Dependency(\.appRouter) private var appRouter
+    @Dependency(\.updater) private var updater
+    @Dependency(\.windowManager) private var windowManager
 }

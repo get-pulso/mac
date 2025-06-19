@@ -17,46 +17,38 @@ final class WindowManager {
     @MainActor
     func configure() {
         self.prepareWindow()
-        self.statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.prerenderIcon()
-        self.startIconAnimationTimer()
+        self.statusIconAnimator = StatusIconAnimator()
         self.startMouseMonitor()
-        self.statusBarItem?.button?.image = self.iconFrames.first
     }
 
+    @MainActor
     func show() {
         guard let targetWindowPostion, let window else { return }
         window.setFrameTopLeftPoint(targetWindowPostion)
         window.orderFront(nil)
-        self.statusBarItem?.button?.highlight(true)
+        self.statusIconAnimator?.highlight()
         NSApp.activate()
         self.visibilitySubject.send(true)
     }
 
+    @MainActor
     func hide() {
-        self.statusBarItem?.button?.highlight(false)
+        self.statusIconAnimator?.unhighlight()
         self.window?.orderOut(nil)
         self.visibilitySubject.send(false)
     }
 
     // MARK: Private
 
-    private enum Constants {
-        static let totalIconFrames = 40
-        static let iconFrameLength = 0.1
-    }
-
-    private var statusBarItem: NSStatusItem?
     private var visibilitySubject = CurrentValueSubject<Bool, Never>(false)
     private var window: AppWindow?
-    private var iconFrames: [NSImage] = []
-    private var iconFrameIndex: Int = 0
-    private var iconTimer: Timer?
+    private var statusIconAnimator: StatusIconAnimator?
     private var mouseMonitor: Any?
 
+    @MainActor
     private var targetWindowPostion: NSPoint? {
         guard
-            let button = self.statusBarItem?.button,
+            let button = self.statusIconAnimator?.statusBarButton,
             let buttonWindow = button.window,
             let screen = buttonWindow.screen
         else { return nil }
@@ -92,39 +84,10 @@ final class WindowManager {
         return NSPoint(x: x, y: y)
     }
 
-    @MainActor
-    private func prerenderIcon() {
-        self.iconFrames = (0 ..< Constants.totalIconFrames).map { frameIndex in
-            let phase = Double(frameIndex) / Double(Constants.totalIconFrames)
-            let view = StatusIcon(phase: phase)
-                .frame(width: 20, height: 20)
-
-            let frameRenderer = ImageRenderer(content: view)
-            frameRenderer.scale = NSScreen.main?.backingScaleFactor ?? 2
-
-            return frameRenderer.nsImage ?? NSImage()
-        }
-    }
-
     private func prepareWindow() {
         @Dependency(\.appRouter) var router: AppRouter
         let contentView = AppView(appRouter: router)
         self.window = AppWindow(appView: contentView)
-    }
-
-    private func startIconAnimationTimer() {
-        let timer = Timer(
-            timeInterval: Constants.iconFrameLength,
-            repeats: true
-        ) { [weak self] _ in
-            guard let self, !self.iconFrames.isEmpty else { return }
-            self.iconFrameIndex = (self.iconFrameIndex + 1) % Constants.totalIconFrames
-            DispatchQueue.main.async {
-                self.statusBarItem?.button?.image = self.iconFrames[self.iconFrameIndex]
-            }
-        }
-        self.iconTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
     }
 
     private func startMouseMonitor() {
@@ -137,7 +100,9 @@ final class WindowManager {
                 return
             }
 
-            self.hide()
+            DispatchQueue.main.async {
+                self.hide()
+            }
         }
     }
 }

@@ -1,8 +1,10 @@
 import Combine
+import Defaults
 import Dependencies
 import Foundation
 import SwiftUI
 
+@MainActor
 final class DashboardViewModel: ObservableObject {
     // MARK: Lifecycle
 
@@ -85,6 +87,7 @@ final class DashboardViewModel: ObservableObject {
 
     private func sync() async throws {
         let userInfo = try await self.network.userInfo()
+        Defaults[.currentUserID] = userInfo.user.id
         let leaderboard24h = try await self.network.leaderboard(filter: .last24h)
         let leaderboard7d = try await self.network.leaderboard(filter: .last7d)
 

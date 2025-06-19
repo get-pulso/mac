@@ -1,6 +1,8 @@
+import Defaults
 import Dependencies
 import SwiftUI
 
+@MainActor
 final class LoginViewModel: ObservableObject {
     // MARK: Internal
 
@@ -26,11 +28,9 @@ final class LoginViewModel: ObservableObject {
         Task { [weak self] in
             try await Task.sleep(for: .seconds(180))
 
-            await MainActor.run { [weak self] in
-                guard self?.isWaitingForLogin == true else { return }
+            guard self?.isWaitingForLogin == true else { return }
 
-                self?.isWaitingForLogin = false
-            }
+            self?.isWaitingForLogin = false
         }
     }
 
@@ -51,9 +51,7 @@ final class LoginViewModel: ObservableObject {
         else { return }
 
         Task {
-            await MainActor.run {
-                self.windowManager.show()
-            }
+            self.windowManager.show()
 
             do {
                 let response = try await self.network.verify(loginToken: token)
@@ -61,17 +59,17 @@ final class LoginViewModel: ObservableObject {
                     jwtToken: response.jwt,
                     refreshToken: response.refreshToken
                 )
-                await MainActor.run {
-                    self.appRouter.move(to: .dashboard)
-                    NSAppleEventManager.shared().removeEventHandler(
-                        forEventClass: AEEventClass(kInternetEventClass),
-                        andEventID: AEEventID(kAEGetURL)
-                    )
-                }
+
+                let currentUser = try await self.network.userInfo()
+                Defaults[.currentUserID] = currentUser.user.id
+
+                self.appRouter.move(to: .dashboard)
+                NSAppleEventManager.shared().removeEventHandler(
+                    forEventClass: AEEventClass(kInternetEventClass),
+                    andEventID: AEEventID(kAEGetURL)
+                )
             } catch {
-                await MainActor.run {
-                    self.isWaitingForLogin = false
-                }
+                self.isWaitingForLogin = false
             }
         }
     }

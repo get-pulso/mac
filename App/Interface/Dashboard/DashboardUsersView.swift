@@ -52,7 +52,7 @@ private struct UserRow: View {
 
                 if self.user.isOnline {
                     Circle()
-                        .fill(Color.green)
+                        .fill(Color.accentColor)
                         .frame(width: 8, height: 8)
                         .overlay(
                             Circle()
