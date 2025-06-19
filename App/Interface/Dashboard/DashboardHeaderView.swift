@@ -32,17 +32,9 @@ struct DashboardHeaderView: View {
             Divider()
                 .padding(.vertical, 8)
 
-            // Time filter picker
-            Picker("", selection: self.$timeFilter) {
-                Text("24h")
-                    .tag(TimeFilter.last24h)
-                Text("7d")
-                    .tag(TimeFilter.last7d)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 70)
-            .padding(.horizontal, 8)
+            // Custom Time filter picker
+            TimeFilterPicker(selection: self.$timeFilter)
+                .padding(.horizontal, 8)
 
             Divider()
                 .padding(.vertical, 8)
@@ -83,4 +75,45 @@ private struct GroupPickerButton: View {
         }
         .buttonStyle(PlainButtonStyle())
     }
+}
+
+private struct TimeFilterPicker: View {
+    // MARK: Internal
+
+    @Binding var selection: TimeFilter
+
+    var body: some View {
+        Button(action: {
+            let currentIndex = self.filters.firstIndex(of: self.selection) ?? 0
+            let nextIndex = (currentIndex + 1) % self.filters.count
+            // Set direction: if going forward (24h -> 7d), slide up; if backward (7d -> 24h), slide down
+            self.transitionEdge = nextIndex > currentIndex ? .top : .bottom
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                self.selection = self.filters[nextIndex]
+            }
+        }) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.13))
+                    .frame(width: 44, height: 22)
+                Text(self.selection.rawValue)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(.accentColor)
+                    .id(self.selection)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: self.transitionEdge).combined(with: .opacity),
+                        removal: .move(edge: self.transitionEdge == .top ? .bottom : .top).combined(with: .opacity)
+                    ))
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: self.selection)
+            }
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel("Time Filter")
+    }
+
+    // MARK: Private
+
+    @State private var transitionEdge: Edge = .top
+
+    private let filters: [TimeFilter] = [.last24h, .last7d]
 }
