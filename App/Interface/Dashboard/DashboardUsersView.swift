@@ -44,7 +44,7 @@ private struct UserRow: View {
                     if let image = state.image {
                         image.resizable().aspectRatio(contentMode: .fill)
                     } else {
-                        Color.gray.opacity(0.3)
+                        DefaultAvatarView(identifier: self.user.id, size: 28)
                     }
                 }
                 .clipShape(Circle())
