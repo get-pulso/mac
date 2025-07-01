@@ -19,6 +19,10 @@ final class DashboardViewModel: ObservableObject {
     @Published var groups: [UserGroup] = []
     @Published var leaderboard: [DashboardUserItem] = []
 
+    var scrollTop: AnyPublisher<Void, Never> {
+        self.scrollTopSubject.eraseToAnyPublisher()
+    }
+
     func openSettings() {
         self.router.move(to: .settings)
     }
@@ -36,6 +40,7 @@ final class DashboardViewModel: ObservableObject {
     @Dependency(\.network) private var network
     @Dependency(\.windowManager) private var window
 
+    private let scrollTopSubject = PassthroughSubject<Void, Never>()
     private var subscriptions = Set<AnyCancellable>()
 
     private func bindData() {
@@ -50,6 +55,17 @@ final class DashboardViewModel: ObservableObject {
                 }
             })
             .store(in: &self.subscriptions)
+
+        Publishers.CombineLatest(
+            self.$selectedGroup,
+            self.$filter
+        )
+        .dropFirst()
+        .delay(for: .milliseconds(50), scheduler: DispatchQueue.main)
+        .sink { [weak self] _ in
+            self?.scrollTopSubject.send()
+        }
+        .store(in: &self.subscriptions)
 
         Publishers.CombineLatest(
             self.$selectedGroup,

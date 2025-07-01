@@ -1,33 +1,46 @@
+import Combine
 import NukeUI
 import SwiftUI
 
 struct DashboardUsersView: View {
     let users: [DashboardUserItem]
+    let scrollTop: AnyPublisher<Void, Never>
 
     var body: some View {
-        List {
-            let needsPlaceholder = self.users.isEmpty
-            let users: [DashboardUserItem] = needsPlaceholder ? .placeholder : self.users
-            ForEach(Array(users.enumerated()), id: \ .element.id) { index, user in
-                if needsPlaceholder {
-                    UserRow(user: user)
-                        .listRowSeparator(index == users.count - 1 ? .hidden : .visible)
-                        .redacted(reason: .placeholder)
-                } else {
-                    UserRow(user: user)
-                        .listRowSeparator(index == users.count - 1 ? .hidden : .visible)
+        ScrollViewReader { proxy in
+            List {
+                let needsPlaceholder = self.users.isEmpty
+                let users: [DashboardUserItem] = needsPlaceholder ? .placeholder : self.users
+                ForEach(Array(users.enumerated()), id: \ .element.id) { index, user in
+                    if needsPlaceholder {
+                        UserRow(user: user, rank: index + 1)
+                            .listRowSeparator(index == users.count - 1 ? .hidden : .visible)
+                            .redacted(reason: .placeholder)
+                            .id(user.id)
+                    } else {
+                        UserRow(user: user, rank: index + 1)
+                            .listRowSeparator(index == users.count - 1 ? .hidden : .visible)
+                            .id(user.id)
+                    }
+                }
+
+                // bottom inset
+                Spacer()
+                    .frame(height: 24)
+                    .listRowSeparator(.hidden)
+            }
+            .listStyle(.plain)
+            .contentMargins(.top, 0)
+            .scrollContentBackground(.hidden)
+            .frame(height: 160)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Spacer().frame(height: 16)
+            }
+            .onReceive(self.scrollTop) { _ in
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo(self.users.first?.id, anchor: .top)
                 }
             }
-
-            // bottom inset
-            Spacer()
-                .frame(height: 24)
-                .listRowSeparator(.hidden)
-        }
-        .scrollContentBackground(.hidden)
-        .frame(height: 160)
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            Spacer().frame(height: 16)
         }
     }
 }
@@ -36,9 +49,16 @@ private struct UserRow: View {
     // MARK: Internal
 
     let user: DashboardUserItem
+    let rank: Int
 
     var body: some View {
         HStack(spacing: 8) {
+            Text("\(self.rank)")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundColor(.secondary)
+                .frame(minWidth: 16, alignment: .leading)
+                .animation(nil, value: self.rank)
+
             ZStack(alignment: .bottomTrailing) {
                 LazyImage(url: self.user.avatar) { state in
                     if let image = state.image {
@@ -79,6 +99,10 @@ private struct UserRow: View {
             }
         }
         .padding(.vertical, 4)
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .alignmentGuide(.listRowSeparatorLeading) { _ in 8 }
+        .alignmentGuide(.listRowSeparatorTrailing) { d in d.width - 6 }
         .listRowSeparatorTint(Color(NSColor.separatorColor))
     }
 

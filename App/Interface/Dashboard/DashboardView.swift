@@ -15,7 +15,10 @@ struct DashboardView: View {
                     onGroupAdd: self.viewModel.openWebClient
                 )
 
-                DashboardUsersView(users: self.viewModel.leaderboard)
+                DashboardUsersView(
+                    users: self.viewModel.leaderboard,
+                    scrollTop: self.viewModel.scrollTop
+                )
             }
             // Bottom right, smaller Invite button
             VStack {
