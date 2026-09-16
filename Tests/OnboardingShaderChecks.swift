@@ -16,7 +16,7 @@ enum OnboardingShaderChecks {
         let renderer = try MetalRenderer(device: device)
         let folder = URL(fileURLWithPath: "/tmp/firstlight-integrated-ray-frames", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let times: [Float] = [0, 0.35, 0.65, 1.10, 1.75, 2.05, 2.35, 2.65, 2.95, 3.15, 3.60, 4.0]
+        let times: [Float] = [0, 0.35, 0.65, 1.10, 1.75, 2.05, 2.35, 2.65, 2.88, 3.02, 3.60, 4.0]
         var count = 0
         var gpu: [Double] = []
         var previews: [CGImage] = []
@@ -225,8 +225,10 @@ enum OnboardingShaderChecks {
             }
         }
         if time == 0, visible != 0 { throw ShaderError.invalidPixels("First frame is not clear") }
+        // The opening is a couple of narrow shoots by design, so this asks for
+        // translucent light, not for a broad haze.
         if time > 0.5, time < 1.05 {
-            guard visible > 3000 * scale * scale, maxAlpha < 245, soft > 1000 * scale * scale else {
+            guard visible > 400 * scale * scale, maxAlpha < 245, soft > 150 * scale * scale else {
                 throw ShaderError.invalidPixels("Missing translucent light at \(time)")
             }
         }

@@ -18,13 +18,13 @@ struct RayLogoUniforms {
 /// `start` and `gatherEnd`; original pigment replaces it by `end`.
 enum RayLogoTiming {
     static let start = 2.05
-    static let gatherEnd = 3.15
+    static let gatherEnd = 2.88
     /// Original pigment replaces the collected light as soon as it has
     /// settled; the crisp asset is on screen from `pigmentEnd`, well before
     /// the welcome starts.
-    static let pigmentStart = 3.15
-    static let pigmentEnd = 3.32
-    static let end = 3.60
+    static let pigmentStart = 2.88
+    static let pigmentEnd = 3.02
+    static let end = 3.02
     /// Sized to sit with the 44 pt welcome title, not above it.
     static let side: CGFloat = 72
     /// Screen azimuth of the mark's fan. Must equal `logoMarkAzimuth` in Waves.metal.

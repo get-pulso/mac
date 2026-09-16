@@ -253,11 +253,11 @@ float logoSpatialClip(float progress,float2 point,float2 extent,int kind) {
 }
 
 float logoOpticalTime(float t) {
-    // Integrate a quintic brake: continuous optical velocity, zero by 3.10 s.
-    // The collected light can then morph into pigment without changing noise.
-    if (t <= 2.65) return t;
-    float x = clamp((t-2.65)/0.45,0.0,1.0);
-    return 2.65+0.45*(x-pow(x,6.0)+3.0*pow(x,5.0)-2.5*pow(x,4.0));
+    // Integrate a quintic brake: continuous optical velocity, zero by 2.84 s,
+    // just before pigment, so the collected light morphs without changing noise.
+    if (t <= 2.42) return t;
+    float x = clamp((t-2.42)/0.42,0.0,1.0);
+    return 2.42+0.42*(x-pow(x,6.0)+3.0*pow(x,5.0)-2.5*pow(x,4.0));
 }
 
 RayProjection gatherProjection(RayProjection projection,float2 target,RayLogoUniforms logo,float gather) {
@@ -366,7 +366,7 @@ float4 rayRadiance(float2 canvasPoint, constant ShaderUniforms &u, float2 target
     int kind = int(transition.x);
     bool flow = kind == 1;
     float t = min(u.time,3.35);
-    float birth = flow ? smoother(0.06,0.60,t) : smoother(0.06,0.48,t);
+    float birth = flow ? smoother(0.06,0.13,t) : smoother(0.06,0.48,t);
     if (birth == 0) return float4(0);
     // y is an offscreen-verification phase lock; live playback always sends -1.
     float opticalTime = logo.options.x > 0.5 ? logoOpticalTime(u.time) : u.time;
@@ -397,8 +397,75 @@ float4 rayRadiance(float2 canvasPoint, constant ShaderUniforms &u, float2 target
     float2 opticalDirection = rayMaterialDirection(q,projection);
     float front = smoother(0.12,1.17,t);
     float coneNoise = noise3(float3(direction*3.7,seed+time*k.w));
-    float reach = k.x*(0.64+0.75*coneNoise)*mix(0.10,1.0,front);
+    // Flow's shafts already have most of their length in the first frames:
+    // the light breaks out of the seed instead of swelling from a small ball.
+    float reach = k.x*(0.64+0.75*coneNoise)*mix(flow ? 0.38 : 0.10,1.0,front);
     if (flow) reach *= 0.75;
+    if (flow) {
+        // The opening is a brush, not an even compass rose. Every shaft keeps
+        // its own length (fixed per direction, with no time term, so a shaft
+        // grows instead of shimmering) and the ones sweeping downwards are the
+        // long bristles. The spread closes as the field fills the pane, so the
+        // turn, the collection and the mark are left exactly as they were.
+        float bristle = noise3(float3(direction*6.1,seed*0.31))
+                      + 0.55*noise3(float3(direction*14.3,seed*0.53+4.1));
+        bristle = bristle/0.775-1.0;
+        float downward = smoother(-0.85,0.85,direction.y)-0.5;
+        float spread = (1.0-expand)*mix(1.0,0.55,smoother(0.06,0.55,t));
+        reach *= clamp(1.0+spread*(0.68*bristle+1.05*downward),0.14,2.6);
+    }
+    // Flow opens as shoots, not as a switch. One grows down out of the source,
+    // is held while its tip carries the light, and draws back in; a second
+    // opens on the upper-right diagonal and stays; the rest unfold around it.
+    // Length comes first, so a young shoot is genuinely short, not a clipped
+    // long one, and the order is fixed per direction so it never shimmers.
+    float openGate = 1.0;
+    float shootReach = 1.0;
+    float shootTip = 0.0;
+    // The second shoot answers the first at seven tenths of its size.
+    constexpr float secondScale = 0.70;
+    float baseReach = reach;
+    if (flow) {
+        float2 downAxis = normalize(float2(0.06,1.0));
+        float2 cornerRay = normalize(float2(0.74,-0.68));
+        float axisDot = dot(direction,downAxis);
+        float lateral = direction.x*downAxis.y-direction.y*downAxis.x;
+        // The first shoot keeps its direction and turns about its own axis: it
+        // narrows as it comes edge-on and a highlight crosses it, so it reads
+        // as a living blade instead of a wedge that switches on and off.
+        float turn = smoother(0.16,0.38,t);
+        // A broad blade that narrows as it comes edge-on and opens again.
+        constexpr float baseWidth = 0.62;
+        // The first shoot reaches further and carries more light than the ones
+        // that follow, so the opening reads as one strong stroke.
+        constexpr float firstLength = 1.35;
+        constexpr float firstGain = 1.75;
+        float blade = mix(1.0,0.56,sin(turn*M_PI_F));
+        float across = lateral/(baseWidth*blade);
+        float alongDown = smoothstep(0.55,0.92,axisDot)*exp(-across*across);
+        // The second shoot answers the first at seven tenths of it: the same
+        // shape, a little narrower, shorter and softer, never a repeat.
+        float lateralCorner = direction.x*cornerRay.y-direction.y*cornerRay.x;
+        float acrossCorner = lateralCorner/(baseWidth*secondScale);
+        float alongCorner = smoothstep(0.55,0.92,dot(direction,cornerRay))
+            *exp(-acrossCorner*acrossCorner);
+        float firstShoot = alongDown*(smoother(0.06,0.20,t)-smoother(0.38,0.46,t));
+        float secondShoot = alongCorner*smoother(0.28,0.42,t);
+        float jitter = noise3(float3(direction*7.3,seed*0.17+2.7));
+        float opens = 0.46+jitter*0.10;
+        float grown = max(max(firstShoot,secondShoot),smoother(opens,opens+0.12,t));
+        // The shoots give way to the expansion rather than ending on a cut.
+        float young = 1.0-smoother(0.80,1.05,t);
+        float band = (turn*2.0-1.0)*baseWidth*blade;
+        float glint = 1.0+1.3*exp(-pow((lateral-band)/(0.38*baseWidth*blade+0.015),2.0));
+        float secondGain = 1.0+(firstGain-1.0)*secondScale;
+        float shine = mix(1.0,glint*firstGain,firstShoot)*mix(1.0,secondGain,secondShoot);
+        float cap = mix(mix(0.55,firstLength,firstShoot),firstLength*secondScale,secondShoot);
+        openGate = mix(1.0,smoothstep(0.0,0.18,grown)*shine,young);
+        shootReach = mix(1.0,mix(0.05,cap,grown),young);
+        shootTip = young*grown*(1.0-smoother(0.70,0.95,t));
+    }
+    reach *= shootReach;
     float frameReach = 0;
     for (int corner=0; corner<4; ++corner) {
         float2 sign = float2((corner&1) ? 1.0 : -1.0,(corner&2) ? 1.0 : -1.0);
@@ -446,6 +513,10 @@ float4 rayRadiance(float2 canvasPoint, constant ShaderUniforms &u, float2 target
         if (optical.w <= 0.00001) continue;
         float r = radius*(1.0+z*0.11)*optical.z;
         float falloff = exp(-pow(r/max(reach,0.005),2.7));
+        if (shootTip > 0.0) {
+            float along = r/max(baseReach,0.005);
+            falloff *= 1.0+shootTip*1.85*exp(-pow((along-shootReach)/0.17,2.0));
+        }
         if (falloff < 0.00001) continue;
         float depth = exp(-z*z*3.8)*optical.w;
         // Two fixed materials, cross-faded: fine shafts grow inside the broad
@@ -484,7 +555,8 @@ float4 rayRadiance(float2 canvasPoint, constant ShaderUniforms &u, float2 target
     float coreWidth = 0.00075*(0.65+coneNoise*0.85);
     float core = exp(-radius*radius/coreWidth)*2.7;
     if (lamp) core *= pow(cos(tilt),4.0);
-    energy += palette.core.rgb*core*(flow ? mix(0.35,1.0,expand) : 1.0);
+    if (flow) energy *= openGate;
+    energy += palette.core.rgb*core*(flow ? expand*expand : 1.0);
 
     // No text-shaped exposure mask or reading plate. This radiance remains
     // untouched; the compositor lowers the opacity of the entire ray layer.
@@ -708,7 +780,7 @@ fragment half4 rayCompositeFragment(VertexOutput in [[stage_in]],
         alpha *= feather;
     }
     float dither = (hash31(float3(floor((p-u.targetOffset)*u.scale),21.0))-0.5)/255.0;
-    float birth = int(transition.x) == 1 ? smoother(0.06,0.60,u.time) : 1.0;
+    float birth = int(transition.x) == 1 ? smoother(0.06,0.13,u.time) : 1.0;
     return half4(float4(clamp(color+dither*min(alpha*16.0,1.0),0.0,alpha),alpha)*birth);
 }
 

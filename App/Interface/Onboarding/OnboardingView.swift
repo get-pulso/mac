@@ -188,7 +188,8 @@ struct OnboardingView: View {
     }
 
     private func subtitle(for inviter: WelcomeInvite.Inviter?) -> String {
-        guard let inviter else { return "See what your friends are up to." }
+        // The line the site leads with, so the app and the front door agree.
+        guard let inviter else { return "Think you\u{2019}re the most productive? Prove it." }
         return inviter.isGroup ? "Sign in to join them." : "Sign in and you'll be friends right away."
     }
 

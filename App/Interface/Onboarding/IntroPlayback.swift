@@ -14,7 +14,7 @@ enum IntroTiming {
     /// The real titled window takes over while the light is still moving.
     static let handoff = 2.05
     /// The whole field has become the original mark; the shader is static afterwards.
-    static let logoSettled = 3.60
+    static let logoSettled = 3.02
     /// The clock stops here, once the mark and the name have become the header,
     /// Welcome has arrived and the Continue button is live.
     static let duration = 6.15
@@ -28,7 +28,9 @@ enum IntroTiming {
     static let pacing: [Key] = [
         Key(real: 0.00, shader: 0.00, speed: 0.00), // only the desktop darkens
         Key(real: 1.00, shader: 0.06, speed: 0.15), // the light is born slowly
-        Key(real: 4.00, shader: 1.75, speed: 0.75), // it has filled the pane
+        Key(real: 2.40, shader: 0.52, speed: 0.30), // the first shoot turns and goes
+        Key(real: 3.20, shader: 1.00, speed: 0.55), // the second opens and stays
+        Key(real: 4.00, shader: 1.75, speed: 0.80), // it has filled the pane
         Key(real: 4.25, shader: 2.05, speed: 1.30), // the real window appears quickly
         Key(real: 5.60, shader: 3.15, speed: 0.55), // the light settles into the mark
         Key(real: 5.95, shader: 3.60, speed: 1.10), // original pigment, without lingering
@@ -79,9 +81,11 @@ enum IntroTiming {
 /// stays there; only then do the title and the button arrive below.
 enum WelcomeTiming {
     /// The static mark is handed from the shader to a plain image of the same
-    /// asset (crisp, and in the same layer as the name); a short cross-fade.
-    static let markImageStart = 3.40
-    static let markImageVisibleAt = 3.55
+    /// asset the moment pigment finishes, so the crisp mark is on screen right
+    /// after the crop rather than half a second later. The shader draws at 1.5x
+    /// backing scale, the image at full Retina; a short cross-fade covers it.
+    static let markImageStart = 3.02
+    static let markImageVisibleAt = 3.14
     /// The name is revealed to the right of the settled mark; the pair stays centred.
     static let nameStart = 3.70
     static let nameVisibleAt = 4.25
