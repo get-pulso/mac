@@ -279,8 +279,10 @@ struct NativeTrackedAppRowSkeleton: View {
 }
 
 /// The profile's app breakdown loads after the rest of the profile, into a
-/// height the popover has already reserved. Standing rows describe what is
-/// coming; a spinner in the same space describes nothing.
+/// panel already sized to hold it. Standing rows describe what is coming; a
+/// spinner in the same space describes nothing. Four of them, because that is
+/// the height the real section comes back at for four apps, and the rows are
+/// what the popover scrolls over if there turn out to be five.
 struct NativeTrackedAppsSkeleton: View {
     // MARK: Internal
 
@@ -440,9 +442,13 @@ struct PopoverContent<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .coordinateSpace(.named(NativeLayout.popoverScrollSpace))
-        .frame(height: reservesMaximumHeight ? maximumHeight : min(maximumHeight, max(44, measuredHeight)))
+        .frame(
+            height: reservesMaximumHeight
+                ? maximumHeight
+                : min(maximumHeight, max(44, measuredHeight ?? maximumHeight))
+        )
         .onPreferenceChange(ContentHeight.self) { height in
-            if abs(measuredHeight - height) > 0.5 { measuredHeight = height }
+            if abs((measuredHeight ?? -1) - height) > 0.5 { measuredHeight = height }
         }
     }
 
@@ -454,10 +460,12 @@ struct PopoverContent<Content: View>: View {
         static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
     }
 
-    // Keep the current list-sized window until SwiftUI reports the detail's
-    // real intrinsic height. Starting at an arbitrary short height creates a
-    // visible shrink-then-grow bounce on the first navigation.
-    @State private var measuredHeight = NativeLayout.peopleBodyHeight
+    // Nil until SwiftUI has reported the content's real intrinsic height, and
+    // read as this screen's own maximum until then. Starting at any other
+    // number means the first frame after a navigation is drawn at a height
+    // belonging to no screen, and the window sets off towards it before the
+    // measurement arrives a frame later and turns it around.
+    @State private var measuredHeight: CGFloat?
 }
 
 struct NativeSearchField: NSViewRepresentable {

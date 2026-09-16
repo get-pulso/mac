@@ -17,9 +17,17 @@ private struct ProfileTitleCenter: PreferenceKey {
 /// navigation spring (set where the screen changes). The screens themselves
 /// drift a few points the same way on that spring, so a push reads as going
 /// deeper and Back as returning; the one on top moves more than the one
-/// underneath, like a room seen past a door. Opacity cross-fades on shorter
-/// curves: the outgoing screen dims at once, the incoming one settles in a
-/// beat later, so the two never sit at half strength on top of each other.
+/// underneath, like a room seen past a door.
+///
+/// The two screens trade opacity on complementary curves — the one leaving
+/// holds and drops late, the one arriving comes up at once — so the pair is
+/// worth about a full screen the whole way across. That matters for exactly
+/// one thing: the morphing avatar is the only object in the panel drawn twice
+/// at the same place at the same time, once on each screen. Curving both fades
+/// the same way leaves a trough in the middle where neither copy is solid, and
+/// the portrait ghosts halfway through its flight and snaps back to full at the
+/// end. Nothing else in the panel is doubled, so nothing else pays for the
+/// brief overlap, and the two screens are drifting apart while it lasts.
 private enum ScreenMotion {
     // MARK: Internal
 
@@ -32,33 +40,36 @@ private enum ScreenMotion {
     static let tabDrift: CGFloat = 22
 
     static func list(reduceMotion: Bool) -> AnyTransition {
-        .asymmetric(
-            insertion: self.drift(.appearing, .behind, reduceMotion)
-                .combined(with: .opacity.animation(.easeOut(duration: 0.28).delay(0.05))),
-            removal: self.drift(.disappearing, .behind, reduceMotion)
-                .combined(with: .opacity.animation(.easeOut(duration: 0.2)))
-        )
+        self.screen(.behind, fade: self.navigationFade, reduceMotion)
     }
 
     static func detail(reduceMotion: Bool) -> AnyTransition {
-        .asymmetric(
-            insertion: self.drift(.appearing, .navigating, reduceMotion)
-                .combined(with: .opacity.animation(.easeOut(duration: 0.3).delay(0.06))),
-            removal: self.drift(.disappearing, .navigating, reduceMotion)
-                .combined(with: .opacity.animation(.easeOut(duration: 0.18)))
-        )
+        self.screen(.navigating, fade: self.navigationFade, reduceMotion)
     }
 
     static func tab(reduceMotion: Bool) -> AnyTransition {
-        .asymmetric(
-            insertion: self.drift(.appearing, .tab, reduceMotion)
-                .combined(with: .opacity.animation(.easeOut(duration: 0.24).delay(0.04))),
-            removal: self.drift(.disappearing, .tab, reduceMotion)
-                .combined(with: .opacity.animation(.easeOut(duration: 0.16)))
-        )
+        self.screen(.tab, fade: self.tabFade, reduceMotion)
     }
 
     // MARK: Private
+
+    /// A little under the navigation spring, so the picture is settled just
+    /// before the motion is and the arrival reads as a stop rather than a fade.
+    /// The list leaving and the detail arriving are two halves of one push, so
+    /// they have to share this number or the halves will not add up.
+    private static let navigationFade: Double = 0.28
+    /// Tabs swap one list for another with nothing travelling between them,
+    /// so the swap can be quicker than a push.
+    private static let tabFade: Double = 0.22
+
+    private static func screen(_ role: ScreenDrift.Role, fade: Double, _ reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: self.drift(.appearing, role, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: fade))),
+            removal: self.drift(.disappearing, role, reduceMotion)
+                .combined(with: .opacity.animation(.easeIn(duration: fade)))
+        )
+    }
 
     /// The drift carries no animation of its own, so it rides whatever the
     /// screen change was wrapped in: the same spring as the flying avatar.
@@ -101,27 +112,26 @@ private struct ScreenDrift: ViewModifier, Animatable {
     }
 
     func body(content: Content) -> some View {
-        let motion = self.motion
-        content
-            .offset(x: motion.x * self.progress)
-            .scaleEffect(1 - motion.shrink * self.progress, anchor: .bottomTrailing)
+        // Offset alone. A scale was here too, and its factor was one in every
+        // case: on a screen this size it bought nothing visible, and it cost a
+        // rasterised layer over the whole panel for the length of every push.
+        content.offset(x: self.drift * self.progress)
     }
 
     // MARK: Private
 
-    @MainActor private var motion: (x: CGFloat, shrink: CGFloat) {
-        if self.reduceMotion { return (0, 0) }
+    @MainActor private var drift: CGFloat {
+        if self.reduceMotion { return 0 }
         let store = SocialStore.shared
         switch self.role {
         case .behind:
-            return (-ScreenMotion.behindDrift, 0)
+            return -ScreenMotion.behindDrift
         case .tab:
             let sign: CGFloat = self.phase == .appearing ? 1 : -1
-            return (sign * store.tabDirection * ScreenMotion.tabDrift, 0)
+            return sign * store.tabDirection * ScreenMotion.tabDrift
         case .navigating:
-            let navigation = store.navigation
-            let onTop = (self.phase == .appearing) == (navigation.direction == .forward)
-            return onTop ? (ScreenMotion.topDrift, 0) : (-ScreenMotion.behindDrift, 0)
+            let onTop = (self.phase == .appearing) == (store.navigation.direction == .forward)
+            return onTop ? ScreenMotion.topDrift : -ScreenMotion.behindDrift
         }
     }
 }
@@ -131,8 +141,11 @@ struct NativeDashboardView: View {
 
     var body: some View {
         // Both screens live in the tree while one replaces the other, so they
-        // overlap instead of stacking; the popover keeps the taller height,
-        // which is the list height either way until the profile has loaded.
+        // overlap instead of stacking. They do not share a height while they
+        // do: a screen still running its removal transition is drawn but no
+        // longer sizes the stack, so the panel takes the arriving screen's
+        // height on the very frame of the change. Whatever height a screen
+        // asks for, it asks for from the first frame — see `profileFillsPanel`.
         ZStack(alignment: .top) {
             if store.screen == .list {
                 people
@@ -144,7 +157,7 @@ struct NativeDashboardView: View {
                 // the profile's to use. See `profileActions`.
                 PopoverContent(
                     maximumHeight: NativeLayout.peopleBodyHeight + NativeLayout.popoverHeaderHeight,
-                    reservesMaximumHeight: self.isLoadingProfileActivity
+                    reservesMaximumHeight: self.profileFillsPanel
                 ) {
                     content.disabled(store.busy)
                     // The tray shows its own errors; only with it closed
@@ -445,16 +458,40 @@ struct NativeDashboardView: View {
         return min(max((progress - Self.profileBandStart) / (1 - Self.profileBandStart), 0), 1)
     }
 
-    /// The leaderboard already tells us whether this profile has activity.
-    /// Reserve the finished profile height while its app breakdown catches up,
-    /// instead of shrinking the popover and expanding it again a moment later.
+    /// Whether this profile is one that fills the panel.
+    ///
+    /// A person with time on the clock gets the agents card with its chart and
+    /// an app breakdown under it, and that profile runs past the height the
+    /// popover is allowed; a person with nothing recorded gets neither card nor
+    /// breakdown, and that profile should not sit in a tall empty panel. So the
+    /// screen takes one of two shapes, and which one is read from the
+    /// leaderboard row the list was built from — in hand before the screen
+    /// changes, so the panel has its height on the first frame of the push and
+    /// keeps it until the screen is left.
+    ///
+    /// The alternative is to measure the profile and follow the measurement,
+    /// and it cannot settle: the agents card grows when the summary lands and
+    /// the app rows replace a skeleton that guessed how many there would be, so
+    /// the height only stops moving once the request has answered. Reserving
+    /// the panel's full height *while loading* only hides that from the push
+    /// and hands it to the response instead — the popover then holds the list's
+    /// height through the whole navigation and drops a quarter second later,
+    /// on the window's own spring, as a second motion with nothing to do with
+    /// the tap that caused it. A profile that has some slack under it reads as
+    /// a panel with room; a panel that resizes after it has arrived reads as a
+    /// mistake.
+    private var profileFillsPanel: Bool {
+        guard case .person = self.store.screen, let person = self.store.selectedPerson else { return false }
+        // Either board's figure counts: on the agent board a person can have
+        // agent minutes and no time of their own, and the card still fills.
+        return (person.active_minutes ?? 0) > 0 || (person.score ?? 0) > 0
+    }
+
+    /// Whether the app breakdown is still on its way, and the rows standing in
+    /// for it should show. Only ever true on a profile that fills the panel, so
+    /// the skeleton always lands in height that is already spoken for.
     private var isLoadingProfileActivity: Bool {
-        guard case .person = self.store.screen,
-              self.store.screenLoading,
-              self.store.activity == nil,
-              let minutes = self.store.selectedPerson?.active_minutes
-        else { return false }
-        return minutes > 0
+        self.profileFillsPanel && self.store.screenLoading && self.store.activity == nil
     }
 
     private var header: some View {

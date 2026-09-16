@@ -116,9 +116,16 @@ final class SocialStore: ObservableObject {
     }
 
     /// One motion for every screen change, so a tap, Back and Escape all read
-    /// the same way. The same spring as an iOS navigation push: about 0.4 s
-    /// with a hint of overshoot, so the flying avatar lands instead of stops.
-    static let screenTransition: Animation = .spring(duration: 0.42, bounce: 0.16)
+    /// the same way. No overshoot, on purpose: this spring does not just carry
+    /// the flying avatar, it drifts both screens and resizes the panel around
+    /// them. A container that springs past its mark and comes back reads as a
+    /// stutter rather than as weight, and the further a thing travels the wider
+    /// that overshoot gets — over the length of the avatar's flight a bounce of
+    /// 0.16 was several points of visible wobble. Overshoot belongs to a small
+    /// object landing in open space, not to a 350 pt panel settling against its
+    /// own edge. Shorter too, so the geometry is finished about when the screens
+    /// have finished trading opacity instead of creeping on after them.
+    static let screenTransition: Animation = .spring(duration: 0.38, bounce: 0)
 
     /// Rows finding their new place after a refresh, and rare-flow rows
     /// leaving: shorter than a screen change, no overshoot, so a list settling
