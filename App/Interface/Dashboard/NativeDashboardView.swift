@@ -97,54 +97,43 @@ struct NativeDashboardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
-            ScrollViewReader { reader in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 4) {
-                        tab("Friends", id: "friends")
-                        ForEach(store.groups) { group in
-                            tab(group.name, id: group.id)
-                                .contextMenu {
-                                    Button {
-                                        SettingsWindowController.shared.show(
-                                            section: .groups,
-                                            groupsPage: .details(group.id)
-                                        )
-                                    } label: {
-                                        Label("Group settings", systemImage: "gearshape")
-                                    }
-                                    Button {
-                                        store.copyGroupInvite(group.id)
-                                    } label: {
-                                        Label("Copy invite link", systemImage: "doc.on.doc")
-                                    }
-                                    .disabled(store.busy)
+        ScrollViewReader { reader in
+            ScrollView(.horizontal) {
+                HStack(spacing: 4) {
+                    tab("Friends", id: "friends")
+                    ForEach(store.groups) { group in
+                        tab(group.name, id: group.id)
+                            .contextMenu {
+                                Button {
+                                    SettingsWindowController.shared.show(
+                                        section: .groups,
+                                        groupsPage: .details(group.id)
+                                    )
+                                } label: {
+                                    Label("Group settings", systemImage: "gearshape")
                                 }
-                        }
-                        tab("Leaderboard", id: "global")
+                                Button {
+                                    store.copyGroupInvite(group.id)
+                                } label: {
+                                    Label("Copy invite link", systemImage: "doc.on.doc")
+                                }
+                                .disabled(store.busy)
+                            }
                     }
-                }.scrollIndicators(.hidden)
-                    .onScrollGeometryChange(for: HorizontalScrollFades.self) { geometry in
-                        HorizontalScrollFades(geometry: geometry)
-                    } action: { _, fades in
-                        self.headerScrollFades = fades
-                    }
-                    .mask { HorizontalScrollFadeMask(fades: self.headerScrollFades) }
-                    .onChange(of: store.tab) { _, value in withAnimation { reader.scrollTo(value, anchor: .center) } }
+                    tab("Leaderboard", id: "global")
+                }
             }
-            Menu {
-                Button("Add friends") { store.openConnect(.useInvite) }
-                Button("Friend requests") { store.open(.requests) }
-                Divider()
-                Button("New group") { SettingsWindowController.shared.show(section: .groups, groupsPage: .create) }
-                Button("Manage groups") { SettingsWindowController.shared.show(section: .groups) }
-            } label: { Image(systemName: "plus").font(.system(size: 17)) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(width: 26, height: 30)
-                .help("Add friends and groups")
-            Button { SettingsWindowController.shared.show() } label: {
-                Image(systemName: "gearshape").font(.system(size: 16)).frame(width: 26, height: 30)
-            }.buttonStyle(.plain).help("Settings").keyboardShortcut(",", modifiers: .command)
-        }.padding(.horizontal, 12).frame(height: NativeLayout.popoverHeaderHeight)
+            .scrollIndicators(.hidden)
+            .onScrollGeometryChange(for: HorizontalScrollFades.self) { geometry in
+                HorizontalScrollFades(geometry: geometry)
+            } action: { _, fades in
+                self.headerScrollFades = fades
+            }
+            .mask { HorizontalScrollFadeMask(fades: self.headerScrollFades) }
+            .onChange(of: store.tab) { _, value in withAnimation { reader.scrollTo(value, anchor: .center) } }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: NativeLayout.popoverHeaderHeight)
     }
 
     private var subheader: some View {
@@ -209,12 +198,62 @@ struct NativeDashboardView: View {
 
     private var peopleFooter: some View {
         HStack(spacing: 8) {
-            Text(scopeSummary).font(.system(size: 11)).foregroundStyle(.secondary)
+            dashboardSettingsButton
             Spacer()
-            Picker("Period", selection: $store.period) {
-                Text("24 hours").tag("24h"); Text("7 days").tag("7d"); Text("30 days").tag("30d")
-            }.labelsHidden().pickerStyle(.menu).fixedSize().controlSize(.small)
-        }.padding(.horizontal, 13).frame(height: NativeLayout.peopleFooterHeight)
+            dashboardInviteButton
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 5)
+        .padding(.bottom, 12)
+        .frame(height: NativeLayout.peopleFooterHeight)
+    }
+
+    @ViewBuilder private var dashboardSettingsButton: some View {
+        if #available(macOS 26.0, *) {
+            Button { SettingsWindowController.shared.show() } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18, height: 20)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .controlSize(.regular)
+            .help("Settings")
+            .accessibilityLabel("Settings")
+            .keyboardShortcut(",", modifiers: .command)
+        } else {
+            Button { SettingsWindowController.shared.show() } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18, height: 20)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.circle)
+            .controlSize(.regular)
+            .help("Settings")
+            .accessibilityLabel("Settings")
+            .keyboardShortcut(",", modifiers: .command)
+        }
+    }
+
+    @ViewBuilder private var dashboardInviteButton: some View {
+        let label = Text("Invite").font(.system(size: 12, weight: .medium))
+
+        if #available(macOS 26.0, *) {
+            Button { store.openConnect(.useInvite) } label: { label }
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.capsule)
+                .controlSize(.regular)
+                .tint(.accentColor)
+                .help("Add a friend")
+        } else {
+            Button { store.openConnect(.useInvite) } label: { label }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
+                .controlSize(.regular)
+                .tint(.accentColor)
+                .help("Add a friend")
+        }
     }
 
     private var peopleList: some View {
@@ -267,17 +306,6 @@ struct NativeDashboardView: View {
             hasContent: !self.store.people.isEmpty,
             hasError: self.store.listError != nil
         )
-    }
-
-    private var scopeSummary: String {
-        if self.store.loading, !self.store.hasLoadedCurrentList { return "Loading activity…" }
-        let count = self.store.people.count
-        if self.store.tab == "global" { return count == 1 ? "1 person" : "\(count) people" }
-        if self.store.tab == "friends" {
-            let friends = self.store.people.filter { $0.id != Defaults[.currentUserID] }.count
-            return friends == 1 ? "1 friend" : "\(friends) friends"
-        }
-        return count == 1 ? "1 member" : "\(count) members"
     }
 
     @ViewBuilder private var detailSkeleton: some View {
@@ -668,59 +696,69 @@ struct NativeDashboardView: View {
     }
 
     private func personRow(_ person: NativePerson) -> some View {
-        HStack(spacing: 10) {
+        let location = self.profileText(person.location)
+        let subtitle = [location, profileText(person.bio)].compactMap { $0 }.joined(separator: " · ")
+        return HStack(spacing: 10) {
             PulsoAvatar(
                 url: person.avatar_url,
                 name: person.displayName,
                 size: 40,
                 showsOnlineIndicator: person.id == Defaults[.currentUserID] || person.isActiveNow
             )
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
                         if person
                             .id ==
                             Defaults[.currentUserID] { Text("you").foregroundStyle(.tertiary).font(.system(size: 11)) }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    HStack(alignment: .center, spacing: 8) {
-                        AnimatedDuration(minutes: person.active_minutes ?? 0)
-                            .foregroundStyle(.secondary).font(.system(size: 12))
-                            .fixedSize()
-                        if let activeApp = person.active_app, person.isActiveNow {
-                            NativeTrackedAppIcon(url: activeApp.icon_url, size: 28)
-                                .help(activeApp.name)
+                    if !subtitle.isEmpty {
+                        HStack(spacing: 3) {
+                            if location != nil {
+                                Image(systemName: "mappin")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(subtitle)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .multilineTextAlignment(.leading)
                         }
                     }
-                    .frame(height: 28)
                 }
-                Text(self.personSubtitle(person))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .multilineTextAlignment(.leading)
+                .frame(
+                    maxWidth: .infinity,
+                    maxHeight: .infinity,
+                    alignment: subtitle.isEmpty ? .leading : .topLeading
+                )
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    AnimatedDuration(minutes: person.active_minutes ?? 0)
+                        .foregroundStyle(.secondary).font(.system(size: 12))
+                        .fixedSize()
+                    if let activeApp = person.active_app, person.isActiveNow {
+                        HStack(spacing: 4) {
+                            NativeTrackedAppIcon(url: activeApp.icon_url, size: 16)
+                            Text(activeApp.name)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
+                        .frame(maxWidth: 110, alignment: .trailing)
+                        .help(activeApp.name)
+                    }
+                }
             }
+            .frame(height: 40)
         }.padding(.horizontal, 13).padding(.vertical, 10).contentShape(Rectangle())
     }
 
-    private func personSubtitle(_ person: NativePerson) -> String {
-        let location = person.location?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bio = person.bio?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let profileText: [String] = [location, bio].compactMap { value -> String? in
-            guard let value, !value.isEmpty else { return nil }
-            return value
-        }
-        if !profileText.isEmpty { return profileText.joined(separator: " · ") }
-
-        let links = [
-            person.website?.isEmpty == false ? "Website" : nil,
-            person.twitter?.isEmpty == false ? "X" : nil,
-            person.telegram?.isEmpty == false ? "Telegram" : nil,
-        ].compactMap { $0 }
-        if !links.isEmpty { return "Links: \(links.joined(separator: " · "))" }
-
-        return person.id == Defaults[.currentUserID] ? "Add profile details" : "No profile details"
+    private func profileText(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 
     @ViewBuilder private func personDetail(_ id: String) -> some View {

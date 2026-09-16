@@ -38,7 +38,7 @@ final class SocialStore: ObservableObject {
     @Published var screen: Screen = .list
     @Published var connectMode = ConnectMode.useInvite
     @Published var tab = "friends"
-    @Published var period = "24h"
+    @Published private(set) var period = SocialStore.storedPeriod
     @Published var groups: [NativeGroup] = []
     @Published var people: [NativePerson] = []
     @Published var requests = NativeRequests()
@@ -94,6 +94,12 @@ final class SocialStore: ObservableObject {
         if let groupID { self.inviteGroup = groupID }
         else if self.screen != .connect { self.inviteGroup = "" }
         self.open(.connect)
+    }
+
+    func setPeriod(_ period: String) {
+        guard Self.supportedPeriods.contains(period), self.period != period else { return }
+        self.period = period
+        UserDefaults.standard.set(period, forKey: Self.periodDefaultsKey)
     }
 
     func goBack() {
@@ -413,6 +419,13 @@ final class SocialStore: ObservableObject {
     // MARK: Private
 
     private static let cacheLifetime: TimeInterval = 30
+    private static let periodDefaultsKey = "pulso.activityPeriod"
+    private static let supportedPeriods = Set(["24h", "7d", "30d"])
+
+    private static var storedPeriod: String {
+        let stored = UserDefaults.standard.string(forKey: self.periodDefaultsKey) ?? "24h"
+        return self.supportedPeriods.contains(stored) ? stored : "24h"
+    }
 
     private var screenTask: Task<Void, Never>?
     private var navigationHistory = NativeNavigationHistory<Screen>()

@@ -27,6 +27,7 @@ struct NativeSettingsView: View {
     }
 
     @ObservedObject private var session = NativeSession.shared
+    @ObservedObject private var socialStore = SocialStore.shared
     @AppStorage("pulso.appearance") private var appearance = "system"
     @AppStorage("pulso.trackingPaused") private var trackingPaused = false
     @State private var confirming = false
@@ -77,6 +78,10 @@ struct NativeSettingsView: View {
     }
 
     private var name: String { self.session.user?.firstName ?? self.session.user?.username ?? "Your account" }
+
+    private var activityPeriod: Binding<String> {
+        Binding(get: { socialStore.period }, set: self.socialStore.setPeriod)
+    }
 
     @ViewBuilder private var sectionContent: some View {
         switch model.route.section {
@@ -168,6 +173,11 @@ struct NativeSettingsView: View {
                 }
             }
             panel("Activity") {
+                Picker("Activity period", selection: activityPeriod) {
+                    Text("24 hours").tag("24h")
+                    Text("7 days").tag("7d")
+                    Text("30 days").tag("30d")
+                }
                 Toggle("Pause activity tracking", isOn: $trackingPaused)
                     .toggleStyle(.switch).controlSize(.small)
                 Text(
