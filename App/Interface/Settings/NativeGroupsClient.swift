@@ -49,17 +49,13 @@ extension NativeGroupsClient {
                 NSPasteboard.general.clearContents()
                 return NSPasteboard.general.setString(link, forType: .string)
             },
+            didCreateInvite: {
+                SocialStore.shared.invalidateInvitationHistory()
+            },
             didChange: { _ in
                 // Refresh the popover without changing its navigation or opening it.
                 Task {
-                    if let groups: [NativeGroup] = try? await network.request(path: "/api/groups", method: .get) {
-                        SocialStore.shared.groups = groups.filter { $0.id != "global" }
-                        let tab = SocialStore.shared.tab
-                        if tab != "friends", tab != "global", !groups.contains(where: { $0.id == tab }) {
-                            SocialStore.shared.tab = "friends"
-                        }
-                    }
-                    await SocialStore.shared.refresh()
+                    await SocialStore.shared.refresh(force: true)
                 }
             }
         )

@@ -1,6 +1,7 @@
 import AppKit
 import ClerkKit
 import Combine
+import Defaults
 import Dependencies
 import SwiftUI
 import UniformTypeIdentifiers
@@ -32,7 +33,7 @@ final class NativeSettingsModel: ObservableObject {
         var keywords: String {
             switch self {
             case .account: "profile name username photo avatar bio location friend code"
-            case .general: "appearance theme dark light tracking pause quit"
+            case .general: "appearance theme dark light startup launch login tracking pause quit"
             case .groups: "friends members invite create rename leaderboard"
             case .security: "password email mfa two factor authenticator delete account"
             case .sessions: "devices sign out revoke login"
@@ -83,6 +84,7 @@ final class NativeSettingsModel: ObservableObject {
     var user: ClerkKit.User? { NativeSession.shared.user }
     var canGoBack: Bool { self.historyIndex > 0 }
     var canGoForward: Bool { self.historyIndex < self.history.count - 1 }
+    var sessionsLoaded: Bool { self.sessionsLoadedAt != nil }
     var title: String {
         if self.route.section == .groups { return self.groupSettings.title }
         let titles = [
@@ -133,6 +135,15 @@ final class NativeSettingsModel: ObservableObject {
     }
 
     func navigateGroups(_ page: NativeGroupsPage) { self.navigate(.groups, groupsPage: page) }
+
+    func refreshCurrentRoute() {
+        switch self.route.section {
+        case .account: Task { await self.load() }
+        case .groups: self.groupSettings.open(self.route.groupsPage)
+        case .sessions: self.refreshSessions()
+        default: break
+        }
+    }
 
     func travel(_ delta: Int) {
         let target = self.historyIndex + delta
@@ -205,6 +216,11 @@ final class NativeSettingsModel: ObservableObject {
     }
 
     func load() async {
+        if !self.profileReconciliationStarted {
+            self.profileReconciliationStarted = true
+            do { try await self.network.syncNativeProfile() }
+            catch { self.profileReconciliationStarted = false }
+        }
         guard self.inviteCode.isEmpty, !self.inviteLoading else { return }
         self.inviteLoading = true
         self.inviteError = nil
@@ -238,12 +254,13 @@ final class NativeSettingsModel: ObservableObject {
             self.savedProfile = draft
             self.navigate(.account)
             self.notice = "Profile saved."
-            await SocialStore.shared.refresh()
+            await SocialStore.shared.refresh(force: true)
         }
     }
 
     func syncProfile() async throws {
-        let _: NativeAck = try await network.request(path: "/api/native/profile", method: .post)
+        try await self.network.syncNativeProfile()
+        self.profileReconciliationStarted = true
         _ = try await self.user?.reload()
     }
 
@@ -259,7 +276,7 @@ final class NativeSettingsModel: ObservableObject {
             _ = try await self.user?.setProfileImage(imageData: bytes)
             try await self.syncProfile()
             self.notice = "Photo updated."
-            await SocialStore.shared.refresh()
+            await SocialStore.shared.refresh(force: true)
         }
     }
 
@@ -293,6 +310,7 @@ final class NativeSettingsModel: ObservableObject {
                     newPassword: new,
                     signOutOfOtherSessions: true
                 ))
+            if self.sessionsLoadedAt != nil { self.sessionsLoadedAt = .distantPast }
             self.navigate(.security)
             self.notice = "Password updated. Other sessions have been signed out."
         }
@@ -332,9 +350,16 @@ final class NativeSettingsModel: ObservableObject {
         }
     }
 
-    func loadSessions() async throws { self.sessions = try await self.user?.getSessions() ?? [] }
-    func refreshSessions() {
+    func loadSessions() async throws {
+        self.sessions = try await self.user?.getSessions() ?? []
+        self.sessionsLoadedAt = .now
+    }
+
+    func refreshSessions(force: Bool = false) {
         guard !self.sessionsLoading else { return }
+        if !force,
+           let sessionsLoadedAt,
+           Date.now.timeIntervalSince(sessionsLoadedAt) < Self.cacheLifetime { return }
         self.sessionsLoading = true; self.sessionsError = nil
         Task {
             defer { self.sessionsLoading = false }
@@ -347,7 +372,13 @@ final class NativeSettingsModel: ObservableObject {
             @Dependency(\.tracker) var tracker
             try await tracker.resetActivity()
             self.notice = "Activity history cleared."
-            await SocialStore.shared.refresh()
+            if let userID = Defaults[.currentUserID] {
+                SocialStore.shared.invalidateActivity(for: userID)
+            }
+            await SocialStore.shared.refresh(force: true)
+            if let userID = Defaults[.currentUserID] {
+                SocialStore.shared.refreshPersonIfVisible(userID)
+            }
         }
     }
 
@@ -396,7 +427,11 @@ final class NativeSettingsModel: ObservableObject {
 
     // MARK: Private
 
+    private static let cacheLifetime: TimeInterval = 30
+
     private var savedProfile: ProfileDraft?
+    private var profileReconciliationStarted = false
+    private var sessionsLoadedAt: Date?
     private var groupsObservation: AnyCancellable?
     private var pendingEmail: EmailAddress?
     private var pendingAction: (() async throws -> Void)?

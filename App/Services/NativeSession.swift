@@ -91,6 +91,10 @@ final class NativeSession: ObservableObject {
             let info = try await network.userInfo()
             guard self.session?.id == sessionID, self.session?.status == .active else { throw CancellationError() }
             Defaults[.currentUserID] = info.user.id
+            // Heal a prior partial save where Clerk succeeded but the Pulso
+            // profile store was temporarily unavailable. Sign-in itself stays
+            // usable if this best-effort reconciliation fails.
+            try? await network.syncNativeProfile()
             self.welcomeAccount = WelcomeAccount(
                 id: info.user.id, firstName: self.user?.firstName, fullName: info.user.name,
                 username: self.user?.username, avatarURL: self.user?.imageUrl

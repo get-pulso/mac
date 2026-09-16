@@ -49,10 +49,6 @@ struct NativeGroupsSettingsView: View {
 
     private var groupList: some View {
         Group {
-            Section {
-                Text("Private activity leaderboards for your friends.")
-                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
             Section("Your groups") {
                 if model.groups.isEmpty {
                     Text("No groups yet. Create one to get started.").foregroundStyle(.secondary)
@@ -88,6 +84,7 @@ struct NativeGroupsSettingsView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { navigate(.list) }
+                    .nativeSettingsActionButton()
                 actionButton("Create group", loading: "Creating…", key: "create", primary: true) {
                     model.create { navigate(.details($0)) }
                 }.disabled(!model.validName)
@@ -117,12 +114,15 @@ struct NativeGroupsSettingsView: View {
                     Text("25 times").tag(25)
                 }
                 LabeledContent("Invite people to this group") {
-                    actionButton(
-                        model.copied ? "Copied" : "Copy invite link",
-                        loading: "Creating…",
-                        key: "invite",
-                        action: model.copyInvite
-                    )
+                    Button(action: model.copyInvite) {
+                        NativeCopyButtonLabel(
+                            title: "Copy invite link",
+                            copied: model.copied,
+                            loadingTitle: "Creating…",
+                            isLoading: model.operation == "invite"
+                        )
+                    }
+                    .nativeSettingsActionButton()
                 }
             }
             Section {
@@ -142,7 +142,7 @@ struct NativeGroupsSettingsView: View {
                                 ) {
                                     model.removeMember(person)
                                 }
-                            }.controlSize(.small)
+                            }
                         }
                     }.padding(.vertical, 2)
                 }
@@ -150,6 +150,7 @@ struct NativeGroupsSettingsView: View {
                     HStack {
                         Spacer()
                         Button("Add friends…") { navigate(.addMembers(members.group.id)) }
+                            .nativeSettingsActionButton()
                     }
                 }
             } header: { Text("Members (\(members.members.count))") }
@@ -168,6 +169,7 @@ struct NativeGroupsSettingsView: View {
                     isLoading: model.operation == "remove"
                 )
             }
+            .nativeSettingsActionButton()
         }
     }
 
@@ -204,6 +206,7 @@ struct NativeGroupsSettingsView: View {
             HStack {
                 Spacer()
                 Button("Cancel") { navigate(.details(id)) }
+                    .nativeSettingsActionButton()
                 actionButton("Add friends", loading: "Adding…", key: "add-members", primary: true) {
                     model.addMembers { navigate(.details($0)) }
                 }.disabled(model.selectedMembers.isEmpty)
@@ -221,8 +224,8 @@ struct NativeGroupsSettingsView: View {
         let button = Button(action: action) {
             NativeAsyncButtonLabel(title: title, loadingTitle: loading, isLoading: model.operation == key)
         }
-        if primary { button.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction) }
-        else { button.buttonStyle(.bordered) }
+        if primary { button.nativeSettingsPrimaryButton().keyboardShortcut(.defaultAction) }
+        else { button.nativeSettingsActionButton() }
     }
 
     private func confirm(_ title: String, message: String, button: String, action: @escaping () -> Void) {

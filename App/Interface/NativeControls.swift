@@ -63,6 +63,80 @@ struct NativeAsyncButtonLabel: View {
     }
 }
 
+enum NativeSettingsButtonMetrics {
+    static let fontSize: CGFloat = 13
+    static let controlSize: ControlSize = .regular
+}
+
+private struct NativeSettingsButtonMetricsModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .font(.system(size: NativeSettingsButtonMetrics.fontSize))
+            .controlSize(NativeSettingsButtonMetrics.controlSize)
+    }
+}
+
+extension View {
+    func nativeSettingsActionButton() -> some View {
+        modifier(NativeSettingsButtonMetricsModifier())
+            .buttonStyle(.bordered)
+    }
+
+    func nativeSettingsPrimaryButton() -> some View {
+        modifier(NativeSettingsButtonMetricsModifier())
+            .buttonStyle(.borderedProminent)
+    }
+}
+
+/// Keeps copy actions stable in size while their feedback swaps in place.
+/// The motion combines blur, scale and opacity, and becomes instantaneous
+/// when Reduce Motion is enabled.
+struct NativeCopyButtonLabel: View {
+    // MARK: Internal
+
+    let title: String
+    let copied: Bool
+    var loadingTitle: String?
+    var isLoading = false
+
+    var body: some View {
+        ZStack {
+            stateText(title, visible: !copied && !isLoading)
+            stateText("Copied", visible: copied && !isLoading)
+            if let loadingTitle {
+                HStack(spacing: 6) {
+                    NativeProgress(active: isLoading, label: loadingTitle, delay: .milliseconds(180))
+                    Text(loadingTitle)
+                }
+                .modifier(CopyLabelStateModifier(visible: isLoading))
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: copied)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isLoading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isLoading ? loadingTitle ?? title : copied ? "Copied" : title)
+    }
+
+    // MARK: Private
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func stateText(_ value: String, visible: Bool) -> some View {
+        Text(value).modifier(CopyLabelStateModifier(visible: visible))
+    }
+}
+
+private struct CopyLabelStateModifier: ViewModifier {
+    let visible: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: self.visible ? 0 : 4)
+            .scaleEffect(self.visible ? 1 : 0.92)
+            .opacity(self.visible ? 1 : 0)
+    }
+}
+
 /// A quiet macOS skeleton: structure is visible after a short threshold, so
 /// fast requests never flash a loader. Pulse is disabled with Reduce Motion.
 struct NativeSkeletonShape: View {

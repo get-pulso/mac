@@ -21,11 +21,19 @@ struct NativeGroupsChecks {
 
         let owner = NativeContact(id: "owner", name: "Owner", email: nil, avatar_url: nil, is_creator: true)
         let friend = NativeContact(id: "friend", name: "Friend", email: nil, avatar_url: nil, is_creator: false)
+        let eligibleFriend = NativePerson(
+            user_id: "friend", name: "Friend", avatar_url: nil, rank: nil, active_minutes: nil,
+            last_active_at: nil, bio: nil, location: nil, website: nil, twitter: nil, telegram: nil, active_app: nil
+        )
         var group = NativeGroup(id: "one", name: "Studio", created_by: "owner", is_creator: true)
+        var currentMembers = [owner, friend]
         var ownerAccess = true
         var failList = true
         var failRename = false
         var slowDetails = false
+        var listRequests = 0
+        var memberRequests = 0
+        var eligibleRequests = 0
         var createdNames: [String] = []
         var renames: [String] = []
         var inviteLimits: [Int] = []
@@ -34,14 +42,20 @@ struct NativeGroupsChecks {
         var removedMembers: [String] = []
         var added: [String] = []
         var refreshes = 0
+        var createdInvites = 0
         let client = NativeGroupsClient(
             list: {
+                listRequests += 1
                 if failList { throw NativeError.message("Offline") }
                 return [group, NativeGroup(id: "global", name: "Global", created_by: nil, is_creator: nil)]
             },
             members: { id in
+                memberRequests += 1
                 if slowDetails { try await Task.sleep(for: .milliseconds(40)) }
-                return NativeMembers(members: [owner, friend], group: .init(id: id, name: group.name, is_user_creator: ownerAccess))
+                return NativeMembers(
+                    members: currentMembers,
+                    group: .init(id: id, name: group.name, is_user_creator: ownerAccess)
+                )
             },
             create: { name in createdNames.append(name); return group },
             rename: { _, name in
@@ -50,11 +64,15 @@ struct NativeGroupsChecks {
                 group = NativeGroup(id: "one", name: name, created_by: "owner", is_creator: true)
             },
             remove: { _, isOwner in removed.append(isOwner) },
-            removeMember: { _, id in removedMembers.append(id) },
+            removeMember: { _, id in removedMembers.append(id); currentMembers.removeAll { $0.id == id } },
             addMembers: { _, ids in added = ids },
-            eligibleMembers: { _ in [] },
+            eligibleMembers: { _ in
+                eligibleRequests += 1
+                return currentMembers.contains(where: { $0.id == eligibleFriend.id }) ? [] : [eligibleFriend]
+            },
             invite: { _, limit in inviteLimits.append(limit); return "https://example.invalid/invite/\(limit)" },
             copy: { copiedLinks.append($0); return true },
+            didCreateInvite: { createdInvites += 1 },
             didChange: { _ in refreshes += 1 }
         )
         let model = NativeGroupsModel(client: client)
@@ -65,6 +83,11 @@ struct NativeGroupsChecks {
         model.reload()
         try await settle { model.loaded }
         expect(model.groups.count == 1, "Global leaderboard isn't a managed group")
+        let loadedListRequests = listRequests
+        model.open(.create)
+        model.open(.list)
+        expect(model.loaded && !model.loading, "A cached list renders synchronously")
+        expect(listRequests == loadedListRequests, "A fresh list isn't requested twice")
 
         model.open(.create)
         model.name = "   "
@@ -81,6 +104,7 @@ struct NativeGroupsChecks {
         model.create { createdID = $0; model.open(.details($0)) }
         try await settle { createdID != nil && model.loaded }
         expect(createdNames == ["Studio"] && createdID == "one", "Create then open its detail page")
+        expect(memberRequests == 1 && !model.loading, "Created group details are prefetched before navigation")
         expect(!model.hasChanges && model.title == "Studio", "Loaded name is the saved baseline")
         model.save()
         expect(!model.busy && renames.isEmpty, "Unchanged name must not save")
@@ -106,7 +130,12 @@ struct NativeGroupsChecks {
         model.copyInvite()
         try await settle { !model.busy }
         expect(inviteLimits == [1, 5], "New options generate a new invitation")
+        expect(createdInvites == 2, "Only newly generated invitations invalidate history")
 
+        model.open(.addMembers("one"))
+        try await settle { model.loaded && !model.loading }
+        let eligibleRequestsBeforeRemoval = eligibleRequests
+        model.open(.details("one"))
         model.removeMember(owner)
         expect(!model.busy, "Owner cannot remove themselves as a member")
         model.removeMember(friend)
@@ -114,7 +143,17 @@ struct NativeGroupsChecks {
         expect(removedMembers == ["friend"] && model.members?.members.count == 1, "Remove updates displayed members")
 
         model.open(.addMembers("one"))
-        try await settle { model.loaded }
+        expect(model.loaded && model.loading, "Stale eligible friends stay rendered while revalidating")
+        try await settle { model.loaded && !model.loading }
+        expect(
+            eligibleRequests == eligibleRequestsBeforeRemoval + 1 && model.eligibleMembers.map(\.id) == ["friend"],
+            "Removing a member invalidates the eligible-friends cache"
+        )
+        let loadedEligibleRequests = eligibleRequests
+        model.open(.details("one"))
+        model.open(.addMembers("one"))
+        expect(model.loaded && !model.loading, "Cached eligible friends render synchronously")
+        expect(eligibleRequests == loadedEligibleRequests, "Fresh eligible friends aren't requested twice")
         model.selectedMembers = ["new-friend"]
         model.addMembers { model.open(.details($0)) }
         try await settle { !model.busy && model.loaded }
@@ -122,7 +161,8 @@ struct NativeGroupsChecks {
 
         ownerAccess = false
         model.open(.details("one"))
-        try await settle { model.loaded }
+        model.reload()
+        try await settle { model.loaded && !model.loading }
         model.name = "Unauthorized rename"
         model.save()
         model.removeMember(friend)
@@ -133,6 +173,7 @@ struct NativeGroupsChecks {
 
         slowDetails = true
         model.open(.details("one"))
+        model.reload()
         model.open(.create)
         try await Task.sleep(for: .milliseconds(60))
         expect(model.page == .create && model.members == nil && model.name.isEmpty, "Stale reads cannot replace a new page")

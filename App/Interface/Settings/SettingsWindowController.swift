@@ -12,8 +12,11 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     func show(section: NativeSettingsModel.Section? = nil, page: String = "", groupsPage: NativeGroupsPage = .list) {
         @Dependency(\.windowManager) var popover
         popover.hide()
+        let wasVisible = self.window?.isVisible == true
+        let previousRoute = self.model?.route
         if self.window == nil { self.makeWindow() }
         if let section { self.model?.navigate(section, page: page, groupsPage: groupsPage) }
+        if !wasVisible, previousRoute == self.model?.route { self.model?.refreshCurrentRoute() }
         self.updateNavigation()
         if let window, let bounds = window.contentView?.bounds,
            bounds.width < NativeLayout.settingsMinimumSize.width || bounds.height < NativeLayout.settingsMinimumSize
@@ -36,6 +39,10 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     }
 
     func confirmTermination() -> Bool { self.model?.confirmLeavingProfile() ?? true }
+
+    func invalidateGroups() {
+        self.model?.groupSettings.invalidateList()
+    }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [self.separatorID, self.navigationID, .flexibleSpace, self.newGroupID]

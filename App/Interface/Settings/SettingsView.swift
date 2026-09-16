@@ -62,6 +62,7 @@ struct SettingsView: View {
             }
             VStack {
                 Button(button, action: action)
+                    .nativeSettingsActionButton()
             }
         }
     }

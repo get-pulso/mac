@@ -27,6 +27,7 @@ struct NativeGroupsClient {
     var eligibleMembers: (String) async throws -> [NativePerson]
     var invite: (String, Int) async throws -> String
     var copy: (String) -> Bool
+    var didCreateInvite: () -> Void
     var didChange: ([NativeGroup]) -> Void
 }
 
@@ -80,14 +81,11 @@ final class NativeGroupsModel: ObservableObject {
         self.page = destination
         self.error = nil
         self.loadError = nil
-        self.loaded = false
-        self.name = ""
-        self.members = nil
-        self.eligibleMembers = []
         self.selectedMembers = []
         self.clearInvite()
         self.usageLimit = 1
-        self.reload()
+        self.restoreCachedValue(for: destination)
+        self.load(force: false)
     }
 
     func discardChanges() {
@@ -95,35 +93,11 @@ final class NativeGroupsModel: ObservableObject {
     }
 
     func reload() {
-        self.loadTask?.cancel()
-        let destination = self.page
-        self.loadError = nil
-        if destination == .create { self.loaded = true; self.loading = false; return }
-        self.loading = true
-        self.loadTask = Task {
-            defer { if !Task.isCancelled { loading = false } }
-            do {
-                switch destination {
-                case .list:
-                    let result = try await client.list()
-                    try Task.checkCancellation()
-                    groups = result.filter { $0.id != "global" }
-                case let .details(id):
-                    let result = try await client.members(id)
-                    try Task.checkCancellation()
-                    members = result
-                    name = result.group.name
-                case let .addMembers(id):
-                    let result = try await client.eligibleMembers(id)
-                    try Task.checkCancellation()
-                    eligibleMembers = result
-                case .create: break
-                }
-                loaded = true
-            } catch {
-                if !Task.isCancelled { loadError = error.localizedDescription }
-            }
-        }
+        self.load(force: true)
+    }
+
+    func invalidateList() {
+        self.groupsCache.invalidate("groups")
     }
 
     func create(completion: @escaping (String) -> Void) {
@@ -131,7 +105,16 @@ final class NativeGroupsModel: ObservableObject {
         let submittedName = self.normalizedName
         self.run("create") {
             let group = try await self.client.create(submittedName)
-            self.groups.append(group)
+            if let refreshed = try? await self.client.list() {
+                self.groups = refreshed.filter { $0.id != "global" }
+                self.groupsCache.insert(self.groups, for: "groups")
+            } else if self.groupsCache.contains("groups") {
+                self.groups.append(group)
+                self.groupsCache.insert(self.groups, for: "groups")
+            }
+            if let snapshot = try? await self.client.members(group.id) {
+                self.membersCache.insert(snapshot, for: group.id)
+            }
             self.name = ""
             self.client.didChange(self.groups)
             self.operation = nil
@@ -144,15 +127,18 @@ final class NativeGroupsModel: ObservableObject {
         let submittedName = self.normalizedName
         self.run("save") {
             try await self.client.rename(members.group.id, submittedName)
-            self.members = NativeMembers(members: members.members, group: .init(
+            let updatedMembers = NativeMembers(members: members.members, group: .init(
                 id: members.group.id, name: submittedName, is_user_creator: true
             ))
+            self.members = updatedMembers
+            self.membersCache.insert(updatedMembers, for: members.group.id)
             self.name = submittedName
             self.groups = self.groups.map { group in
                 group.id == members.group.id ? NativeGroup(
                     id: group.id, name: submittedName, created_by: group.created_by, is_creator: group.is_creator
                 ) : group
             }
+            if self.groupsCache.contains("groups") { self.groupsCache.insert(self.groups, for: "groups") }
             self.client.didChange(self.groups)
         }
     }
@@ -161,7 +147,15 @@ final class NativeGroupsModel: ObservableObject {
         guard let members else { return }
         self.run("remove") {
             try await self.client.remove(members.group.id, members.group.is_user_creator)
-            self.groups.removeAll { $0.id == members.group.id }
+            if let refreshed = try? await self.client.list() {
+                self.groups = refreshed.filter { $0.id != "global" }
+                self.groupsCache.insert(self.groups, for: "groups")
+            } else if self.groupsCache.contains("groups") {
+                self.groups.removeAll { $0.id == members.group.id }
+                self.groupsCache.insert(self.groups, for: "groups")
+            }
+            self.membersCache.removeValue(for: members.group.id)
+            self.eligibleMembersCache.removeValue(for: members.group.id)
             self.members = nil
             self.name = ""
             self.client.didChange(self.groups)
@@ -174,7 +168,13 @@ final class NativeGroupsModel: ObservableObject {
         guard let members, members.group.is_user_creator, person.is_creator != true else { return }
         self.run("remove-\(person.id)") {
             try await self.client.removeMember(members.group.id, person.id)
-            self.members = NativeMembers(members: members.members.filter { $0.id != person.id }, group: members.group)
+            let updatedMembers = NativeMembers(
+                members: members.members.filter { $0.id != person.id },
+                group: members.group
+            )
+            self.members = updatedMembers
+            self.membersCache.insert(updatedMembers, for: members.group.id)
+            self.eligibleMembersCache.invalidate(members.group.id)
             self.client.didChange(self.groups)
         }
     }
@@ -184,6 +184,14 @@ final class NativeGroupsModel: ObservableObject {
         let selected = Array(selectedMembers)
         self.run("add-members") {
             try await self.client.addMembers(id, selected)
+            if let snapshot = try? await self.client.members(id) {
+                self.membersCache.insert(snapshot, for: id)
+            } else {
+                self.membersCache.removeValue(for: id)
+            }
+            let remaining = self.eligibleMembers.filter { !self.selectedMembers.contains($0.id) }
+            self.eligibleMembers = remaining
+            self.eligibleMembersCache.insert(remaining, for: id)
             self.selectedMembers = []
             self.client.didChange(self.groups)
             self.operation = nil
@@ -200,6 +208,7 @@ final class NativeGroupsModel: ObservableObject {
             else {
                 link = try await self.client.invite(id, limit)
                 self.inviteLink = link
+                self.client.didCreateInvite()
             }
             guard self.client.copy(link) else { throw NativeError.message("Couldn't copy the link. Try again.") }
             self.copied = true
@@ -213,10 +222,102 @@ final class NativeGroupsModel: ObservableObject {
 
     // MARK: Private
 
+    private static let cacheLifetime: TimeInterval = 30
+
     private let client: NativeGroupsClient
     private var loadTask: Task<Void, Never>?
     private var copyTask: Task<Void, Never>?
     private var inviteLink: String?
+    private var groupsCache = NativeResourceCache<String, [NativeGroup]>()
+    private var membersCache = NativeResourceCache<String, NativeMembers>()
+    private var eligibleMembersCache = NativeResourceCache<String, [NativePerson]>()
+
+    private func load(force: Bool) {
+        self.loadTask?.cancel()
+        let destination = self.page
+        self.loadError = nil
+        if destination == .create { self.loaded = true; self.loading = false; return }
+        if !force, self.isFresh(destination) {
+            self.loading = false
+            return
+        }
+        self.loading = true
+        self.loadTask = Task {
+            defer { if !Task.isCancelled { loading = false } }
+            do {
+                switch destination {
+                case .list:
+                    let result = try await client.list()
+                    try Task.checkCancellation()
+                    let visibleGroups = result.filter { $0.id != "global" }
+                    groups = visibleGroups
+                    groupsCache.insert(visibleGroups, for: "groups")
+                case let .details(id):
+                    let result = try await client.members(id)
+                    try Task.checkCancellation()
+                    members = result
+                    name = result.group.name
+                    membersCache.insert(result, for: id)
+                case let .addMembers(id):
+                    let result = try await client.eligibleMembers(id)
+                    try Task.checkCancellation()
+                    eligibleMembers = result
+                    eligibleMembersCache.insert(result, for: id)
+                case .create: break
+                }
+                loaded = true
+            } catch {
+                if !Task.isCancelled { loadError = error.localizedDescription }
+            }
+        }
+    }
+
+    private func restoreCachedValue(for destination: NativeGroupsPage) {
+        switch destination {
+        case .list:
+            if let cached = self.groupsCache.value(for: "groups") {
+                self.groups = cached
+                self.loaded = true
+            } else {
+                self.loaded = false
+            }
+        case .create:
+            self.name = ""
+            self.members = nil
+            self.eligibleMembers = []
+            self.loaded = true
+        case let .details(id):
+            self.eligibleMembers = []
+            if let cached = self.membersCache.value(for: id) {
+                self.members = cached
+                self.name = cached.group.name
+                self.loaded = true
+            } else {
+                self.members = nil
+                self.name = ""
+                self.loaded = false
+            }
+        case let .addMembers(id):
+            self.members = nil
+            self.name = ""
+            if let cached = self.eligibleMembersCache.value(for: id) {
+                self.eligibleMembers = cached
+                self.loaded = true
+            } else {
+                self.eligibleMembers = []
+                self.loaded = false
+            }
+        }
+    }
+
+    private func isFresh(_ destination: NativeGroupsPage) -> Bool {
+        switch destination {
+        case .list: self.groupsCache.isFresh("groups", for: Self.cacheLifetime)
+        case .create: true
+        case let .details(id): self.membersCache.isFresh(id, for: Self.cacheLifetime)
+        case let .addMembers(id): self.eligibleMembersCache.isFresh(id, for: Self.cacheLifetime)
+        }
+    }
 
     private func clearInvite() {
         self.inviteLink = nil

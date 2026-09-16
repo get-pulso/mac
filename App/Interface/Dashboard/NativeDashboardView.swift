@@ -149,23 +149,33 @@ struct NativeDashboardView: View {
     }
 
     private var profileHeader: some View {
-        HStack(spacing: 8) {
-            NativeBackButton(help: "Back to \(backDestinationTitle)") { store.goBack() }
-            Spacer()
-            if case let .person(id) = store.screen {
-                if id == Defaults[.currentUserID] {
-                    profileHeaderAction("Edit") {
-                        SettingsWindowController.shared.show(section: .account, page: "edit")
-                    }
-                } else if store.directFriendIDs.contains(id), let person = store.selectedPerson {
-                    profileHeaderAction(
-                        "Remove",
-                        isLoading: store.isRunning("remove-friend-\(id)")
-                    ) {
-                        removeFriend(person, id: id)
+        HStack(spacing: 0) {
+            HStack {
+                NativeBackButton(help: "Back to \(backDestinationTitle)") { store.goBack() }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Profile")
+                .font(.system(size: 13, weight: .medium))
+                .fixedSize()
+
+            HStack {
+                if case let .person(id) = store.screen {
+                    if id == Defaults[.currentUserID] {
+                        profileHeaderAction("Edit") {
+                            SettingsWindowController.shared.show(section: .account, page: "edit")
+                        }
+                    } else if store.directFriendIDs.contains(id), let person = store.selectedPerson {
+                        profileHeaderAction(
+                            "Remove",
+                            isLoading: store.isRunning("remove-friend-\(id)")
+                        ) {
+                            removeFriend(person, id: id)
+                        }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 12)
         .frame(height: NativeLayout.popoverHeaderHeight)
@@ -211,7 +221,7 @@ struct NativeDashboardView: View {
                         title: "Couldn't load activity",
                         message: "Check your connection and try again.",
                         actionTitle: "Retry",
-                        action: { Task { await store.refresh() } }
+                        action: { Task { await store.refresh(force: true) } }
                     )
                 case .empty:
                     NativeStateMessage(
@@ -235,7 +245,7 @@ struct NativeDashboardView: View {
                     }
                     if listPhase == .failedWithContent {
                         NativeInlineError(message: store.listError ?? "Couldn't refresh activity") {
-                            Task { await store.refresh() }
+                            Task { await store.refresh(force: true) }
                         }.padding(12)
                     }
                 }
@@ -246,14 +256,14 @@ struct NativeDashboardView: View {
 
     private var listPhase: ContentLoadPhase {
         ContentLoadPhase.resolve(
-            isLoading: self.store.loading,
+            isLoading: self.store.loading && !self.store.hasLoadedCurrentList,
             hasContent: !self.store.people.isEmpty,
             hasError: self.store.listError != nil
         )
     }
 
     private var scopeSummary: String {
-        if self.store.loading, self.store.people.isEmpty { return "Loading activity…" }
+        if self.store.loading, !self.store.hasLoadedCurrentList { return "Loading activity…" }
         let count = self.store.people.count
         if self.store.tab == "global" { return count == 1 ? "1 person" : "\(count) people" }
         if self.store.tab == "friends" {
@@ -551,8 +561,9 @@ struct NativeDashboardView: View {
         self.confirm("Remove \(person.displayName) from your friends?") {
             store.run("Removing friend…", key: "remove-friend-\(id)") {
                 try await store.mutate("/api/friends/\(id)/delete", method: .delete)
+                store.removeDirectFriend(id)
                 store.showList(notice: "Friend removed.")
-                await store.refresh()
+                await store.refresh(force: true)
             }
         }
     }
@@ -658,27 +669,51 @@ struct NativeDashboardView: View {
                 showsOnlineIndicator: person.id == Defaults[.currentUserID] || person.isActiveNow
             )
             VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                    if person
-                        .id ==
-                        Defaults[.currentUserID] { Text("you").foregroundStyle(.tertiary).font(.system(size: 11)) }
-                    Spacer(minLength: 4)
-                    AnimatedDuration(minutes: person.active_minutes ?? 0)
-                        .foregroundStyle(.secondary).font(.system(size: 12))
-                    if let activeApp = person.active_app, person.isActiveNow {
-                        NativeTrackedAppIcon(url: activeApp.icon_url, size: 16)
-                            .help(activeApp.name)
+                HStack(alignment: .center, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        if person
+                            .id ==
+                            Defaults[.currentUserID] { Text("you").foregroundStyle(.tertiary).font(.system(size: 11)) }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(alignment: .center, spacing: 8) {
+                        AnimatedDuration(minutes: person.active_minutes ?? 0)
+                            .foregroundStyle(.secondary).font(.system(size: 12))
+                            .fixedSize()
+                        if let activeApp = person.active_app, person.isActiveNow {
+                            NativeTrackedAppIcon(url: activeApp.icon_url, size: 28)
+                                .help(activeApp.name)
+                        }
+                    }
+                    .frame(height: 28)
                 }
-                let subtitle = [person.location, person.bio].compactMap { $0 }.filter { !$0.isEmpty }
-                    .joined(separator: " · ")
-                if !subtitle.isEmpty {
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                        .multilineTextAlignment(.leading)
-                }
+                Text(self.personSubtitle(person))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .multilineTextAlignment(.leading)
             }
         }.padding(.horizontal, 13).padding(.vertical, 10).contentShape(Rectangle())
+    }
+
+    private func personSubtitle(_ person: NativePerson) -> String {
+        let location = person.location?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let bio = person.bio?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profileText: [String] = [location, bio].compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        if !profileText.isEmpty { return profileText.joined(separator: " · ") }
+
+        let links = [
+            person.website?.isEmpty == false ? "Website" : nil,
+            person.twitter?.isEmpty == false ? "X" : nil,
+            person.telegram?.isEmpty == false ? "Telegram" : nil,
+        ].compactMap { $0 }
+        if !links.isEmpty { return "Links: \(links.joined(separator: " · "))" }
+
+        return person.id == Defaults[.currentUserID] ? "Add profile details" : "No profile details"
     }
 
     @ViewBuilder private func personDetail(_ id: String) -> some View {
@@ -696,31 +731,16 @@ struct NativeDashboardView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .lineLimit(1)
 
-                let identity = [person.location, id == Defaults[.currentUserID] ? "You" : nil]
-                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
-                if !identity.isEmpty {
-                    Text(identity).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                if let location = person.location, !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Label(location, systemImage: "mappin")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else if id == Defaults[.currentUserID] {
+                    Text("You").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity)
-
-            if [person.website, person.twitter, person.telegram].contains(where: { $0?.isEmpty == false }) {
-                HStack(spacing: 18) {
-                    profileLink("Website", systemImage: "globe", raw: person.website)
-                    profileLink(
-                        "X",
-                        systemImage: "at",
-                        raw: person.twitter.map { $0.hasPrefix("https://") ? $0 : "https://x.com/\($0)" }
-                    )
-                    profileLink(
-                        "Telegram",
-                        systemImage: "paperplane.fill",
-                        raw: person.telegram.map { $0.hasPrefix("https://") ? $0 : "https://t.me/\($0)" }
-                    )
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 2)
-            }
 
             if let bio = person.bio, !bio.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(bio)
@@ -731,6 +751,25 @@ struct NativeDashboardView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 12)
             }
+
+            if [person.website, person.twitter, person.telegram].contains(where: { $0?.isEmpty == false }) {
+                HStack(spacing: 8) {
+                    profileLink("Website", assetImage: "ProfileWebsite", raw: person.website)
+                    profileLink(
+                        "X",
+                        assetImage: "ProfileX",
+                        raw: person.twitter.map { $0.hasPrefix("https://") ? $0 : "https://x.com/\($0)" }
+                    )
+                    profileLink(
+                        "Telegram",
+                        assetImage: "ProfileTelegram",
+                        raw: person.telegram.map { $0.hasPrefix("https://") ? $0 : "https://t.me/\($0)" }
+                    )
+                }
+                .frame(maxWidth: .infinity)
+            }
+
+            Divider()
 
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
@@ -759,9 +798,8 @@ struct NativeDashboardView: View {
                     .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
             }
             if let activeApp = store.activity?.active_app {
-                Divider()
-                self.sectionHeading("Active now")
                 self.trackedAppRow(activeApp, showsActiveState: true)
+                    .padding(.horizontal, 4)
             }
             if let topApps = store.activity?.top_apps, !topApps.isEmpty {
                 Divider()
@@ -776,30 +814,32 @@ struct NativeDashboardView: View {
         }
     }
 
-    @ViewBuilder private func profileLink(_ label: String, systemImage: String, raw: String?) -> some View {
+    @ViewBuilder private func profileLink(_ label: String, assetImage: String, raw: String?) -> some View {
         if let raw, let url = URL(string: raw), ["https", "http"].contains(url.scheme ?? "") {
-            VStack(spacing: 5) {
-                if #available(macOS 26.0, *) {
-                    Link(destination: url) {
-                        Image(systemName: systemImage)
-                            .font(.system(size: 14, weight: .medium))
-                            .frame(width: 30, height: 30)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                } else {
-                    Link(destination: url) {
-                        Image(systemName: systemImage)
-                            .font(.system(size: 14, weight: .medium))
-                            .frame(width: 30, height: 30)
-                    }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.circle)
+            Link(destination: url) {
+                VStack(spacing: 7) {
+                    Image(assetImage)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                        .foregroundStyle(.primary)
+                    Text(label).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 }
-                Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 70)
+                .contentShape(Rectangle())
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                }
             }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .help(label)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(label)
+            .accessibilityLabel("Open \(label)")
         }
     }
 
@@ -1011,8 +1051,7 @@ struct NativeDashboardView: View {
 
     private func refreshVisibleScreen() {
         guard self.windowManager.isVisible, !self.store.busy else { return }
-        if self.store.screen == .list { Task { await store.refresh() } }
-        else if case .person = self.store.screen, !self.store.screenLoading { store.open(store.screen) }
+        self.store.refreshCurrentScreen()
     }
 }
 

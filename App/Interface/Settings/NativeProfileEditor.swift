@@ -69,7 +69,8 @@ struct NativeProfileEditor: View {
                     loadingTitle: "Uploading…",
                     isLoading: model.isRunning("upload-photo")
                 )
-            }.controlSize(.small)
+            }
+            .nativeSettingsActionButton()
             Spacer(minLength: 0)
         }
     }
@@ -88,13 +89,15 @@ struct NativeProfileEditor: View {
                         .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     Spacer(minLength: 8)
                     Button("Cancel") { model.navigate(.account) }
-                        .keyboardShortcut(.cancelAction).disabled(model.busy)
+                        .nativeSettingsActionButton()
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(model.busy)
                     Button(action: save) {
                         NativeAsyncButtonLabel(
                             title: "Save changes", loadingTitle: "Saving…", isLoading: model.isRunning("save-profile")
                         )
                     }
-                    .buttonStyle(.borderedProminent)
+                    .nativeSettingsPrimaryButton()
                     .keyboardShortcut("s", modifiers: .command)
                     .disabled(!model.hasProfileChanges || model.busy)
                 }

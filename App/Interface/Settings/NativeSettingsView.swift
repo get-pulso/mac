@@ -1,4 +1,5 @@
 import ClerkKit
+import Combine
 import Dependencies
 import SwiftUI
 
@@ -19,12 +20,23 @@ struct NativeSettingsView: View {
 
     // MARK: Private
 
+    private enum CopyAction: Hashable {
+        case authenticatorKey
+        case friendCode
+        case recoveryCodes
+    }
+
     @ObservedObject private var session = NativeSession.shared
     @AppStorage("pulso.appearance") private var appearance = "system"
     @AppStorage("pulso.trackingPaused") private var trackingPaused = false
     @State private var confirming = false
     @State private var confirmTitle = ""
     @State private var confirmAction: (() -> Void)?
+    @State private var launchAtLoginEnabled = false
+    @State private var launchAtLoginError: String?
+    @State private var launchAtLoginStatus = LaunchAtLogin.status
+
+    @State private var copiedAction: CopyAction?
 
     private var settingsRoot: some View {
         settingsContent
@@ -34,6 +46,15 @@ struct NativeSettingsView: View {
             .textFieldStyle(.roundedBorder)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .task { await model.load() }
+            .onAppear { refreshLaunchAtLogin() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                refreshLaunchAtLogin()
+            }
+            .task(id: copiedAction) {
+                guard copiedAction != nil else { return }
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                copiedAction = nil
+            }
             .onChange(of: appearance) { _, value in
                 NSApp.appearance = value == "system" ? nil : NSAppearance(named: value == "dark" ? .darkAqua : .aqua)
             }
@@ -75,7 +96,8 @@ struct NativeSettingsView: View {
                         .isEmpty { Label(location, systemImage: "mappin").font(.callout).foregroundStyle(.secondary) }
                 }
                 Spacer(minLength: 8)
-                Button("Edit profile") { model.navigate(.account, page: "edit") }.controlSize(.small)
+                Button("Edit profile") { model.navigate(.account, page: "edit") }
+                    .nativeSettingsActionButton()
             }.padding(.vertical, 6)
             panel("About you") {
                 let bio = model.metadata("bio")
@@ -103,7 +125,11 @@ struct NativeSettingsView: View {
                             Text(model.inviteCode.isEmpty ? "Unavailable" : model.inviteCode)
                                 .foregroundStyle(.secondary).textSelection(.enabled)
                         }
-                        Button("Copy") { copy(model.inviteCode) }.disabled(model.inviteCode.isEmpty)
+                        Button { copy(model.inviteCode, action: .friendCode) } label: {
+                            NativeCopyButtonLabel(title: "Copy", copied: copiedAction == .friendCode)
+                        }
+                        .nativeSettingsActionButton()
+                        .disabled(model.inviteCode.isEmpty)
                     }
                 }
             }
@@ -118,11 +144,27 @@ struct NativeSettingsView: View {
                     loadingTitle: "Signing out…",
                     isLoading: model.isRunning("sign-out")
                 )
-            }.disabled(model.busy)
+            }
+            .nativeSettingsActionButton()
+            .disabled(model.busy)
         case .general:
             panel("Appearance") {
                 Picker("Theme", selection: $appearance) {
                     Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark")
+                }
+            }
+            panel("Startup") {
+                Toggle("Open Pulso at login", isOn: launchAtLoginBinding)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                if launchAtLoginStatus == .requiresApproval {
+                    Text("Pulso is disabled in Login Items. Allow it in System Settings to start automatically.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("Open Login Items…") { LaunchAtLogin.openSystemSettings() }
+                        .nativeSettingsActionButton()
+                } else if let launchAtLoginError {
+                    NativeInlineError(message: launchAtLoginError)
                 }
             }
             panel("Activity") {
@@ -140,9 +182,12 @@ struct NativeSettingsView: View {
                         loadingTitle: "Clearing…",
                         isLoading: model.isRunning("clear-activity")
                     )
-                }.disabled(model.busy)
+                }
+                .nativeSettingsActionButton()
+                .disabled(model.busy)
             }
             Button("Quit Pulso") { NSApp.terminate(nil) }
+                .nativeSettingsActionButton()
         case .security:
             panel("Sign-in") {
                 info("Sign-in method", value: "Google")
@@ -190,18 +235,25 @@ struct NativeSettingsView: View {
                             loadingTitle: "Generating…",
                             isLoading: model.isRunning("backup-codes")
                         )
-                    }.disabled(model.busy)
+                    }
+                    .nativeSettingsActionButton()
+                    .disabled(model.busy)
                 }
             }
             panel("Account access") {
                 Button("Active sessions") { model.navigate(.sessions) }
+                    .nativeSettingsActionButton()
             }
             if session.user?
                 .deleteSelfEnabled ==
-                true { Button("Delete account…", role: .destructive) { model.navigate(.security, page: "delete") } }
+                true
+            {
+                Button("Delete account…", role: .destructive) { model.navigate(.security, page: "delete") }
+                    .nativeSettingsActionButton()
+            }
         case .sessions:
-            panel("Signed-in devices", loading: model.sessionsLoading && !model.sessions.isEmpty) {
-                if model.sessionsLoading, model.sessions.isEmpty {
+            panel("Signed-in devices", loading: model.sessionsLoading && model.sessionsLoaded) {
+                if model.sessionsLoading, !model.sessionsLoaded {
                     NativeLabeledRowsSkeleton(rows: 2)
                 } else {
                     ForEach(model.sessions, id: \.id) { item in
@@ -227,14 +279,17 @@ struct NativeSettingsView: View {
                                         loadingTitle: "Signing out…",
                                         isLoading: model.isRunning("revoke-session-\(item.id)")
                                     )
-                                }.disabled(model.busy)
+                                }
+                                .nativeSettingsActionButton()
+                                .disabled(model.busy)
                             } else { Text(item.status.rawValue).font(.caption).foregroundStyle(.secondary) }
                         }.padding(.vertical, 2)
                     }
                 }
-                if let error = model.sessionsError { NativeInlineError(message: error, retry: model.refreshSessions) }
-                else if model.sessions.isEmpty,
-                        !model.sessionsLoading { Text("No other signed-in devices.").foregroundStyle(.secondary) }
+                if let error = model.sessionsError {
+                    NativeInlineError(message: error) { model.refreshSessions(force: true) }
+                } else if model.sessions.isEmpty,
+                          model.sessionsLoaded { Text("No other signed-in devices.").foregroundStyle(.secondary) }
             }
         case .groups:
             EmptyView() // Groups owns its form and navigation within this same detail pane.
@@ -244,6 +299,7 @@ struct NativeSettingsView: View {
                 info("API", value: AppEnvironment.baseURL.absoluteString)
                 Text("Friends and activity in your menu bar.").foregroundStyle(.secondary)
                 Button("Check for updates") { @Dependency(\.updater) var updater; updater.checkForUpdates() }
+                    .nativeSettingsActionButton()
                     .disabled(AppEnvironment.isLocalBackend)
             }
         }
@@ -274,7 +330,11 @@ struct NativeSettingsView: View {
                 .secret
             {
                 Text(secret).font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled); Button("Copy key") { copy(secret) }
+                    .textSelection(.enabled)
+                Button { copy(secret, action: .authenticatorKey) } label: {
+                    NativeCopyButtonLabel(title: "Copy key", copied: copiedAction == .authenticatorKey)
+                }
+                .nativeSettingsActionButton()
             }
             labeled("Authentication code", text: $model.code)
             primary(
@@ -287,7 +347,10 @@ struct NativeSettingsView: View {
             Text("Keep these somewhere safe. Each code can only be used once.").foregroundStyle(.secondary)
             Text(model.backupCodes.joined(separator: "\n")).font(.system(.body, design: .monospaced))
                 .textSelection(.enabled)
-            Button("Copy codes") { copy(model.backupCodes.joined(separator: "\n")) }
+            Button { copy(model.backupCodes.joined(separator: "\n"), action: .recoveryCodes) } label: {
+                NativeCopyButtonLabel(title: "Copy codes", copied: copiedAction == .recoveryCodes)
+            }
+            .nativeSettingsActionButton()
             primary("I've saved my codes") { model.backupCodes = []; model.navigate(.security) }
         case "verify-identity":
             Text(
@@ -316,6 +379,7 @@ struct NativeSettingsView: View {
                     isLoading: model.isRunning("delete-account")
                 )
             }
+            .nativeSettingsActionButton()
             .disabled(model.confirmation != "DELETE" || model.busy)
         default: EmptyView()
         }
@@ -323,6 +387,13 @@ struct NativeSettingsView: View {
 
     private var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLoginEnabled },
+            set: { setLaunchAtLogin($0) }
+        )
     }
 
     private func panel(
@@ -385,7 +456,9 @@ struct NativeSettingsView: View {
                     loadingTitle: loadingTitle ?? action,
                     isLoading: key.map(model.isRunning) ?? false
                 )
-            }.disabled(model.busy)
+            }
+            .nativeSettingsActionButton()
+            .disabled(model.busy)
         }
     }
 
@@ -410,15 +483,32 @@ struct NativeSettingsView: View {
                     loadingTitle: loadingTitle ?? title,
                     isLoading: key.map(model.isRunning) ?? false
                 )
-            }.buttonStyle(.borderedProminent)
-                .disabled(model.busy).keyboardShortcut(.defaultAction)
+            }
+            .nativeSettingsPrimaryButton()
+            .disabled(model.busy).keyboardShortcut(.defaultAction)
         }
     }
 
-    private func copy(_ text: String) {
+    private func copy(_ text: String, action: CopyAction) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        self.model.notice = "Copied."
+        guard NSPasteboard.general.setString(text, forType: .string) else { return }
+        self.copiedAction = action
+    }
+
+    private func refreshLaunchAtLogin() {
+        self.launchAtLoginStatus = LaunchAtLogin.status
+        self.launchAtLoginEnabled = self.launchAtLoginStatus == .enabled
+        if self.launchAtLoginStatus == .enabled { self.launchAtLoginError = nil }
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        self.launchAtLoginError = nil
+        do {
+            try LaunchAtLogin.setEnabled(enabled)
+        } catch {
+            self.launchAtLoginError = error.localizedDescription
+        }
+        self.refreshLaunchAtLogin()
     }
 
     private func confirm(_ title: String, action: @escaping () -> Void) {

@@ -2,6 +2,7 @@ import Cocoa
 import Combine
 import Defaults
 import Dependencies
+import ServiceManagement
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -67,4 +68,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @Dependency(\.appRouter) private var appRouter
     @Dependency(\.updater) private var updater
     @Dependency(\.windowManager) private var windowManager
+}
+
+@MainActor
+enum LaunchAtLogin {
+    // MARK: Internal
+
+    static var status: SMAppService.Status { SMAppService.mainApp.status }
+
+    static func enableByDefaultIfNeeded() {
+        guard UserDefaults.standard.object(forKey: self.configuredKey) == nil else { return }
+        UserDefaults.standard.set(true, forKey: self.configuredKey)
+        guard self.status == .notRegistered || self.status == .notFound else { return }
+        try? SMAppService.mainApp.register()
+    }
+
+    static func setEnabled(_ enabled: Bool) throws {
+        UserDefaults.standard.set(true, forKey: self.configuredKey)
+        let service = SMAppService.mainApp
+        if enabled {
+            guard service.status != .enabled else { return }
+            if service.status == .requiresApproval {
+                SMAppService.openSystemSettingsLoginItems()
+            } else {
+                try service.register()
+            }
+        } else if service.status != .notRegistered {
+            try service.unregister()
+        }
+    }
+
+    static func openSystemSettings() {
+        SMAppService.openSystemSettingsLoginItems()
+    }
+
+    // MARK: Private
+
+    private static let configuredKey = "pulso.launchAtLoginConfigured"
 }

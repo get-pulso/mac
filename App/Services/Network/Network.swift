@@ -2,6 +2,11 @@ import Alamofire
 import Defaults
 import Foundation
 
+private struct NetworkTransportResponse: Sendable {
+    let statusCode: Int?
+    let data: Data
+}
+
 struct Network {
     // MARK: Lifecycle
 
@@ -34,6 +39,10 @@ struct Network {
             path: "/api/user/activity",
             method: .get
         )
+    }
+
+    func syncNativeProfile() async throws {
+        let _: NativeAck = try await self.request(path: "/api/native/profile", method: .post)
     }
 
     func publishActivity(_ activity: PendingActivity, userID: String) async throws -> UpdateResponse {
@@ -111,7 +120,7 @@ struct Network {
                 url: baseURL.appending(path: path),
                 resolvingAgainstBaseURL: false
             )
-            components?.queryItems = query.map(URLQueryItem.init)
+            components?.queryItems = query.sorted { $0.key < $1.key }.map(URLQueryItem.init)
             guard let genURL = components?.url else {
                 throw URLError(.badURL)
             }
@@ -122,6 +131,9 @@ struct Network {
         var request = URLRequest(url: url)
         request.httpMethod = method.rawValue
         request.timeoutInterval = 20
+        // Screen models own freshness and invalidation. Avoid a second, opaque
+        // URLCache policy returning data with a different lifetime.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
 
         var headers: HTTPHeaders = []
 
@@ -139,15 +151,24 @@ struct Network {
         }
 
         request.headers = headers
+        let preparedRequest = request
         if auth, await NativeSession.shared.session?.id != sessionID { throw CancellationError() }
+        let requestScope = "\(auth ? "authenticated" : "public")|\(sessionID ?? "anonymous")"
 
-        let task = AF.request(request).serializingData()
-
-        let response = await task.response
+        let response: NetworkTransportResponse
+        if method == .get {
+            let epoch = await Self.requestEpochs.value(for: requestScope)
+            let key = "\(requestScope)|\(epoch)|\(url.absoluteString)"
+            response = try await Self.getCoalescer.value(for: key) {
+                try await Self.perform(preparedRequest)
+            }
+        } else {
+            response = try await Self.perform(preparedRequest)
+        }
         try Task.checkCancellation()
         if auth, await NativeSession.shared.session?.id != sessionID { throw CancellationError() }
 
-        if auth, response.response?.statusCode == 401 {
+        if auth, response.statusCode == 401 {
             guard retryCounter == 0 else {
                 await NativeSession.shared.clearAccount()
                 throw URLError(.userAuthenticationRequired)
@@ -171,12 +192,12 @@ struct Network {
             )
         }
 
-        let data = try await task.value
-        guard let status = response.response?.statusCode, (200 ..< 300).contains(status) else {
-            let message = (try? self.jsonDecoder.decode(APIError.self, from: data))?.error
+        guard let status = response.statusCode, (200 ..< 300).contains(status) else {
+            let message = (try? self.jsonDecoder.decode(APIError.self, from: response.data))?.error
             throw NativeError.message(message ?? "The server could not complete this request.")
         }
-        return try self.jsonDecoder.decode(Response.self, from: data)
+        if method != .get { await Self.requestEpochs.advance(for: requestScope) }
+        return try self.jsonDecoder.decode(Response.self, from: response.data)
     }
 
     // MARK: Private
@@ -184,6 +205,8 @@ struct Network {
     private struct APIError: Decodable { let error: String? }
 
     private static let baseURL = AppEnvironment.baseURL
+    private static let getCoalescer = NativeRequestCoalescer<String, NetworkTransportResponse>()
+    private static let requestEpochs = NativeRequestEpochs<String>()
 
     private let jsonEncoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -198,4 +221,12 @@ struct Network {
     }()
 
     private let auth: Auth
+
+    private static func perform(_ request: URLRequest) async throws -> NetworkTransportResponse {
+        let response = await AF.request(request).serializingData().response
+        return try NetworkTransportResponse(
+            statusCode: response.response?.statusCode,
+            data: response.result.get()
+        )
+    }
 }
