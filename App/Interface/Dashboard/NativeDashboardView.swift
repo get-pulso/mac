@@ -83,6 +83,7 @@ struct NativeDashboardView: View {
     @State private var confirming = false
     @State private var confirmationTitle = ""
     @State private var confirmationAction: (() -> Void)?
+    @State private var headerScrollFades = HorizontalScrollFades()
     private let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     private var needsInitialLoad: Bool {
@@ -123,6 +124,12 @@ struct NativeDashboardView: View {
                         tab("Leaderboard", id: "global")
                     }
                 }.scrollIndicators(.hidden)
+                    .onScrollGeometryChange(for: HorizontalScrollFades.self) { geometry in
+                        HorizontalScrollFades(geometry: geometry)
+                    } action: { _, fades in
+                        self.headerScrollFades = fades
+                    }
+                    .mask { HorizontalScrollFadeMask(fades: self.headerScrollFades) }
                     .onChange(of: store.tab) { _, value in withAnimation { reader.scrollTo(value, anchor: .center) } }
             }
             Menu {
@@ -1052,6 +1059,49 @@ struct NativeDashboardView: View {
     private func refreshVisibleScreen() {
         guard self.windowManager.isVisible, !self.store.busy else { return }
         self.store.refreshCurrentScreen()
+    }
+}
+
+private struct HorizontalScrollFades: Equatable {
+    // MARK: Lifecycle
+
+    init() {}
+
+    init(geometry: ScrollGeometry) {
+        let fadeDistance: CGFloat = 18
+        let overflow = max(geometry.contentSize.width - geometry.containerSize.width, 0)
+        let offset = min(max(geometry.contentOffset.x, 0), overflow)
+        self.leading = min(offset / fadeDistance, 1)
+        self.trailing = min((overflow - offset) / fadeDistance, 1)
+    }
+
+    // MARK: Internal
+
+    var leading: CGFloat = 0
+    var trailing: CGFloat = 0
+}
+
+private struct HorizontalScrollFadeMask: View {
+    let fades: HorizontalScrollFades
+
+    var body: some View {
+        HStack(spacing: 0) {
+            LinearGradient(
+                colors: [.black.opacity(1 - self.fades.leading), .black],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 18)
+
+            Rectangle().fill(.black)
+
+            LinearGradient(
+                colors: [.black, .black.opacity(1 - self.fades.trailing)],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: 18)
+        }
     }
 }
 
