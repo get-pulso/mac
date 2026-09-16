@@ -12,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         if OnboardingPreview.showIfRequested() { return }
         #endif
+        LaunchAtLogin.enableByDefaultIfNeeded()
         Defaults[.currentUserID] = nil
         self.tracker.activate()
         if !AppEnvironment.isLocalBackend { self.updater.start() }
@@ -20,12 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Defaults[.sessionCounter] += 1
         Task {
             self.appRouter.move(to: .login)
-            await NativeSession.shared.start()
-            // A restored session stays on the welcome's "Continue as" action;
-            // new Google sign-in still opens the menu bar on completion.
-            if Defaults[.currentUserID] == nil, !OnboardingWindowController.shared.hasPresentedThisLaunch {
-                self.windowManager.show()
-            }
+            await NativeSession.shared.start(presentDashboardOnRestore: false)
 
             // observing logout
             for await _ in await self.auth.invalidationPublisher.values {
@@ -40,7 +36,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         self.windowManager.configure()
-        self.windowManager.showWelcome()
+        if !UserDefaults.standard.bool(forKey: OnboardingWindowController.introSeenKey) {
+            self.windowManager.showWelcome()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

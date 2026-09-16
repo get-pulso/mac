@@ -24,12 +24,20 @@ enum SignInHandoffContracts {
         expect(completion.contains("router.move(to: .signInCompletion)"), "Completion has a dedicated panel route")
         expect(completion.contains("self.session?.id == sessionID, self.session?.status == .active"),
                "An old response cannot restore a signed-out account")
-        let start = String(session.components(separatedBy: "func start()")[1]
+        let start = String(session.components(separatedBy: "func start(")[1]
             .components(separatedBy: "func token(")[0])
         expect(!start.contains("step = .complete"), "Restoration must not flash completed auth in welcome")
         let window = try read("App/Interface/Window/WindowManager.swift")
         expect(window.contains("router.destination == .signInCompletion"), "Pending profile can use the panel")
         let delegate = try read("App/AppDelegate.swift")
+        let launch = String(delegate.components(separatedBy: "func applicationDidFinishLaunching")[1]
+            .components(separatedBy: "func applicationWillTerminate")[0])
+        expect(launch.contains("start(presentDashboardOnRestore: false)"),
+               "Session restoration at login must not open the menu-bar panel")
+        expect(launch.contains("if !UserDefaults.standard.bool(forKey: OnboardingWindowController.introSeenKey)"),
+               "Only the first launch may present onboarding automatically")
+        expect(!launch.contains("Defaults[.currentUserID] == nil"),
+               "A missing session after onboarding must wait for a menu-bar click")
         let reopen = String(delegate.components(separatedBy: "func applicationShouldHandleReopen")[1]
             .components(separatedBy: "func applicationShouldTerminate")[0])
         expect(reopen.contains("self.windowManager.show()"),

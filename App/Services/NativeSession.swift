@@ -28,7 +28,7 @@ final class NativeSession: ObservableObject {
         return self.session?.status == .active && Defaults[.currentUserID] == welcomeAccount.id
     }
 
-    func start() async {
+    func start(presentDashboardOnRestore: Bool = true) async {
         guard !self.loading else { return }
         self.loading = true
         self.error = nil
@@ -55,7 +55,9 @@ final class NativeSession: ObservableObject {
             _ = try await Clerk.shared.refreshClient()
             self.observeEvents()
             if self.session?.status == .active {
-                try await self.finishSignIn(presentDashboard: !OnboardingWindowController.shared.isPresented)
+                try await self.finishSignIn(
+                    presentDashboard: presentDashboardOnRestore && !OnboardingWindowController.shared.isPresented
+                )
             }
             self.ready = true
         } catch { self.error = error.localizedDescription }
