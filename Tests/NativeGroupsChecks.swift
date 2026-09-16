@@ -23,7 +23,8 @@ struct NativeGroupsChecks {
         let friend = NativeContact(id: "friend", name: "Friend", email: nil, avatar_url: nil, is_creator: false)
         let eligibleFriend = NativePerson(
             user_id: "friend", name: "Friend", avatar_url: nil, rank: nil, active_minutes: nil,
-            last_active_at: nil, bio: nil, location: nil, website: nil, twitter: nil, telegram: nil, active_app: nil, agent: nil, score: nil
+            last_active_at: nil, bio: nil, location: nil, website: nil, twitter: nil, telegram: nil, active_app: nil,
+            agent: nil, agent_active_at: nil, score: nil
         )
         var group = NativeGroup(id: "one", name: "Studio", created_by: "owner", is_creator: true)
         var currentMembers = [owner, friend]
@@ -87,6 +88,27 @@ struct NativeGroupsChecks {
         expect(model.loaded && !model.loading, "A cached list renders synchronously")
         expect(listRequests == loadedListRequests, "A fresh list isn't requested twice")
 
+        // Every screen here costs a request the reader waits on, so the list
+        // fetches the rosters behind it while the list itself is being read.
+        try await settle { memberRequests >= 1 }
+        expect(memberRequests == 1, "Listing the groups prefetches each group's roster")
+        let prefetchedMemberRequests = memberRequests
+        model.open(.details("one"))
+        expect(
+            model.loaded && !model.loading && memberRequests == prefetchedMemberRequests,
+            "A prefetched roster opens without a request and without a skeleton"
+        )
+        // Opening a group the same way fetches who can still be added to it,
+        // so the Add Friends button has nothing left to wait for.
+        try await settle { eligibleRequests >= 1 }
+        let prefetchedEligibleRequests = eligibleRequests
+        model.open(.addMembers("one"))
+        expect(
+            model.loaded && !model.loading && eligibleRequests == prefetchedEligibleRequests,
+            "A prefetched Add Friends list opens without a request and without a skeleton"
+        )
+        model.open(.list)
+
         model.open(.create)
         model.name = "   "
         model.create { _ in preconditionFailure("Invalid create") }
@@ -102,7 +124,7 @@ struct NativeGroupsChecks {
         model.create { createdID = $0; model.open(.details($0)) }
         try await settle { createdID != nil && model.loaded }
         expect(createdNames == ["Studio"] && createdID == "one", "Create then open its detail page")
-        expect(memberRequests == 1 && !model.loading, "Created group details are prefetched before navigation")
+        expect(!model.loading, "Created group details are prefetched before navigation")
         expect(!model.hasChanges && model.title == "Studio", "Loaded name is the saved baseline")
         model.save { preconditionFailure("Unchanged name must not leave the form") }
         expect(!model.busy && renames.isEmpty, "Unchanged name must not save")
@@ -177,6 +199,28 @@ struct NativeGroupsChecks {
         try await Task.sleep(for: .milliseconds(60))
         expect(model.page == .create && model.members == nil && model.name.isEmpty, "Stale reads cannot replace a new page")
         expect(refreshes == 5, "Successful group changes refresh the popover")
+
+        // Settings and the popover ask the same question of the same account.
+        // A model handed what the popover already knows draws the list at once
+        // and revalidates behind it, instead of opening on a skeleton.
+        var seededListRequests = 0
+        var seeded = client
+        seeded.list = { seededListRequests += 1; return [group] }
+        seeded.knownGroups = { [group, NativeGroup(id: "global", name: "Global", created_by: nil, is_creator: nil)] }
+        let seededModel = NativeGroupsModel(client: seeded)
+        expect(
+            seededModel.groups.map(\.id) == ["one"],
+            "The popover's groups seed Settings, and its leaderboard is not one of them"
+        )
+        seededModel.open(.list)
+        expect(
+            seededModel.loaded && seededModel.loading,
+            "A seeded list renders at once and revalidates behind itself"
+        )
+        try await settle { seededListRequests == 1 }
+        try await settle { !seededModel.loading }
+        expect(seededModel.loaded && seededModel.loadError == nil, "Revalidation leaves the seeded list intact")
+
         print("Native groups checks passed: \(checks)")
     }
 }

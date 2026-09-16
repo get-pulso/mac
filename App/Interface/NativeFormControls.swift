@@ -6,6 +6,11 @@ struct NativeTabList<Selection: Hashable>: View {
 
     let title: String
     let options: [(title: String, value: Selection)]
+    /// The labels' size. Every segment is as wide as the track divided by
+    /// their number, never as wide as its own words, so the longest label
+    /// decides what fits: a track carrying one long option needs less than
+    /// the default, which suits a word or two.
+    var labelSize: CGFloat = 13
     @Binding var selection: Selection
 
     var body: some View {
@@ -13,9 +18,14 @@ struct NativeTabList<Selection: Hashable>: View {
             ForEach(options, id: \.value) { option in
                 Button { selection = option.value } label: {
                     Text(option.title)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: labelSize, weight: .medium))
                         .foregroundStyle(selection == option.value ? Color.primary : Color.secondary)
                         .lineLimit(1)
+                        // A label squeezed by a narrow window gives up a
+                        // little size rather than its last word: "Just the
+                        // to…" hides the one option a reader most needs to
+                        // be able to read.
+                        .minimumScaleFactor(0.8)
                         .frame(maxWidth: .infinity)
                         .frame(height: 26)
                         .contentShape(Capsule())
@@ -86,6 +96,7 @@ struct NativePrimaryButton: View {
                 .frame(maxWidth: fillsWidth ? .infinity : nil)
         }
         .buttonStyle(.borderedProminent)
+        .tint(.firstlight)
         .controlSize(.regular)
         .disabled(isLoading)
     }

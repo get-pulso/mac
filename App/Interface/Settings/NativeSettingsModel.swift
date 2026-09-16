@@ -19,24 +19,25 @@ final class NativeSettingsModel: ObservableObject {
     // MARK: Internal
 
     enum Section: String, CaseIterable {
-        case account = "Account", general = "General", groups = "Groups", security = "Security", sessions = "Sessions",
-             about = "About"
+        case account = "Account", general = "General", sharing = "Sharing", groups = "Groups",
+             security = "Security", about = "About"
 
         // MARK: Internal
 
         var icon: String {
             switch self {
-            case .account: "person.crop.circle"; case .general: "gearshape"; case .groups: "SettingsGroups"; case .security: "SettingsSecurity"; case .sessions: "SettingsSessions"; case .about: "info.circle"
+            case .account: "person.crop.circle"; case .general: "gearshape"; case .sharing: "SettingsSharing"
+            case .groups: "SettingsGroups"; case .security: "SettingsSecurity"; case .about: "info.circle"
             }
         }
 
         var keywords: String {
             switch self {
             case .account: "profile name username photo avatar bio location friend code website links sign out"
-            case .general: "appearance theme dark light system startup launch login activity period tracking pause history clear quit agents claude codex cursor tokens cost"
+            case .general: "appearance theme dark light system startup launch login activity period tracking pause history clear quit agents claude codex cursor tokens sound audio onboarding intro preview bass"
+            case .sharing: "sharing privacy visible friends apps agents hide private detail total off leaderboard anonymous"
             case .groups: "friends members invite link create rename leaderboard"
-            case .security: "sign-in google password email mfa two factor authenticator recovery backup codes delete account"
-            case .sessions: "devices mac active sign out revoke"
+            case .security: "sign-in google password email mfa two factor authenticator recovery backup codes delete account sessions devices mac active sign out revoke"
             case .about: "version updates api"
             }
         }
@@ -88,8 +89,8 @@ final class NativeSettingsModel: ObservableObject {
     @Published var backupCodes: [String] = []
     @Published var verification: SessionVerification?
     @Published var verificationMethod = ""
-    /// `nil` until `GET /api/user/agent-usage/settings` answered for this window.
-    @Published var shareCost: Bool?
+    /// `nil` until `GET /api/user/sharing` answered for this window.
+    @Published var sharing: NativeSharingSettings?
 
     var user: ClerkKit.User? { NativeSession.shared.user }
     var canGoBack: Bool { self.historyIndex > 0 }
@@ -148,8 +149,8 @@ final class NativeSettingsModel: ObservableObject {
         if !keepingSearch { self.search = "" }
         self.password = ""; self.currentPassword = ""; self.code = ""; self.confirmation = ""
         if page == "edit" { self.loadProfile() }
-        if section == .sessions { self.refreshSessions() }
-        if section == .general { self.loadAgentSettings() }
+        if section == .security { self.refreshSessions() }
+        if section == .sharing { self.loadSharingSettings() }
         if section == .groups { self.groupSettings.open(groupsPage) }
     }
 
@@ -159,7 +160,8 @@ final class NativeSettingsModel: ObservableObject {
         switch self.route.section {
         case .account: Task { await self.load() }
         case .groups: self.groupSettings.open(self.route.groupsPage)
-        case .sessions: self.refreshSessions()
+        case .security: self.refreshSessions()
+        case .sharing: self.sharing = nil; self.loadSharingSettings()
         default: break
         }
     }
@@ -171,8 +173,8 @@ final class NativeSettingsModel: ObservableObject {
         self.historyIndex = target; self.route = self.history[target]; self.error = nil; self.notice = nil
         self.password = ""; self.currentPassword = ""; self.code = ""; self.confirmation = ""
         if self.route.page == "edit" { self.loadProfile() }
-        if self.route.section == .sessions { self.refreshSessions() }
-        if self.route.section == .general { self.loadAgentSettings() }
+        if self.route.section == .security { self.refreshSessions() }
+        if self.route.section == .sharing { self.loadSharingSettings() }
         if self.route.section == .groups { self.groupSettings.open(self.route.groupsPage) }
     }
 
@@ -404,33 +406,33 @@ final class NativeSettingsModel: ObservableObject {
         }
     }
 
-    // MARK: Coding agents
+    // MARK: Sharing
 
-    func loadAgentSettings() {
-        guard self.shareCost == nil else { return }
-        self.run("Loading…", key: "agent-settings") {
-            let settings: NativeAgentUsageSettings = try await self.network.request(
-                path: "/api/user/agent-usage/settings",
+    func loadSharingSettings() {
+        guard self.sharing == nil else { return }
+        self.run("Loading…", key: "sharing") {
+            self.sharing = try await self.network.request(
+                path: "/api/user/sharing",
                 method: .get
             )
-            self.shareCost = settings.share_cost ?? false
         }
     }
 
     /// Optimistic: the switch moves at once and returns if the server refuses.
-    func setShareCost(_ enabled: Bool) {
-        let previous = self.shareCost
-        self.shareCost = enabled
-        self.run("Saving changes…", key: "agent-share-cost") {
+    /// One channel is sent at a time, so a change here never overwrites a
+    /// change the other channel just took on another Mac.
+    func setSharing(_ channel: NativeSharingChannel, to level: NativeShareLevel) {
+        let previous = self.sharing
+        self.sharing = (previous ?? NativeSharingSettings()).setting(channel, to: level)
+        self.run("Saving changes…", key: "sharing-\(channel.rawValue)") {
             do {
-                let settings: NativeAgentUsageSettings = try await self.network.request(
-                    path: "/api/user/agent-usage/settings",
+                self.sharing = try await self.network.request(
+                    path: "/api/user/sharing",
                     method: .patch,
-                    body: NativeAgentUsageSettings(share_cost: enabled)
+                    body: NativeSharingSettings().setting(channel, to: level)
                 )
-                self.shareCost = settings.share_cost ?? enabled
             } catch {
-                self.shareCost = previous
+                self.sharing = previous
                 throw error
             }
         }
@@ -527,7 +529,43 @@ final class NativeSettingsModel: ObservableObject {
     }
 }
 
-/// `GET`/`PATCH /api/user/agent-usage/settings` body.
-struct NativeAgentUsageSettings: Codable {
-    let share_cost: Bool?
+/// The two channels a person can share separately.
+enum NativeSharingChannel: String, CaseIterable, Identifiable {
+    case apps, agents
+
+    // MARK: Internal
+
+    var id: String { self.rawValue }
+}
+
+/// How much of a channel friends see. `detail` is everything, `total` the
+/// number with nothing named, `off` nothing at all — and, for agents, no
+/// place on the boards that rank by agent time or tokens.
+enum NativeShareLevel: String, Codable, CaseIterable {
+    case detail, total, off
+}
+
+/// `GET`/`PATCH /api/user/sharing` body. Both keys are optional so a patch
+/// can carry one channel; a `GET` always answers with both.
+struct NativeSharingSettings: Codable {
+    var apps: NativeShareLevel?
+    var agents: NativeShareLevel?
+
+    /// Everything is shared until somebody says otherwise, on an older
+    /// server and on a fresh account alike.
+    func level(_ channel: NativeSharingChannel) -> NativeShareLevel {
+        switch channel {
+        case .apps: self.apps ?? .detail
+        case .agents: self.agents ?? .detail
+        }
+    }
+
+    func setting(_ channel: NativeSharingChannel, to level: NativeShareLevel) -> Self {
+        var copy = self
+        switch channel {
+        case .apps: copy.apps = level
+        case .agents: copy.agents = level
+        }
+        return copy
+    }
 }

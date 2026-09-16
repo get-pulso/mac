@@ -28,14 +28,16 @@ struct NativeSettingsView: View {
     }
 
     @ObservedObject private var session = NativeSession.shared
-    @ObservedObject private var socialStore = SocialStore.shared
     @ObservedObject private var agentUsage: AgentUsageCollector = {
         @Dependency(\.agentUsage) var agentUsage
         return agentUsage
     }()
 
     @AppStorage("firstlight.appearance") private var appearance = "system"
+    @AppStorage(OnboardingSoundVariant.preferenceKey) private var onboardingSound = OnboardingSoundVariant.warmAnalog
+        .rawValue
     @AppStorage("firstlight.trackingPaused") private var trackingPaused = false
+    @AppStorage(OnboardingAudioFocus.preferenceKey) private var muteOtherAudio = true
     @State private var confirming = false
     @State private var confirmTitle = ""
     @State private var confirmAction: (() -> Void)?
@@ -49,6 +51,7 @@ struct NativeSettingsView: View {
         settingsContent
             .formStyle(.grouped)
             .font(.system(size: 13))
+            .fontDesign(.rounded)
             .controlSize(.regular)
             .textFieldStyle(.roundedBorder)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -84,10 +87,6 @@ struct NativeSettingsView: View {
     }
 
     private var name: String { self.session.user?.firstName ?? self.session.user?.username ?? "Your account" }
-
-    private var activityPeriod: Binding<String> {
-        Binding(get: { socialStore.period }, set: self.socialStore.setPeriod)
-    }
 
     @ViewBuilder private var sectionContent: some View {
         switch model.route.section {
@@ -167,11 +166,24 @@ struct NativeSettingsView: View {
                 }
             }
             panel {
-                Picker("Activity period", selection: activityPeriod) {
-                    Text("24 hours").tag("24h")
-                    Text("7 days").tag("7d")
-                    Text("30 days").tag("30d")
+                Picker("Onboarding sound", selection: $onboardingSound) {
+                    ForEach(OnboardingSoundVariant.allCases) { sound in
+                        Text(sound.title).tag(sound.rawValue)
+                    }
                 }
+                Toggle("Mute other audio during intro", isOn: $muteOtherAudio)
+                    .toggleStyle(.switch).controlSize(.small)
+                    .onChange(of: muteOtherAudio) { _, enabled in
+                        if !enabled { OnboardingAudioFocus.shared.end() }
+                    }
+                Button("Preview intro") {
+                    @Dependency(\.windowManager) var windowManager
+                    windowManager.replayOnboarding()
+                }
+                .nativeSettingsActionButton()
+                .disabled(LoginViewModel.shared.busy || session.loading || session.isCompletingSignIn)
+            }
+            panel {
                 Toggle("Pause activity tracking", isOn: $trackingPaused)
                     .toggleStyle(.switch).controlSize(.small)
                 Text(
@@ -208,11 +220,7 @@ struct NativeSettingsView: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
-                Toggle("Share cost estimate with friends", isOn: shareCostBinding)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .disabled(model.shareCost == nil || model.isRunning("agent-share-cost"))
-                Text("Friends always see agent time and tokens; the estimated cost only when this is on.")
+                Text("What friends see of this is in Sharing.")
                     .font(.callout).foregroundStyle(.secondary)
                 if let error = agentUsage.status.lastError { NativeInlineError(message: error) }
             }
@@ -270,19 +278,9 @@ struct NativeSettingsView: View {
                     .disabled(model.busy)
                 }
             }
-            panel {
-                Button("Active sessions") { model.navigate(.sessions) }
-                    .nativeSettingsActionButton()
-            }
-            if session.user?
-                .deleteSelfEnabled ==
-                true
-            {
-                Button("Delete account…", role: .destructive) { model.navigate(.security, page: "delete") }
-                    .nativeSettingsActionButton()
-            }
-        case .sessions:
-            panel(loading: model.sessionsLoading && model.sessionsLoaded) {
+            // Signed-in devices live with the rest of account security rather
+            // than in a section of their own: one screen, one question.
+            panel("Active sessions", loading: model.sessionsLoading && model.sessionsLoaded) {
                 if model.sessionsLoading, !model.sessionsLoaded {
                     NativeLabeledRowsSkeleton(rows: 2)
                 } else {
@@ -320,6 +318,49 @@ struct NativeSettingsView: View {
                     NativeInlineError(message: error) { model.refreshSessions(force: true) }
                 } else if model.sessions.isEmpty,
                           model.sessionsLoaded { Text("No other signed-in devices.").foregroundStyle(.secondary) }
+            }
+            if session.user?
+                .deleteSelfEnabled ==
+                true
+            {
+                Button("Delete account…", role: .destructive) { model.navigate(.security, page: "delete") }
+                    .nativeSettingsActionButton()
+            }
+        case .sharing:
+            // Two channels, three levels each, everything at the most open
+            // one to begin with. All three are on screen rather than folded
+            // into a pair of switches: the middle level is the whole point
+            // of the design, and nobody discovers it by toggling. Presence
+            // is not here — the time board is what everyone came for, and
+            // the way to stop recording is "Pause activity tracking" in
+            // General.
+            let loading = model.sharing == nil
+            panel {
+                sharingRow(
+                    .apps,
+                    title: "Apps",
+                    detail: "Friends see your top apps and the one you are in right now.",
+                    total: "Friends see how long you spent in apps and how many, never which.",
+                    off: "Friends see none of it. Your own history is untouched.",
+                    loading: loading
+                )
+            }
+            panel {
+                sharingRow(
+                    .agents,
+                    title: "Agents",
+                    detail: "Friends see your tools, models and the shifts they worked.",
+                    total: "Friends see agent hours and tokens, never which tool ran them.",
+                    off: "Friends see no agent activity, and you leave the agent boards.",
+                    loading: loading
+                )
+            }
+            panel {
+                Text(
+                    "Everything here starts on. Turning something down hides the history behind it too, not only what comes next — friends who already have your profile open see it until they reload. This changes what leaves your Mac to others, not what is recorded: you keep seeing all of your own."
+                )
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
         case .groups:
             EmptyView() // Groups owns its form and navigation within this same detail pane.
@@ -419,10 +460,6 @@ struct NativeSettingsView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
     }
 
-    private var shareCostBinding: Binding<Bool> {
-        Binding(get: { model.shareCost ?? false }, set: { model.setShareCost($0) })
-    }
-
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
             get: { launchAtLoginEnabled },
@@ -430,19 +467,74 @@ struct NativeSettingsView: View {
         )
     }
 
+    /// One channel: the switch, the switch under it, and a line that says
+    /// what the pair currently means in plain words rather than a legend
+    /// the reader has to hold in their head.
+    /// One channel: the three levels side by side, and a line that says
+    /// what the chosen one currently means in plain words, so the labels
+    /// never have to carry a legend the reader holds in their head.
+    ///
+    /// The labels answer "what does a friend see", not "which level is
+    /// this": `Detail / Total / Off` is the database's vocabulary, and a
+    /// person reading their own privacy settings is owed their own.
+    @ViewBuilder private func sharingRow(
+        _ channel: NativeSharingChannel,
+        title: String,
+        detail: String,
+        total: String,
+        off: String,
+        loading: Bool
+    ) -> some View {
+        let level = self.model.sharing?.level(channel) ?? .detail
+        let busy = loading || self.model.isRunning("sharing-\(channel.rawValue)") || self.model.isRunning("sharing")
+        LabeledContent(title) {
+            // `NativeTabList` is the app's own glass track: one capsule of
+            // regular glass with the selection sliding inside it, rather
+            // than three cells drawn side by side. It was written for this
+            // and had no caller until now.
+            NativeTabList(
+                title: title,
+                options: [
+                    ("Everything", NativeShareLevel.detail),
+                    ("Just the total", NativeShareLevel.total),
+                    ("Nothing", NativeShareLevel.off),
+                ],
+                labelSize: 11,
+                selection: self.levelBinding(channel)
+            )
+            .frame(maxWidth: 300)
+            .disabled(busy)
+        }
+        Text(level == .off ? off : (level == .detail ? detail : total))
+            .font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Every level is picked outright, so there is nothing to remember: the
+    /// control writes exactly what was chosen.
+    private func levelBinding(_ channel: NativeSharingChannel) -> Binding<NativeShareLevel> {
+        Binding(
+            get: { model.sharing?.level(channel) ?? .detail },
+            set: { model.setSharing(channel, to: $0) }
+        )
+    }
+
     /// Sections carry no titles: the sidebar selection already names the screen,
-    /// and rows are self-describing. A header appears only to host the refresh spinner.
+    /// and rows are self-describing. A header appears to host the refresh spinner,
+    /// or to name one group among several on the same screen.
     @ViewBuilder private func panel(
+        _ title: String? = nil,
         loading: Bool = false,
         @ViewBuilder content: () -> some View
     ) -> some View {
-        if loading {
+        if title != nil || loading {
             Section {
                 content()
             } header: {
                 HStack {
+                    if let title { Text(title) }
                     Spacer()
-                    NativeProgress(active: true, label: "Refreshing")
+                    if loading { NativeProgress(active: true, label: "Refreshing") }
                 }
             }
         } else {
@@ -616,6 +708,7 @@ struct NativeSettingsSidebar: View {
                 }
             }
         }.font(.system(size: 13))
+            .fontDesign(.rounded)
     }
 
     // MARK: Private

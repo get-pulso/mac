@@ -23,8 +23,15 @@ struct NativePerson: Decodable, Identifiable {
     let telegram: String?
     let active_app: NativeAppPresence?
     /// The coding agent that wrote to its log most recently, when that was
-    /// within the last few minutes. Absent for people without agent data.
+    /// within the last few minutes. Absent for people without agent data,
+    /// and for the ones who share agents without naming them.
     let agent: NativeAgentPresence?
+    /// When an agent last wrote, for somebody who shares that one is
+    /// working but not which. Never set beside `agent`.
+    let agent_active_at: String?
+    /// All recorded tools in one recent minute. Older servers omit this:
+    /// their single-tool presence must never be presented as a total count.
+    var agent_live: NativeAgentLive? = nil
     /// The ranking's figure when the board is not by active time: agent
     /// minutes or tokens over the period. Absent on the default board.
     let score: Double?
@@ -34,17 +41,48 @@ struct NativePerson: Decodable, Identifiable {
     var minutes: Int { DurationLabel.wholeMinutes(self.active_minutes ?? 0) }
     var timeLabel: String { DurationLabel.minutes(self.active_minutes ?? 0) }
     var isActiveNow: Bool {
-        guard let raw = last_active_at, let date = Self.timestamp(raw) else { return false }
-        let age = Date().timeIntervalSince(date)
-        return age >= -30 && age <= 120
+        self.isActive(at: Date())
     }
 
     /// An agent counts as working for two minutes after its last write, the
     /// same window as a person's own presence.
     var isAgentWorkingNow: Bool {
-        guard let raw = agent?.last_active_at, let date = Self.timestamp(raw) else { return false }
+        let raw = self.agent?.last_active_at ?? self.agent_active_at
+        guard let raw, let date = Self.timestamp(raw) else { return false }
         let age = Date().timeIntervalSince(date)
         return age >= -30 && age <= 120
+    }
+
+    /// What to draw in the portrait's corner: the tool by name, or the
+    /// unnamed mark for somebody who shares that an agent is working
+    /// without saying which. Nil when nothing is working, or when the
+    /// person shares no agent activity at all — the server sends neither
+    /// key for them, so there is nothing here to hide.
+    var agentMark: String? {
+        guard self.isAgentWorkingNow else { return nil }
+        return self.agent?.tool ?? NativeAgentToolLabel.unnamed
+    }
+
+    func isActive(at now: Date) -> Bool {
+        guard let raw = last_active_at, let date = Self.timestamp(raw) else { return false }
+        let age = now.timeIntervalSince(date)
+        return age >= -30 && age <= 120
+    }
+
+    func liveAgents(at now: Date) -> NativeAgentLive? {
+        guard let live = self.agent_live, live.session_count > 0,
+              let observed = Self.timestamp(live.observed_at)
+        else { return nil }
+        let age = now.timeIntervalSince(observed)
+        return age >= -30 && age <= 120 ? live : nil
+    }
+
+    func activeApp(at now: Date) -> NativeAppPresence? {
+        guard self.isActive(at: now), let app = self.active_app,
+              let observed = Self.timestamp(app.last_active_at)
+        else { return nil }
+        let age = now.timeIntervalSince(observed)
+        return age >= -30 && age <= 120 ? app : nil
     }
 
     // MARK: Private
@@ -123,12 +161,31 @@ struct NativeInviteInfo: Decodable {
 struct NativeActivity: Decodable {
     struct Interval: Decodable { let start_time: String; let end_time: String }
 
+    /// The app half of the answer, at whatever level the person shares it.
+    /// `detail` carries `top` and `active`, `total` only the two numbers,
+    /// `off` neither — so "keeps this private" and "was in nothing" are
+    /// told apart instead of both arriving as an empty list.
+    struct Apps: Decodable {
+        let level: String
+        let total_minutes: Double?
+        let app_count: Int?
+        let top: [NativeAppActivity]?
+        let active: NativeAppActivity?
+
+        var isDetailed: Bool { self.level == "detail" }
+        var isOff: Bool { self.level == "off" }
+        var minutes: Int { DurationLabel.wholeMinutes(self.total_minutes ?? 0) }
+        var timeLabel: String { DurationLabel.minutes(self.total_minutes ?? 0) }
+    }
+
     let active_minutes: Double
     let period: String
     let last_active: String?
     let intervals: [Interval]?
     let active_app: NativeAppActivity?
     let top_apps: [NativeAppActivity]?
+    /// Absent from an older server, which always shared everything.
+    let apps: Apps?
 }
 
 struct NativeAppActivity: Decodable, Identifiable {
@@ -148,10 +205,31 @@ struct NativeAppPresence: Decodable {
     let icon_url: String?
 }
 
-/// Which coding agent a person's Mac last saw writing, and when.
+/// Which coding agent a person's Mac last saw writing, and when. Present
+/// only for people who share which tool it is; `agent_active_at` carries
+/// the same moment for the ones who share only that one is working.
 struct NativeAgentPresence: Decodable {
     let tool: String
     let last_active_at: String
+}
+
+struct NativeAgentLive: Decodable {
+    struct Tool: Decodable {
+        let tool: String
+        let session_count: Int
+    }
+
+    let session_count: Int
+    let observed_at: String
+    /// Omitted at the `total` sharing level.
+    let tools: [Tool]?
+
+    var label: String { "\(self.session_count) \(self.session_count == 1 ? "agent" : "agents") now" }
+    var detail: String {
+        guard let tools, !tools.isEmpty else { return "\(self.session_count) recorded sessions in parallel now" }
+        return tools.map { "\(NativeAgentToolLabel.name($0.tool)): \($0.session_count)" }.joined(separator: " · ")
+            + " sessions in parallel now"
+    }
 }
 
 /// `/api/users/:id/agent-summary`: a person's coding agents over the period.
@@ -174,8 +252,6 @@ struct NativeAgentSummary: Decodable {
         let sessions: Int?
         let agent_minutes: Double?
         let top_model: String?
-        let estimated_cost_micro_usd: Double?
-        let reported_cost_cents: Int?
 
         var id: String { self.tool }
     }
@@ -216,6 +292,10 @@ struct NativeAgentSummary: Decodable {
         let agent_only_minutes: Double
         let runs: [Run]?
         let presence: [Presence]?
+        /// Where the day placed among the viewer's friends. Absent on a day
+        /// the person spent at zero: everyone there ties for last.
+        let rank_active: Int?
+        let rank_agent: Int?
 
         var id: String { self.date }
     }
@@ -226,24 +306,50 @@ struct NativeAgentSummary: Decodable {
     let agent_only_minutes: Double?
     let max_concurrency: Int?
     let tokens: Tokens?
+    /// "detail", "total" or "off". At `total` everything that names a tool
+    /// or a moment is absent: `by_tool`, `top_tool`, `top_model`,
+    /// `active_tool`, `now`, the runs inside the days. The numbers stay.
+    let shared: String?
     let by_tool: [ToolUsage]?
     let top_tool: String?
     let top_model: String?
-    /// Present only for yourself, or for a friend who chose to share it.
-    let estimated_cost_micro_usd: Double?
-    let cost_shared: Bool?
+    /// An agent is writing this minute. At `total` this is all that is said
+    /// about it; at `detail` `now` says the rest.
+    let agent_active_now: Bool?
     let days: [Day]?
     let last_agent_active_at: String?
     let active_tool: String?
     let now: Now?
+    /// The same two places over the whole period.
+    let rank_active: Int?
+    let rank_agent: Int?
+    /// How many people those places are out of, the viewer included.
+    let contenders: Int?
     /// Over the last thirty days whatever the period, so a record is a record.
     let longest_run_minutes: Double?
     let longest_run_started_at: String?
+
+    /// An older server sends no level and shares everything, which is what
+    /// every account starts at anyway.
+    var isDetailed: Bool { (self.shared ?? "detail") == "detail" }
+    var isOff: Bool { self.shared == "off" }
+    /// The mark for the row and the now-line: the tool when it is named,
+    /// the unnamed mark when only the fact is shared.
+    var liveMark: String? {
+        if let tool = now?.tool { return tool }
+        if let tool = active_tool { return tool }
+        return self.agent_active_now == true ? NativeAgentToolLabel.unnamed : nil
+    }
 }
 
 /// Display names and glyphs for the tools a summary can name. Unknown tools
 /// keep their raw name so a newer server never renders as nothing.
 enum NativeAgentToolLabel {
+    /// Stands for "some agent" where the person shares that one is running
+    /// but not which. It is not a tool, so it has no glyph and falls back
+    /// to the generic mark, and it never matches an app's family.
+    static let unnamed = "agent"
+
     /// The tool an app belongs to: the Claude app is Claude Code's home,
     /// ChatGPT is Codex's, Cursor is its own. When the app in front and the
     /// agent writing are the same family, saying both says one thing twice.
@@ -258,6 +364,7 @@ enum NativeAgentToolLabel {
 
     static func name(_ tool: String) -> String {
         switch tool {
+        case Self.unnamed: "An agent"
         case "claude_code": "Claude Code"
         case "codex": "Codex"
         case "cursor": "Cursor"
@@ -379,4 +486,50 @@ enum InviteInput: Hashable {
         }
         return value.count > 24 ? .token(value) : .friendCode(value.uppercased())
     }
+}
+
+/// One of the phrases a bump can carry. The list comes from the server with
+/// every inbox read, so the menu in a shipped app follows the server's list
+/// instead of a copy of it that was frozen at build time.
+struct NativeBumpPhrase: Decodable, Identifiable, Hashable {
+    let kind: String
+    let label: String
+    let message: String
+
+    var id: String { self.kind }
+}
+
+/// A friend telling you that you are doing well.
+///
+/// `message` is composed on the server and shown as it arrives: the app never
+/// writes the words, which is also why a bump can never carry anybody's own.
+struct NativeBump: Decodable, Identifiable {
+    struct Sender: Decodable {
+        let id: String
+        let name: String?
+        let avatar_url: String?
+
+        var displayName: String { self.name?.isEmpty == false ? self.name! : "A friend" }
+    }
+
+    let id: String
+    let kind: String
+    let message: String
+    let created_at: String
+    let from: Sender
+}
+
+/// What `/api/bumps` answers: everything this Mac has not shown yet, and the
+/// phrases it may send.
+struct NativeBumpInbox: Decodable {
+    let bumps: [NativeBump]
+    let phrases: [NativeBumpPhrase]
+}
+
+/// The send endpoint's answer. `next_allowed_at` is when the same friend may
+/// be bumped again; the button reads it so the limit is visible rather than
+/// only enforced.
+struct NativeBumpSent: Decodable {
+    let success: Bool?
+    let next_allowed_at: String?
 }
