@@ -30,8 +30,7 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    enum Screen: Equatable { case list, connect, requests, person(String), history, tokens
-    }
+    enum Screen: Equatable { case list, connect, requests, person(String) }
 
     static let shared = SocialStore()
 
@@ -44,8 +43,6 @@ final class SocialStore: ObservableObject {
     @Published var requests = NativeRequests()
     @Published var personalInvite: NativePersonalInvite?
     @Published var inviteInfo: NativeInviteInfo?
-    @Published var inviteHistory: [NativeInviteHistory.Invite] = []
-    @Published var tokens: NativeTokens?
     @Published var directFriendIDs = Set<String>()
     @Published var activity: NativeActivity?
     @Published var loading = true
@@ -83,8 +80,6 @@ final class SocialStore: ObservableObject {
         switch screen {
         case .requests: self.requestsCache.contains("requests")
         case .connect: self.personalInviteCache.contains("invite")
-        case .history: self.historyCache.contains("history")
-        case .tokens: self.tokensCache.contains("tokens")
         default: true
         }
     }
@@ -231,10 +226,6 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    func invalidateInvitationHistory() {
-        self.historyCache.invalidate("history")
-    }
-
     func invalidateActivity(for userID: String) {
         for period in ["24h", "7d", "30d"] { self.activityCache.invalidate(userID + period) }
         if case let .person(id) = self.screen, id == userID { self.activity = nil }
@@ -251,15 +242,6 @@ final class SocialStore: ObservableObject {
             self.directFriendsCache.insert(self.directFriendIDs, for: "friends")
         } else {
             self.directFriendsCache.invalidate("friends")
-        }
-    }
-
-    func rescueToken() {
-        self.run("Getting token…", key: "rescue-token") {
-            try await self.mutate("/api/user/tokens/rescue")
-            self.tokens = try await self.network.request(path: "/api/user/tokens", method: .get)
-            if let tokens = self.tokens { self.tokensCache.insert(tokens, for: "tokens") }
-            self.notice = "Rescue token received."
         }
     }
 
@@ -310,7 +292,6 @@ final class SocialStore: ObservableObject {
                 body: Options(usageLimit: self.usageLimit)
             )
             self.generatedLink = result.inviteLink
-            self.invalidateInvitationHistory()
             self.copyInviteLink(result.inviteLink)
         }
     }
@@ -328,7 +309,6 @@ final class SocialStore: ObservableObject {
                     body: Options(usageLimit: 1)
                 )
                 self.writeToPasteboard(result.inviteLink)
-                self.invalidateInvitationHistory()
                 self.feedbackToast = .success("Copied")
             } catch {
                 self.feedbackToast = nil
@@ -389,11 +369,6 @@ final class SocialStore: ObservableObject {
         self.goBack()
     }
 
-    func copy(_ value: String) {
-        self.writeToPasteboard(value)
-        self.notice = "Copied."
-    }
-
     func reset() {
         self.refreshID = UUID()
         self.screenTask?.cancel(); self.screenLoading = false; self.activityCache.removeAll(); self.listError = nil
@@ -401,16 +376,14 @@ final class SocialStore: ObservableObject {
             .removeAll()
         self.screen = .list; self.connectMode = .useInvite; self.tab = "friends"; self.groups = []; self.people = []
         self.requests = NativeRequests()
-        self.personalInvite = nil; self.inviteInfo = nil; self.inviteHistory = []; self
-            .selectedPerson = nil
+        self.personalInvite = nil; self.inviteInfo = nil; self.selectedPerson = nil
         self.activity = nil; self.inspectedInvite = nil
         self.input = ""; self.inviteGroup = ""; self.usageLimit = 1; self.generatedLink = ""
         self.error = nil; self.notice = nil; self.feedbackToast = nil
         self.copiedItem = nil
         self.copyFeedbackTask?.cancel()
-        self.tokens = nil; self.directFriendIDs = []
-        self.requestsCache.removeAll(); self.personalInviteCache.removeAll(); self.historyCache.removeAll()
-        self.tokensCache.removeAll(); self.directFriendsCache.removeAll()
+        self.directFriendIDs = []
+        self.requestsCache.removeAll(); self.personalInviteCache.removeAll(); self.directFriendsCache.removeAll()
         self.loading = true
         self.refreshingList = false
         self.busy = false; self.operationKey = nil
@@ -435,8 +408,6 @@ final class SocialStore: ObservableObject {
     private var activityCache = NativeResourceCache<String, NativeActivity>()
     private var requestsCache = NativeResourceCache<String, NativeRequests>()
     private var personalInviteCache = NativeResourceCache<String, NativePersonalInvite>()
-    private var historyCache = NativeResourceCache<String, [NativeInviteHistory.Invite]>()
-    private var tokensCache = NativeResourceCache<String, NativeTokens>()
     private var directFriendsCache = NativeResourceCache<String, Set<String>>()
     @Published private var inspectedInvite: InviteInput?
     private var refreshID = UUID()
@@ -496,17 +467,6 @@ final class SocialStore: ObservableObject {
                         .request(path: "/api/user/invite-link", method: .get)
                     self.personalInvite = result
                     self.personalInviteCache.insert(result, for: "invite")
-                case .history:
-                    let result: NativeInviteHistory = try await self.network.request(
-                        path: "/api/user/invites",
-                        method: .get
-                    )
-                    self.inviteHistory = result.recentInvites
-                    self.historyCache.insert(result.recentInvites, for: "history")
-                case .tokens:
-                    let result: NativeTokens = try await self.network.request(path: "/api/user/tokens", method: .get)
-                    self.tokens = result
-                    self.tokensCache.insert(result, for: "tokens")
                 case let .person(id):
                     // The leaderboard already supplies the visible total. Treat
                     // this fresher detail request as an optional enhancement so
@@ -544,10 +504,6 @@ final class SocialStore: ObservableObject {
             if let cached = self.requestsCache.value(for: "requests") { self.requests = cached }
         case .connect:
             if let cached = self.personalInviteCache.value(for: "invite") { self.personalInvite = cached }
-        case .history:
-            if let cached = self.historyCache.value(for: "history") { self.inviteHistory = cached }
-        case .tokens:
-            if let cached = self.tokensCache.value(for: "tokens") { self.tokens = cached }
         case let .person(id):
             self.activity = self.activityCache.value(for: id + self.period)
             if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
@@ -560,8 +516,6 @@ final class SocialStore: ObservableObject {
         case .list: true
         case .requests: self.requestsCache.isFresh("requests", for: Self.cacheLifetime)
         case .connect: self.personalInviteCache.isFresh("invite", for: Self.cacheLifetime)
-        case .history: self.historyCache.isFresh("history", for: Self.cacheLifetime)
-        case .tokens: self.tokensCache.isFresh("tokens", for: Self.cacheLifetime)
         case let .person(id):
             self.activityCache.isFresh(id + self.period, for: Self.cacheLifetime) &&
                 self.directFriendsCache.isFresh("friends", for: Self.cacheLifetime)

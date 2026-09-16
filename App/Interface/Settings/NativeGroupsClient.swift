@@ -49,9 +49,6 @@ extension NativeGroupsClient {
                 NSPasteboard.general.clearContents()
                 return NSPasteboard.general.setString(link, forType: .string)
             },
-            didCreateInvite: {
-                SocialStore.shared.invalidateInvitationHistory()
-            },
             didChange: { _ in
                 // Refresh the popover without changing its navigation or opening it.
                 Task {

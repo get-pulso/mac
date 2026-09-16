@@ -42,7 +42,6 @@ struct NativeGroupsChecks {
         var removedMembers: [String] = []
         var added: [String] = []
         var refreshes = 0
-        var createdInvites = 0
         let client = NativeGroupsClient(
             list: {
                 listRequests += 1
@@ -72,7 +71,6 @@ struct NativeGroupsChecks {
             },
             invite: { _, limit in inviteLimits.append(limit); return "https://example.invalid/invite/\(limit)" },
             copy: { copiedLinks.append($0); return true },
-            didCreateInvite: { createdInvites += 1 },
             didChange: { _ in refreshes += 1 }
         )
         let model = NativeGroupsModel(client: client)
@@ -130,7 +128,6 @@ struct NativeGroupsChecks {
         model.copyInvite()
         try await settle { !model.busy }
         expect(inviteLimits == [1, 5], "New options generate a new invitation")
-        expect(createdInvites == 2, "Only newly generated invitations invalidate history")
 
         model.open(.addMembers("one"))
         try await settle { model.loaded && !model.loading }

@@ -9,7 +9,7 @@ enum NativeNavigationChecks {
         var history = NativeNavigationHistory<Route>()
         history.record(.friends, before: .connect)
         expect(history.previous == .friends)
-        history.record(.connect, before: .history)
+        history.record(.connect, before: .requests)
         expect(history.previous == .connect)
         expect(history.pop() == .connect)
         expect(history.pop() == .friends)
@@ -26,5 +26,5 @@ enum NativeNavigationChecks {
 
     // MARK: Private
 
-    private enum Route: Equatable { case friends, connect, history, group }
+    private enum Route: Equatable { case friends, connect, requests, group }
 }

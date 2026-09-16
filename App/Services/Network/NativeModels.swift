@@ -81,21 +81,6 @@ struct NativeInviteInfo: Decodable {
     let invite: Invite
 }
 
-struct NativeInviteHistory: Decodable {
-    struct Invite: Decodable, Identifiable {
-        struct Group: Decodable { let name: String }
-
-        let id: String
-        let token: String
-        let used: Bool?
-        let usage_count: Int?
-        let usage_limit: Int?
-        let groups: Group?
-    }
-
-    let recentInvites: [Invite]
-}
-
 struct NativeActivity: Decodable {
     struct Interval: Decodable { let start_time: String; let end_time: String }
 
@@ -128,34 +113,6 @@ struct NativeAck: Decodable {}
 
 struct NativeDirectFriends: Decodable {
     let directFriendIds: [String]
-}
-
-struct NativeTokens: Decodable {
-    struct Balance: Decodable {
-        let current: Int
-        let totalEarned: Int
-        let maxBalance: Int
-        let canGetRescueToken: Bool
-        let nextRescueTokenIn: String?
-    }
-
-    struct Transaction: Decodable, Identifiable {
-        let id: String
-        let amount: Int
-        let reason: String
-        let created_at: String?
-    }
-
-    struct Activation: Decodable, Identifiable {
-        struct Person: Decodable { let name: String?; let email: String? }
-
-        let id: String
-        let users: Person?
-    }
-
-    let tokens: Balance
-    let transactions: [Transaction]
-    let pendingActivations: [Activation]
 }
 
 enum InviteInput: Equatable {

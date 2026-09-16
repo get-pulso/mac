@@ -27,7 +27,6 @@ struct NativeGroupsClient {
     var eligibleMembers: (String) async throws -> [NativePerson]
     var invite: (String, Int) async throws -> String
     var copy: (String) -> Bool
-    var didCreateInvite: () -> Void
     var didChange: ([NativeGroup]) -> Void
 }
 
@@ -208,7 +207,6 @@ final class NativeGroupsModel: ObservableObject {
             else {
                 link = try await self.client.invite(id, limit)
                 self.inviteLink = link
-                self.client.didCreateInvite()
             }
             guard self.client.copy(link) else { throw NativeError.message("Couldn't copy the link. Try again.") }
             self.copied = true

@@ -314,10 +314,6 @@ struct NativeDashboardView: View {
             NativeMetricSkeleton()
         case .requests:
             NativeRowsSkeleton(rows: 3, showActions: true)
-        case .history:
-            NativeRowsSkeleton(rows: 4)
-        case .tokens:
-            NativeMetricSkeleton()
         default:
             NativeMetricSkeleton()
         }
@@ -361,54 +357,7 @@ struct NativeDashboardView: View {
                     }
                 }
             }
-        case .tokens:
-            if let result = store.tokens {
-                intro(
-                    "\(result.tokens.current) of \(result.tokens.maxBalance) tokens",
-                    message: "\(result.tokens.totalEarned) earned in total. Tokens are used when invitations are accepted."
-                )
-                if result.tokens.canGetRescueToken {
-                    operationButton("Get a rescue token", loadingTitle: "Getting token…", key: "rescue-token") {
-                        store.rescueToken()
-                    }
-                }
-                if let remaining = result.tokens.nextRescueTokenIn { quiet("Next rescue token in \(remaining).") }
-                if !result.pendingActivations.isEmpty {
-                    Divider(); sectionHeading("Awaiting activation")
-                    ForEach(result.pendingActivations) { activation in
-                        valueRow(
-                            activation.users?.name ?? activation.users?.email ?? "Invited friend",
-                            value: "Pending"
-                        )
-                    }
-                }
-                Divider(); sectionHeading("Recent activity")
-                if result.transactions.isEmpty { quiet("No token activity yet.") }
-                ForEach(result.transactions) { transaction in
-                    valueRow(
-                        transaction.reason.replacingOccurrences(of: "_", with: " ").capitalized,
-                        detail: transaction.created_at.map(readableDate),
-                        value: "\(transaction.amount > 0 ? "+" : "")\(transaction.amount)"
-                    )
-                }
-            }
         case let .person(id): personDetail(id)
-        case .history:
-            intro("Invitation history", message: "Previously created direct and group invitations.")
-            if store.inviteHistory.isEmpty {
-                NativeStateMessage(title: "No invitations yet", message: "Created links will appear here.")
-            }
-            ForEach(store.inviteHistory) { invite in
-                valueRow(
-                    invite.groups?.name ?? "Personal invitation",
-                    detail: invite
-                        .used == true ? "Used" : "\(invite.usage_count ?? 0) of \(invite.usage_limit ?? 1) uses"
-                ) {
-                    Button("Copy") { store.copy(AppEnvironment.inviteLink(for: invite.token)) }
-                }
-            }
-            Divider()
-            navigationRow("Invitation tokens", detail: "Balance and recent use") { store.open(.tokens) }
         }
     }
 
@@ -492,8 +441,6 @@ struct NativeDashboardView: View {
                 fillsWidth: true,
                 action: store.shareInvite
             ).disabled(store.inviteGroup.isEmpty && store.personalInvite == nil)
-            Divider()
-            navigationRow("Invitation history", detail: "Previously created links") { store.open(.history) }
         }
         .onChange(of: store.inviteGroup) { _, _ in store.clearGeneratedInvite() }
         .onChange(of: store.usageLimit) { _, _ in store.clearGeneratedInvite() }
@@ -650,8 +597,6 @@ struct NativeDashboardView: View {
         case .connect: "Add friends"
         case .requests: "Friend requests"
         case .person: "Profile"
-        case .history: "Invitations"
-        case .tokens: "Invitation tokens"
         }
     }
 
@@ -910,13 +855,6 @@ struct NativeDashboardView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func readableDate(_ value: String) -> String {
-        let formatter = ISO8601DateFormatter(); formatter
-            .formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return (formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value))?
-            .formatted(date: .abbreviated, time: .shortened) ?? value
-    }
-
     private func contact(_ person: NativeContact) -> some View {
         HStack(spacing: 10) {
             PulsoAvatar(url: person.avatar_url, name: person.displayName, size: 32)
@@ -950,20 +888,6 @@ struct NativeDashboardView: View {
         }
     }
 
-    private func navigationRow(_ title: String, detail: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.system(size: 12, weight: .medium))
-                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }.padding(.vertical, 4).contentShape(Rectangle())
-        }.buttonStyle(.plain)
-    }
-
     private func requestRow(
         _ person: NativeContact,
         detail: String,
@@ -977,27 +901,6 @@ struct NativeDashboardView: View {
             }
             Spacer(minLength: 6)
             HStack(spacing: 5) { actions() }.controlSize(.small)
-        }.padding(.vertical, 3)
-    }
-
-    private func valueRow(_ title: String, detail: String? = nil, value: String) -> some View {
-        self.valueRow(title, detail: detail) {
-            Text(value).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
-        }
-    }
-
-    private func valueRow(
-        _ title: String,
-        detail: String? = nil,
-        @ViewBuilder actions: () -> some View
-    ) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 12, weight: .medium))
-                if let detail { Text(detail).font(.system(size: 11)).foregroundStyle(.secondary) }
-            }
-            Spacer(minLength: 8)
-            actions()
         }.padding(.vertical, 3)
     }
 
