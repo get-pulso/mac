@@ -328,6 +328,42 @@ final class SocialStore: ObservableObject {
                     .request(path: "/api/invite/info", method: .get, query: ["token": token])
                 guard !Task.isCancelled else { return }
                 self.inviteInfo = info
+    /// Moves a group within the strip and stores the arrangement. The strip
+    /// changes at once; the server confirms in the background, and a failure
+    /// restores the stored order so the strip never lies about what is kept.
+    func moveGroup(_ id: String, to index: Int) {
+        guard let from = self.groups.firstIndex(where: { $0.id == id }),
+              from != index, self.groups.indices.contains(index)
+        else { return }
+        var reordered = self.groups
+        reordered.insert(reordered.remove(at: from), at: index)
+        self.groups = reordered
+        self.groupsCache.insert(reordered, for: "groups")
+        let order = reordered.map(\.id)
+        let accountID = Defaults[.currentUserID]
+        self.groupOrderTask?.cancel()
+        self.groupOrderTask = Task {
+            do {
+                let saved: [NativeGroup] = try await self.network.request(
+                    path: "/api/groups/order", method: .put, body: ["order": order]
+                )
+                guard !Task.isCancelled, Defaults[.currentUserID] == accountID else { return }
+                // A later move already changed the strip; its own request answers for it.
+                guard self.groups.map(\.id) == order else { return }
+                let visible = saved.filter { $0.id != "global" }
+                self.groups = visible
+                self.groupsCache.insert(visible, for: "groups")
+                SettingsWindowController.shared.invalidateGroups()
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError),
+                      Defaults[.currentUserID] == accountID else { return }
+                self.error = "Couldn't save the group order. \(error.localizedDescription)"
+                self.groupsCache.invalidate("groups")
+                await self.refresh(force: true)
+            }
+        }
+    }
+
                 self.lookedUpToken = token
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError) else { return }
@@ -514,6 +550,7 @@ final class SocialStore: ObservableObject {
             self.activity = self.activityCache.value(for: id + self.period)
             if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
         case .list: break
+    private var groupOrderTask: Task<Void, Never>?
         }
     }
 

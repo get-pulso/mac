@@ -111,6 +111,14 @@ struct NativeDashboardView: View {
 
     /// The leaderboard already tells us whether this profile has activity.
     /// Reserve the finished profile height while its app breakdown catches up,
+    private struct GroupDrag {
+        let id: String
+        let index: Int
+        var translation: CGFloat = 0
+        /// Where the tab would land if released now.
+        var target: Int
+    }
+
     /// instead of shrinking the popover and expanding it again a moment later.
     private var isLoadingProfileActivity: Bool {
         guard case .person = self.store.screen,
@@ -124,6 +132,11 @@ struct NativeDashboardView: View {
     private var needsInitialLoad: Bool {
         // The add-friends screen is usable while its invitation data loads.
         if self.store.screen == .connect { return false }
+
+    // MARK: Group reordering
+
+    private static let groupStripSpace = "groupStrip"
+    private static let groupTabSpacing: CGFloat = 4
         return self.store.screenLoading && !self.store.hasLoaded(self.store.screen)
     }
 
@@ -133,12 +146,18 @@ struct NativeDashboardView: View {
     }
 
     private var header: some View {
+    /// The group tab being dragged along the strip, if any.
+    @State private var groupDrag: GroupDrag?
+    /// Where each group tab sits in the strip while nothing is dragged; the
+    /// drag reads these to tell which neighbours the pointer has crossed.
+    @State private var groupTabFrames: [String: CGRect] = [:]
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
         HStack(spacing: 7) {
             ScrollViewReader { reader in
                 ScrollView(.horizontal) {
                     HStack(spacing: 4) {
                         tab("Friends", id: "friends")
-                        ForEach(store.groups) { group in
+                        ForEach(Array(store.groups.enumerated()), id: \.element.id) { index, group in
                             tab(group.name, id: group.id)
                                 .contextMenu {
                                     Button {
@@ -192,10 +211,25 @@ struct NativeDashboardView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
+                                    Divider()
+                                    Button {
+                                        self.moveGroup(group.id, to: index - 1)
+                                    } label: {
+                                        Label("Move left", systemImage: "arrow.left")
+                                    }
+                                    .disabled(index == 0)
+                                    Button {
+                                        self.moveGroup(group.id, to: index + 1)
+                                    } label: {
+                                        Label("Move right", systemImage: "arrow.right")
+                                    }
+                                    .disabled(index == store.groups.count - 1)
             .padding(.horizontal, 10)
+                                .modifier(self.groupTabDragging(group.id, at: index))
             .padding(.vertical, 6)
             .contentShape(Rectangle())
             .background(Color.primary.opacity(0.11), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .coordinateSpace(name: Self.groupStripSpace)
             .animation(.snappy(duration: 0.22, extraBounce: 0), value: self.store.period)
         }
         .menuStyle(.button)
@@ -792,6 +826,60 @@ struct NativeDashboardView: View {
                 )
             }
         }
+    private func moveGroup(_ id: String, to index: Int) {
+        withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
+            self.store.moveGroup(id, to: index)
+        }
+    }
+
+    /// The dragged tab follows the pointer; the neighbours it has crossed
+    /// slide aside by its width so the gap shows where it lands. The list
+    /// itself changes only on release, so no tab jumps under the pointer.
+    private func groupTabDragging(_ id: String, at index: Int) -> some ViewModifier {
+        let drag = self.groupDrag
+        var shift: CGFloat = 0
+        if let drag, drag.id != id, let width = self.groupTabFrames[drag.id]?.width {
+            let step = width + Self.groupTabSpacing
+            if drag.index < index, index <= drag.target { shift = -step }
+            else if drag.target <= index, index < drag.index { shift = step }
+        }
+        return GroupTabDragModifier(
+            isDragged: drag?.id == id,
+            offset: drag?.id == id ? (drag?.translation ?? 0) : shift,
+            reduceMotion: self.reduceMotion,
+            frameChanged: { frame in
+                // Frames measured mid-drag include the drag's own offsets.
+                if self.groupDrag == nil { self.groupTabFrames[id] = frame }
+            },
+            gesture: DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.groupStripSpace))
+                .onChanged { value in
+                    let translation = value.translation.width
+                    if self.groupDrag == nil {
+                        self.groupDrag = GroupDrag(id: id, index: index, translation: translation, target: index)
+                    } else {
+                        self.groupDrag?.translation = translation
+                    }
+                    guard let frame = self.groupTabFrames[id] else { return }
+                    let center = frame.midX + translation
+                    let target = self.store.groups.indices.filter { other in
+                        other != index && (self.groupTabFrames[self.store.groups[other].id]?.midX ?? 0) < center
+                    }.count
+                    if self.groupDrag?.target != target {
+                        withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0)) {
+                            self.groupDrag?.target = target
+                        }
+                    }
+                }
+                .onEnded { _ in
+                    let target = self.groupDrag?.target ?? index
+                    withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
+                        self.groupDrag = nil
+                        self.store.moveGroup(id, to: target)
+                    }
+                }
+        )
+    }
+
     }
 
     private func memberCount(_ count: Int) -> String {
@@ -1233,5 +1321,30 @@ private struct NativeTrackedAppIcon: View {
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+}
+
+/// A tab in the group strip that can be picked up and dragged along it.
+private struct GroupTabDragModifier<DragAlong: Gesture>: ViewModifier {
+    let isDragged: Bool
+    let offset: CGFloat
+    let reduceMotion: Bool
+    let frameChanged: (CGRect) -> Void
+    let gesture: DragAlong
+
+    func body(content: Content) -> some View {
+        content
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .named("groupStrip"))
+            } action: { frame in
+                self.frameChanged(frame)
+            }
+            .scaleEffect(self.isDragged ? 1.04 : 1)
+            .shadow(color: .black.opacity(self.isDragged ? 0.18 : 0), radius: 6, y: 2)
+            .offset(x: self.offset)
+            .zIndex(self.isDragged ? 1 : 0)
+            .animation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0), value: self.isDragged)
+            .highPriorityGesture(self.gesture)
+            .accessibilityHint("Drag to reorder")
     }
 }
