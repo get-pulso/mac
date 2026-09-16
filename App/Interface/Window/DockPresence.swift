@@ -1,6 +1,6 @@
 import AppKit
 
-/// Pulso runs as a menu bar agent (`LSUIElement`), so by default it owns no Dock tile
+/// Firstlight runs as a menu bar agent (`LSUIElement`), so by default it owns no Dock tile
 /// and no menu bar. A real window needs both: somewhere to switch back to, and Quit
 /// plus the text editing shortcuts. Ownership is counted per window, so the app drops
 /// back to the menu bar as soon as the last one closes.

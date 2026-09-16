@@ -41,13 +41,14 @@ final class NativeSession: ObservableObject {
                 request.timeoutInterval = 15
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                    throw NativeError.message("Cannot load sign-in configuration. Check that the Pulso API is running.")
+                    throw NativeError
+                        .message("Cannot load sign-in configuration. Check that the Firstlight API is running.")
                 }
                 let config = try JSONDecoder().decode(Config.self, from: data)
                 guard config.publishableKey.hasPrefix("pk_")
                 else { throw NativeError.message("Invalid sign-in configuration.") }
                 Clerk.configure(publishableKey: config.publishableKey, options: .init(
-                    redirectConfig: .init(redirectUrl: "pulso://callback", callbackUrlScheme: "pulso")
+                    redirectConfig: .init(redirectUrl: "firstlight://callback", callbackUrlScheme: "firstlight")
                 ))
                 self.configured = true
             }
@@ -93,7 +94,7 @@ final class NativeSession: ObservableObject {
             let info = try await network.userInfo()
             guard self.session?.id == sessionID, self.session?.status == .active else { throw CancellationError() }
             Defaults[.currentUserID] = info.user.id
-            // Heal a prior partial save where Clerk succeeded but the Pulso
+            // Heal a prior partial save where Clerk succeeded but the Firstlight
             // profile store was temporarily unavailable. Sign-in itself stays
             // usable if this best-effort reconciliation fails.
             try? await network.syncNativeProfile()
@@ -140,7 +141,7 @@ final class NativeSession: ObservableObject {
     }
 
     func handle(_ url: URL) async {
-        if url.scheme == "pulso", url.host == "invite" || url.host == "join" {
+        if url.scheme == "firstlight", url.host == "invite" || url.host == "join" {
             self.pendingInvite = url.absoluteString
             @Dependency(\.windowManager) var window
             window.show()

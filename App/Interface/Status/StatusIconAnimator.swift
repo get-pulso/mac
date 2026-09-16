@@ -13,12 +13,13 @@ final class StatusIconAnimator {
         self.menu = menu
         self.statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         menu.attach(to: self.statusBarItem)
-        self.observeLiveUsers()
+        self.observePresence()
         self.observeMenuBarAppearance()
         self.renderIcon()
     }
 
     deinit {
+        self.presenceTask?.cancel()
         NSStatusBar.system.removeStatusItem(self.statusBarItem)
         self.appearanceObservation?.invalidate()
     }
@@ -44,39 +45,116 @@ final class StatusIconAnimator {
 
     private var statusBarItem: NSStatusItem
     private let menu: StatusItemMenu
-    private var avatarImages: [NSImage?] = []
-    private var cancellable: AnyCancellable?
+    private var presenceCandidates: [StatusPresenceCandidate] = []
+    private var avatarURLs: [URL] = []
+    private var avatarImages: [NSImage] = []
+    private var avatarRequest: AnyCancellable?
+    private var presenceTask: Task<Void, Never>?
+    private var subscriptions = Set<AnyCancellable>()
     private var appearanceObservation: NSKeyValueObservation?
 
-    @Dependency(\.storage) private var storage
+    @Dependency(\.network) private var network
 
     private var menuBarMarkColor: Color {
         let appearance = self.statusBarItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
         return appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
     }
 
-    private func observeLiveUsers() {
-        self.cancellable = self.storage.friendsStream(filter: .last24h)
-            .replaceError(with: [])
-            .map { friends in
-                friends
-                    .filter { $0.id != Defaults[.currentUserID] }
-                    .filter { friend in
-                        guard let lastActiveAt = friend.lastActiveAt else { return false }
-                        return Date().timeIntervalSince(lastActiveAt) <= 120 // 2 min online threshold
-                    }
-                    .sorted { ($0.minutes24h ?? 0) > ($1.minutes24h ?? 0) }
-                    .map(\.avatar)
-                    .compactMap { $0 }
-                    .prefix(Self.maxAvatars)
+    private func observePresence() {
+        let timer = Timer.publish(every: 60, on: .main, in: .common)
+            .autoconnect()
+            .map { _ in () }
+            .eraseToAnyPublisher()
+        let account = Defaults.publisher(.currentUserID)
+            .map { _ in () }
+            .eraseToAnyPublisher()
+        let wake = NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didWakeNotification)
+            .map { _ in () }
+            .eraseToAnyPublisher()
+
+        Publishers.Merge3(timer, account, wake)
+            .sink { [weak self] in self?.refreshPresence() }
+            .store(in: &self.subscriptions)
+        self.refreshPresence()
+    }
+
+    private func refreshPresence() {
+        self.updateAvatarURLs(now: .now)
+        self.presenceTask?.cancel()
+
+        guard let userID = Defaults[.currentUserID] else {
+            self.presenceCandidates = []
+            self.setAvatarURLs([])
+            return
+        }
+
+        self.presenceTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let people: [NativePerson] = try await self.network.request(
+                    path: "/api/friends/leaderboard",
+                    method: .get,
+                    query: ["period": "24h"],
+                    expectedUserID: userID
+                )
+                try Task.checkCancellation()
+                guard Defaults[.currentUserID] == userID else { return }
+                #if DEBUG
+                if CommandLine.arguments.contains("--preview-status-avatars") {
+                    let urls = people
+                        .filter { $0.id != userID }
+                        .compactMap { person in
+                            person.avatar_url.flatMap(URL.init(string:))
+                        }
+                        .prefix(Self.maxAvatars)
+                    self.setAvatarURLs(Array(urls))
+                    return
+                }
+                #endif
+                self.presenceCandidates = people.compactMap {
+                    StatusPresenceCandidate(
+                        id: $0.id,
+                        avatarURL: $0.avatar_url,
+                        lastActiveAt: $0.last_active_at
+                    )
+                }
+                self.updateAvatarURLs(now: .now)
+            } catch is CancellationError {
+                return
+            } catch {
+                // Keep the last known row during a transient failure. The local
+                // clock still removes it as soon as its online window expires.
+                self.updateAvatarURLs(now: .now)
             }
-            .flatMap { [weak self] urls -> AnyPublisher<[NSImage?], Never> in
-                guard let self else { return Just([]).eraseToAnyPublisher() }
-                return self.fetchAvatars(for: Array(urls))
-            }
-            .sink { [weak self] avatarImages in
-                self?.avatarImages = avatarImages
-                self?.renderIcon()
+        }
+    }
+
+    private func updateAvatarURLs(now: Date) {
+        self.setAvatarURLs(StatusPresenceSelection.avatarURLs(
+            from: self.presenceCandidates,
+            excluding: Defaults[.currentUserID],
+            now: now,
+            limit: Self.maxAvatars
+        ))
+    }
+
+    private func setAvatarURLs(_ urls: [URL]) {
+        guard urls != self.avatarURLs || self.avatarImages.count != urls.count else { return }
+        self.avatarURLs = urls
+        self.avatarRequest?.cancel()
+
+        guard !urls.isEmpty else {
+            self.avatarImages = []
+            self.renderIcon()
+            return
+        }
+
+        self.avatarRequest = self.fetchAvatars(for: urls)
+            .sink { [weak self] images in
+                guard let self, self.avatarURLs == urls else { return }
+                self.avatarImages = images
+                self.renderIcon()
             }
     }
 
@@ -89,7 +167,7 @@ final class StatusIconAnimator {
             }
     }
 
-    private func fetchAvatars(for urls: [URL]) -> AnyPublisher<[NSImage?], Never> {
+    private func fetchAvatars(for urls: [URL]) -> AnyPublisher<[NSImage], Never> {
         let pipeline = ImagePipeline.shared
         let publishers = urls.enumerated().map { index, url -> AnyPublisher<(Int, NSImage?), Never> in
             let request = ImageRequest(url: url)
@@ -103,7 +181,7 @@ final class StatusIconAnimator {
         return Publishers.MergeMany(publishers)
             .collect()
             .map { results in
-                results.sorted { $0.0 < $1.0 }.map(\.1)
+                results.sorted { $0.0 < $1.0 }.compactMap(\.1)
             }
             .eraseToAnyPublisher()
     }
@@ -111,8 +189,7 @@ final class StatusIconAnimator {
     private func renderIcon() {
         let avatars = self.avatarImages
         let asTemplate = avatars.isEmpty
-        let width = StatusIcon.totalWidth(forAvatarCount: avatars.count, iconSize: Self.iconSize) + Self
-            .iconSize * 1.18 // add icon + spacing
+        let width = StatusIcon.totalWidth(forAvatarCount: avatars.count, iconSize: Self.iconSize)
         let view = StatusIcon(
             avatars: avatars,
             iconSize: Self.iconSize,
@@ -123,6 +200,16 @@ final class StatusIconAnimator {
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         guard let image = renderer.nsImage else { return }
         image.isTemplate = asTemplate
+        self.statusBarItem.length = asTemplate ? NSStatusItem.squareLength : width
+        let label = if avatars.count == 1 {
+            "Firstlight, 1 friend online"
+        } else if avatars.isEmpty {
+            "Firstlight"
+        } else {
+            "Firstlight, \(avatars.count) friends online"
+        }
         self.statusBarItem.button?.image = image
+        self.statusBarItem.button?.setAccessibilityLabel(label)
+        self.statusBarItem.button?.toolTip = "\(label) · Right-click for options"
     }
 }

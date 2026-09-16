@@ -193,30 +193,43 @@ struct NativeDelayedSkeleton<Content: View>: View {
 struct NativePersonSkeleton: View {
     var avatarSize: CGFloat = 40
     var showAction = false
+    /// Ranked lists lead with a place, so the loading rows reserve that column
+    /// and the list does not shift sideways once the real rows arrive.
+    var showsPlace = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            NativeSkeletonShape(width: avatarSize, height: avatarSize, radius: avatarSize / 2)
-            VStack(alignment: .leading, spacing: 7) {
-                NativeSkeletonShape(width: 112, height: 13)
-                NativeSkeletonShape(width: 168, height: 10)
+        HStack(spacing: 0) {
+            if showsPlace {
+                NativeSkeletonShape(width: 13, height: 14)
+                    .frame(width: 20, alignment: .center)
+                    .padding(.trailing, 8)
             }
-            Spacer(minLength: 8)
-            if showAction { NativeSkeletonShape(width: 54, height: 22, radius: 6) }
-            else { NativeSkeletonShape(width: 34, height: 11) }
+            HStack(spacing: 12) {
+                NativeSkeletonShape(width: avatarSize, height: avatarSize, radius: avatarSize / 2)
+                VStack(alignment: .leading, spacing: 7) {
+                    NativeSkeletonShape(width: 112, height: 13)
+                    NativeSkeletonShape(width: 168, height: 10)
+                }
+                Spacer(minLength: 8)
+                if showAction { NativeSkeletonShape(width: 54, height: 22, radius: 6) }
+                else { NativeSkeletonShape(width: 34, height: 11) }
+            }
         }
     }
 }
 
 struct NativePeopleSkeleton: View {
     var rows = 5
+    /// Only a ranked list leads with a place, so only its loading rows hold
+    /// that column open.
+    var showsPlaces = false
 
     var body: some View {
         NativeDelayedSkeleton {
             VStack(spacing: 0) {
                 ForEach(0 ..< rows, id: \.self) { _ in
-                    NativePersonSkeleton()
-                        .padding(.horizontal, 13).padding(.vertical, 10)
+                    NativePersonSkeleton(showsPlace: showsPlaces)
+                        .padding(.horizontal, 12).padding(.vertical, 10)
                 }
             }
         }
@@ -300,7 +313,9 @@ struct NativeTrackedAppsSkeleton: View {
 
     var body: some View {
         NativeDelayedSkeleton(delay: .zero) {
-            VStack(spacing: 8) {
+            // Leading, like the "Top apps" heading it stands in for: a centred
+            // bar would slide left when the real text arrives.
+            VStack(alignment: .leading, spacing: 8) {
                 Divider()
                 NativeSkeletonShape(width: 58, height: 12)
                 VStack(spacing: 0) {

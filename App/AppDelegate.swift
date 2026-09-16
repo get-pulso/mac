@@ -16,7 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Defaults[.currentUserID] = nil
         self.tracker.activate()
         if !AppEnvironment.isLocalBackend { self.updater.start() }
-        let appearance = UserDefaults.standard.string(forKey: "pulso.appearance") ?? "system"
+        let appearance = UserDefaults.standard.string(forKey: "firstlight.appearance") ?? "system"
         NSApp.appearance = appearance == "system" ? nil : NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         Defaults[.sessionCounter] += 1
         Task {
@@ -102,5 +102,5 @@ enum LaunchAtLogin {
 
     // MARK: Private
 
-    private static let configuredKey = "pulso.launchAtLoginConfigured"
+    private static let configuredKey = "firstlight.launchAtLoginConfigured"
 }

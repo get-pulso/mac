@@ -28,8 +28,8 @@ struct NativeSettingsView: View {
 
     @ObservedObject private var session = NativeSession.shared
     @ObservedObject private var socialStore = SocialStore.shared
-    @AppStorage("pulso.appearance") private var appearance = "system"
-    @AppStorage("pulso.trackingPaused") private var trackingPaused = false
+    @AppStorage("firstlight.appearance") private var appearance = "system"
+    @AppStorage("firstlight.trackingPaused") private var trackingPaused = false
     @State private var confirming = false
     @State private var confirmTitle = ""
     @State private var confirmAction: (() -> Void)?
@@ -87,7 +87,7 @@ struct NativeSettingsView: View {
         switch model.route.section {
         case .account:
             HStack(spacing: 12) {
-                PulsoAvatar(url: session.user?.imageUrl, name: name, size: 52)
+                FirstlightAvatar(url: session.user?.imageUrl, name: name, size: 52)
                 VStack(alignment: .leading, spacing: 4) {
                     let fullName = [session.user?.firstName, session.user?.lastName].compactMap { $0 }
                         .joined(separator: " ")
@@ -130,7 +130,7 @@ struct NativeSettingsView: View {
             }
             if let error = model.inviteError { NativeInlineError(message: error) { Task { await model.load() } } }
             Button {
-                confirm("Sign out of Pulso on this Mac?") {
+                confirm("Sign out of Firstlight on this Mac?") {
                     model.run("Signing out…", key: "sign-out") { try await NativeSession.shared.signOut() }
                 }
             } label: {
@@ -144,14 +144,14 @@ struct NativeSettingsView: View {
             .disabled(model.busy)
         case .general:
             panel {
-                Toggle("Open Pulso at login", isOn: launchAtLoginBinding)
+                Toggle("Open Firstlight at login", isOn: launchAtLoginBinding)
                     .toggleStyle(.switch)
                     .controlSize(.small)
                 Picker("Theme", selection: $appearance) {
                     Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark")
                 }
                 if launchAtLoginStatus == .requiresApproval {
-                    Text("Pulso is disabled in Login Items. Allow it in System Settings to start automatically.")
+                    Text("Firstlight is disabled in Login Items. Allow it in System Settings to start automatically.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Button("Open Login Items…") { LaunchAtLogin.openSystemSettings() }
@@ -169,7 +169,7 @@ struct NativeSettingsView: View {
                 Toggle("Pause activity tracking", isOn: $trackingPaused)
                     .toggleStyle(.switch).controlSize(.small)
                 Text(
-                    "Pulso records active time and the foreground app, never window titles or content. Tracking pauses while your Mac is idle or locked."
+                    "Firstlight records active time and the foreground app, never window titles or content. Tracking pauses while your Mac is idle or locked."
                 )
                 .font(.callout).foregroundStyle(.secondary)
                 Button(role: .destructive) {
@@ -184,7 +184,7 @@ struct NativeSettingsView: View {
                 .nativeSettingsActionButton()
                 .disabled(model.busy)
             }
-            Button("Quit Pulso") { NSApp.terminate(nil) }
+            Button("Quit Firstlight") { NSApp.terminate(nil) }
                 .nativeSettingsActionButton()
         case .security:
             panel {
@@ -366,7 +366,7 @@ struct NativeSettingsView: View {
             primary("Verify", loadingTitle: "Verifying…", key: "verify-identity", action: model.verifyIdentity)
         case "delete":
             Text(
-                "This permanently removes your Pulso account, activity and friendships. Shared groups remain, without your membership or ownership. This cannot be undone."
+                "This permanently removes your Firstlight account, activity and friendships. Shared groups remain, without your membership or ownership. This cannot be undone."
             )
             .foregroundStyle(.secondary)
             labeled("Type DELETE to confirm", text: $model.confirmation)
@@ -539,7 +539,7 @@ struct NativeSettingsSidebar: View {
             if sections.contains(.account) {
                 Button { model.navigate(.account) } label: {
                     HStack(spacing: 8) {
-                        PulsoAvatar(
+                        FirstlightAvatar(
                             url: session.user?.imageUrl,
                             name: session.user?.firstName ?? "Account",
                             size: 28

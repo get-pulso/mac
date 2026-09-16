@@ -11,7 +11,11 @@ struct LoginView: View {
             if onboarding, session.canContinueFromWelcome, let account = session.welcomeAccount {
                 OnboardingContinueButton(
                     account: account,
-                    avatar: AnyView(PulsoAvatar(url: account.avatarURL, name: account.name ?? "Pulso", size: 24)),
+                    avatar: AnyView(FirstlightAvatar(
+                        url: account.avatarURL,
+                        name: account.name ?? "Firstlight",
+                        size: 24
+                    )),
                     action: session.continueFromWelcome
                 ).padding(16)
             } else if onboarding, isWelcomeEntry { welcomeEntry }
@@ -77,7 +81,7 @@ struct LoginView: View {
             if (!session.ready && session.error == nil) || (model.step == .complete && model.busy) {
                 NativeAuthSkeleton()
             } else if !session.ready {
-                NativeInlineError(message: session.error ?? "Cannot connect to Pulso.") {
+                NativeInlineError(message: session.error ?? "Cannot connect to Firstlight.") {
                     Task { await session.start() }
                 }
             } else if model.step == .complete {
@@ -196,7 +200,7 @@ struct LoginView: View {
 
     private var title: String {
         switch self.model.step {
-        case .email: "Welcome to Pulso"
+        case .email: "Welcome to Firstlight"
         case .signup: "Create your account"
         case .password: "Enter your password"
         case .code: "Check your email"

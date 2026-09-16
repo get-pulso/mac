@@ -110,9 +110,9 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     private var navigation: NSToolbarItemGroup?
     private var newGroupItem: NSToolbarItem?
     private var observation: AnyCancellable?
-    private let navigationID = NSToolbarItem.Identifier("PulsoSettingsNavigation")
-    private let newGroupID = NSToolbarItem.Identifier("PulsoSettingsNewGroup")
-    private let separatorID = NSToolbarItem.Identifier("PulsoSettingsSeparator")
+    private let navigationID = NSToolbarItem.Identifier("FirstlightSettingsNavigation")
+    private let newGroupID = NSToolbarItem.Identifier("FirstlightSettingsNewGroup")
+    private let separatorID = NSToolbarItem.Identifier("FirstlightSettingsSeparator")
 
     private func makeWindow() {
         let model = NativeSettingsModel()
@@ -147,7 +147,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         window.contentMinSize = NativeLayout.settingsMinimumSize
         window.isReleasedWhenClosed = false
         window.delegate = self
-        let toolbar = NSToolbar(identifier: "PulsoSettings")
+        let toolbar = NSToolbar(identifier: "FirstlightSettings")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         toolbar.sizeMode = .regular

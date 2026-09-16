@@ -56,7 +56,7 @@ struct NativeProfileEditor: View {
 
     private var photo: some View {
         HStack(spacing: 12) {
-            PulsoAvatar(url: session.user?.imageUrl, name: model.firstName, size: 52)
+            FirstlightAvatar(url: session.user?.imageUrl, name: model.firstName, size: 52)
                 .overlay {
                     if model.isRunning("upload-photo") {
                         Circle().fill(.regularMaterial)

@@ -24,7 +24,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     // MARK: Internal
 
     static let shared = OnboardingWindowController()
-    static let introSeenKey = "pulso.onboarding.opal.introSeen"
+    static let introSeenKey = "firstlight.onboarding.opal.introSeen"
 
     private(set) var isPresented = false
     private(set) var hasPresentedThisLaunch = false
@@ -54,7 +54,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         )
 
         let carrier = OnboardingWindow(contentRect: canvas, styleMask: [.borderless], backing: .buffered, defer: false)
-        carrier.title = "Pulso Intro"
+        carrier.title = "Firstlight Intro"
         carrier.backgroundColor = .clear
         carrier.isOpaque = false
         carrier.hasShadow = false
@@ -72,7 +72,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
-        native.title = "Welcome to Pulso"
+        native.title = "Welcome to Firstlight"
         native.titleVisibility = .hidden
         native.titlebarAppearsTransparent = true
         native.titlebarSeparatorStyle = .none
@@ -157,7 +157,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
                     backing: .buffered,
                     defer: false
                 )
-                dimmer.title = "Pulso Desktop Dimmer"
+                dimmer.title = "Firstlight Desktop Dimmer"
                 dimmer.backgroundColor = .black
                 dimmer.isOpaque = false
                 dimmer.hasShadow = false

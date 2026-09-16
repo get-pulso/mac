@@ -1,6 +1,6 @@
 <svg width="164" height="157" viewBox="0 0 164 157" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <radialGradient id="pulsoSun" gradientUnits="userSpaceOnUse" cx="73.9" cy="82.1" r="92">
+    <radialGradient id="firstlightSun" gradientUnits="userSpaceOnUse" cx="73.9" cy="82.1" r="92">
       <stop offset="0.00" stop-color="#FAF1FF" stop-opacity="1.000"/>
       <stop offset="0.22" stop-color="#F9EEFF" stop-opacity="0.990"/>
       <stop offset="0.36" stop-color="#F4E5FF" stop-opacity="0.973"/>
@@ -12,7 +12,7 @@
       <stop offset="1.00" stop-color="#C082FF" stop-opacity="0.392"/>
     </radialGradient>
   </defs>
-  <path fill="url(#pulsoSun)"
+  <path fill="url(#firstlightSun)"
      d="M56.64 153.3
        A44.09 44.09 0 0 0 67.95 133.21L120.02 144.47A11.24 11.24 0 0 0 126.72 142.89L68.92 128.16
        A44.09 44.09 0 0 0 69.29 121.59L151 117.77A18.02 18.02 0 0 0 155.54 108.77L68.64 114.79

@@ -3,13 +3,13 @@
 set -euo pipefail
 
 project_root=${0:A:h:h}
-derived_data_path=/tmp/pulso-derived-local
+derived_data_path=/tmp/firstlight-derived-local
 signing_identity="Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
 expected_team="25UG4QYN9F"
-build_lock=/tmp/pulso-local-build.lock
+build_lock=/tmp/firstlight-local-build.lock
 
 if ! mkdir "$build_lock" 2>/dev/null; then
-    print -u2 "Another canonical Pulso build is already running."
+    print -u2 "Another canonical Firstlight build is already running."
     exit 1
 fi
 trap 'rmdir "$build_lock" 2>/dev/null || true' EXIT
@@ -22,8 +22,8 @@ fi
 cd "$project_root"
 xcodegen generate
 xcodebuild \
-    -project Pulso.xcodeproj \
-    -scheme Pulso \
+    -project Firstlight.xcodeproj \
+    -scheme Firstlight \
     -configuration Debug \
     -derivedDataPath "$derived_data_path" \
     -disableAutomaticPackageResolution \
@@ -33,7 +33,7 @@ xcodebuild \
     "OTHER_CODE_SIGN_FLAGS=--timestamp=none" \
     build
 
-app_path="$derived_data_path/Build/Products/Debug/Pulso.app"
+app_path="$derived_data_path/Build/Products/Debug/Firstlight.app"
 signing_details=$(codesign -dv --verbose=4 "$app_path" 2>&1)
 if ! grep -F "Authority=$signing_identity" <<<"$signing_details" >/dev/null ||
    ! grep -F "TeamIdentifier=$expected_team" <<<"$signing_details" >/dev/null; then

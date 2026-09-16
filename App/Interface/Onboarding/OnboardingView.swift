@@ -71,7 +71,7 @@ struct OnboardingView: View {
                 .offset(y: (1 - logoIn) * 56 - logoOut * 64)
                 .accessibilityHidden(true)
 
-            Text("Welcome to Pulso")
+            Text("Welcome to Firstlight")
                 .font(.system(size: compact ? 38 : 48, weight: .medium))
                 .tracking(-1.8)
                 .multilineTextAlignment(.center)

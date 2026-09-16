@@ -18,6 +18,6 @@ struct WelcomeAccount: Equatable {
     let name: String?
     let avatarURL: String?
 
-    var buttonTitle: String { self.name.map { "Continue as \($0)" } ?? "Continue to Pulso" }
+    var buttonTitle: String { self.name.map { "Continue as \($0)" } ?? "Continue to Firstlight" }
     var initial: String { self.name.map { String($0.prefix(1)).uppercased() } ?? "P" }
 }

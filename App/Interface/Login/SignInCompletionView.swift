@@ -7,7 +7,7 @@ struct SignInCompletionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Pulso").font(.system(size: 14, weight: .semibold))
+            Text("Firstlight").font(.system(size: 14, weight: .semibold))
             if let error = model.error ?? session.error, !session.isCompletingSignIn, !model.busy {
                 NativeInlineError(message: error)
                 HStack {

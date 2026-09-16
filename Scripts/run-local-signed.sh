@@ -5,39 +5,43 @@ set -euo pipefail
 project_root=${0:A:h:h}
 
 # The isolated shader lab uses the same signing identity and canonical build
-# directory, without starting the API or replacing the main Pulso application.
+# directory, without starting the API or replacing the main Firstlight application.
 if [[ "${1:-}" == "--onboarding-playground" ]]; then
     shift
     exec /bin/zsh "$project_root/Scripts/run-onboarding-playground-signed.sh" "$@"
 fi
 
-canonical_app=/tmp/pulso-derived-local/Build/Products/Debug/Pulso.app
+canonical_app=/tmp/firstlight-derived-local/Build/Products/Debug/Firstlight.app
 
 "$project_root/Scripts/ensure-local-api.sh"
 "$project_root/Scripts/build-local-signed.sh"
 
-for pid in ${(f)$(pgrep -f '/Pulso\.app/Contents/MacOS/Pulso$' || true)}; do
+for pid in ${(f)$(pgrep -f '/Firstlight\.app/Contents/MacOS/Firstlight($| )' || true)}; do
     [ -n "$pid" ] || continue
     command=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    if [[ "$command" == */Pulso.app/Contents/MacOS/Pulso ]]; then
+    if [[ "$command" == */Firstlight.app/Contents/MacOS/Firstlight* ]]; then
         kill -TERM "$pid" 2>/dev/null || true
     fi
 done
 
 for _ in {1..30}; do
-    pgrep -f '/Pulso\.app/Contents/MacOS/Pulso$' >/dev/null || break
+    pgrep -f '/Firstlight\.app/Contents/MacOS/Firstlight($| )' >/dev/null || break
     sleep 0.1
 done
 
-open -n "$canonical_app"
+if (( $# > 0 )); then
+    open -n "$canonical_app" --args "$@"
+else
+    open -n "$canonical_app"
+fi
 
 for _ in {1..30}; do
-    if pgrep -f '^/private/tmp/pulso-derived-local/Build/Products/Debug/Pulso\.app/Contents/MacOS/Pulso$' >/dev/null; then
+    if pgrep -f '^/private/tmp/firstlight-derived-local/Build/Products/Debug/Firstlight\.app/Contents/MacOS/Firstlight($| )' >/dev/null; then
         print "$canonical_app"
         exit 0
     fi
     sleep 0.1
 done
 
-print -u2 "Pulso did not start from the canonical signed build."
+print -u2 "Firstlight did not start from the canonical signed build."
 exit 1

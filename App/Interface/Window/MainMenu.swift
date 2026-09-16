@@ -40,7 +40,7 @@ final class MainMenu: NSObject, NSMenuItemValidation {
     }
 
     private func makeMenu() -> NSMenu {
-        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Pulso"
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Firstlight"
         let bar = NSMenu()
 
         let appMenu = NSMenu()

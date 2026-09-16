@@ -1,4 +1,4 @@
-name: Pulso
+name: Firstlight
 configs:
   Debug: debug
   Release: release    
@@ -42,14 +42,14 @@ packages:
 fileGroups:
   - App
 targets:
-  Pulso:
+  Firstlight:
     type: application
     platform: macOS
     sources:
       - path: App
         excludes:
           - Resources/Info.plist
-          - Resources/Pulso.entitlements
+          - Resources/Firstlight.entitlements
           - Resources/OnboardingShaders
       # Runtime Metal compilation; folder resource avoids an optional Metal-toolchain build step.
       - path: App/Resources/OnboardingShaders
@@ -85,7 +85,7 @@ targets:
                    [ "${CODE_SIGNING_REQUIRED:-NO}" != "YES" ] ||
                    { [ "${CODE_SIGN_IDENTITY:-}" != "$expected_identity" ] &&
                      [ "${CODE_SIGN_IDENTITY:-}" != "$expected_hash" ]; }; then
-                  echo "error: Pulso must be signed with $expected_identity. Use Scripts/run-local-signed.sh."
+                  echo "error: Firstlight must be signed with $expected_identity. Use Scripts/run-local-signed.sh."
                   exit 1
                 fi
                 if ! security find-identity -v -p codesigning | grep -F "$expected_identity" >/dev/null; then
@@ -95,18 +95,18 @@ targets:
       - name: SwiftFormat
         basedOnDependencyAnalysis: False
         script: |
-                if [ "${PULSO_SKIP_SWIFTFORMAT:-NO}" != "YES" ]; then
+                if [ "${FIRSTLIGHT_SKIP_SWIFTFORMAT:-NO}" != "YES" ]; then
                   ~/bin/swiftformat --swiftversion 5.10 --config Scripts/.swiftformat "${SRCROOT}/App"
                 fi
     settings:
       configs:
         Debug:
-          PULSO_API_BASE_URL: http://localhost:3001
+          FIRSTLIGHT_API_BASE_URL: http://localhost:3001
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
           OTHER_CODE_SIGN_FLAGS: --timestamp=none
         Release:
-          PULSO_API_BASE_URL: https://pulso-wheat-six.vercel.app
+          FIRSTLIGHT_API_BASE_URL: https://firstlight.sh
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
       base:
@@ -125,11 +125,11 @@ targets:
         SWIFT_OPTIMIZE_OBJECT_LIFETIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_FILE: App/Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: App/Resources/Pulso.entitlements
-        PRODUCT_BUNDLE_IDENTIFIER: com.get-pulso.mac
+        CODE_SIGN_ENTITLEMENTS: App/Resources/Firstlight.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: sh.firstlight.mac
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.social-networking
 schemes:
-  Pulso:
+  Firstlight:
     build:
       targets:
-        Pulso: all
+        Firstlight: all

@@ -21,16 +21,16 @@ enum NativeOnboardingChecks {
 
 @MainActor
 private final class OnboardingChecksDelegate: NSObject, NSApplicationDelegate {
-    let suite = "com.get-pulso.onboarding.checks.\(UUID().uuidString)"
+    let suite = "sh.firstlight.onboarding.checks.\(UUID().uuidString)"
     lazy var defaults = UserDefaults(suiteName: suite)!
     lazy var controller = OnboardingWindowController(defaults: defaults)
     let content = AnyView(Text("Authentication test fixture"))
     var closed = 0
     var assertions = 0
 
-    var native: NSWindow? { NSApp.windows.first { $0.title == "Welcome to Pulso" && $0.isVisible } }
-    var carrier: NSWindow? { NSApp.windows.first { $0.title == "Pulso Intro" && $0.isVisible } }
-    var dimmers: [NSWindow] { NSApp.windows.filter { $0.title == "Pulso Desktop Dimmer" && $0.isVisible } }
+    var native: NSWindow? { NSApp.windows.first { $0.title == "Welcome to Firstlight" && $0.isVisible } }
+    var carrier: NSWindow? { NSApp.windows.first { $0.title == "Firstlight Intro" && $0.isVisible } }
+    var dimmers: [NSWindow] { NSApp.windows.filter { $0.title == "Firstlight Desktop Dimmer" && $0.isVisible } }
 
     var nativeWindowsAreGone: Bool { self.native == nil && self.carrier == nil && self.dimmers.isEmpty }
 

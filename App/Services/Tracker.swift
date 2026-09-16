@@ -81,7 +81,7 @@ final class Tracker {
 
     // MARK: Private
 
-    private let logger = Logger(label: "pulso.tracker")
+    private let logger = Logger(label: "firstlight.tracker")
     private let storage: Storage
     private let network: Network
     private var timer: Timer?
@@ -168,7 +168,7 @@ final class Tracker {
 
     private func heartbeat() throws {
         guard let userID = Defaults[.currentUserID],
-              !UserDefaults.standard.bool(forKey: "pulso.trackingPaused") else { return }
+              !UserDefaults.standard.bool(forKey: "firstlight.trackingPaused") else { return }
         self.logger.info("Heartbeat")
 
         let trackedEvents: [CGEventType] = [.mouseMoved, .keyDown, .scrollWheel]

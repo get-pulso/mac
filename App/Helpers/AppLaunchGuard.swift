@@ -12,8 +12,8 @@ enum AppLaunchGuard {
         guard self.currentTeamIdentifier() == self.expectedTeamIdentifier else {
             let alert = NSAlert()
             alert.alertStyle = .critical
-            alert.messageText = "Pulso is not signed correctly"
-            alert.informativeText = "Build and run Pulso with Scripts/run-local-signed.sh."
+            alert.messageText = "Firstlight is not signed correctly"
+            alert.informativeText = "Build and run Firstlight with Scripts/run-local-signed.sh."
             alert.addButton(withTitle: "Quit")
             alert.runModal()
             return false
@@ -24,7 +24,7 @@ enum AppLaunchGuard {
     @MainActor
     static func acquireSingleInstanceLock() -> Bool {
         let path = FileManager.default.temporaryDirectory
-            .appendingPathComponent("com.get-pulso.mac.instance.lock")
+            .appendingPathComponent("sh.firstlight.mac.instance.lock")
             .path
         let descriptor = open(path, O_CREAT | O_RDWR, mode_t(S_IRUSR | S_IWUSR))
         guard descriptor >= 0 else { return false }
@@ -65,7 +65,7 @@ enum AppLaunchGuard {
     @MainActor
     private static func activateExistingInstance() {
         let currentPID = ProcessInfo.processInfo.processIdentifier
-        NSRunningApplication.runningApplications(withBundleIdentifier: "com.get-pulso.mac")
+        NSRunningApplication.runningApplications(withBundleIdentifier: "sh.firstlight.mac")
             .first(where: { $0.processIdentifier != currentPID })?
             .activate()
     }

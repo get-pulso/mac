@@ -26,7 +26,7 @@ enum WelcomeAccountChecks {
         precondition(handle.name == "sam")
         let anonymous = WelcomeAccount(id: "fixture", firstName: nil, fullName: "", username: " ", avatarURL: nil)
         precondition(anonymous.name == nil)
-        precondition(anonymous.buttonTitle == "Continue to Pulso")
+        precondition(anonymous.buttonTitle == "Continue to Firstlight")
         precondition(anonymous.initial == "P")
         print("PASS: 9 welcome account checks; real names, trimming, fallback and avatar availability")
     }

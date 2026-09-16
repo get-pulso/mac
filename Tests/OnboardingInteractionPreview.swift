@@ -1,7 +1,7 @@
 import AppKit
 
 /// Links only the production onboarding views, not Clerk, networking or account storage.
-/// A distinct test bundle ID keeps UI automation separate from the user's running Pulso.
+/// A distinct test bundle ID keeps UI automation separate from the user's running Firstlight.
 @main
 enum OnboardingInteractionPreview {
     static func main() {

@@ -22,6 +22,12 @@ struct NativeResourceCache<Key: Hashable, Value> {
         self.entries[key] = Entry(value: value, storedAt: now)
     }
 
+    /// Replaces the value but keeps the entry's age, so growing a list does not
+    /// postpone its next revalidation. A missing entry is stored as new.
+    mutating func update(_ value: Value, for key: Key, now: Date = .now) {
+        self.entries[key] = Entry(value: value, storedAt: self.entries[key]?.storedAt ?? now)
+    }
+
     /// Keeps the last renderable value but makes the next access revalidate it.
     mutating func invalidate(_ key: Key) {
         guard let entry = self.entries[key] else { return }

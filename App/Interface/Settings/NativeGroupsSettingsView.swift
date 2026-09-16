@@ -128,7 +128,7 @@ struct NativeGroupsSettingsView: View {
             Section {
                 ForEach(members.members) { person in
                     HStack(spacing: 10) {
-                        PulsoAvatar(url: person.avatar_url, name: person.displayName, size: 28)
+                        FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 28)
                         Text(person.displayName).lineLimit(2)
                         Spacer(minLength: 8)
                         if person.is_creator == true {
@@ -196,7 +196,7 @@ struct NativeGroupsSettingsView: View {
                             }
                         )) {
                             HStack(spacing: 10) {
-                                PulsoAvatar(url: person.avatar_url, name: person.displayName, size: 28)
+                                FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 28)
                                 Text(person.displayName).lineLimit(2)
                             }
                         }.toggleStyle(.checkbox).padding(.vertical, 2)

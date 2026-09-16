@@ -60,7 +60,7 @@ struct OnboardingContinueButton: View {
         .accessibilityLabel(isLoading ? "Opening Google sign-in" : account?.buttonTitle ?? "Continue with Google")
         .accessibilityHint(
             account == nil ? "Press Enter to sign in with Google." :
-                "Press Enter to open Pulso in the menu bar."
+                "Press Enter to open Firstlight in the menu bar."
         )
         .help("\(account?.buttonTitle ?? "Continue with Google") (Enter)")
     }

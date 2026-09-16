@@ -2,13 +2,13 @@
 set -euo pipefail
 
 project_root=${0:A:h:h:h}/playground/onboarding-shader
-derived_data_path=/tmp/pulso-derived-local
+derived_data_path=/tmp/firstlight-derived-local
 signing_identity="Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
-canonical_app="$derived_data_path/Playground/Products/Debug/PulsoOnboardingPlayground.app"
-build_lock=/tmp/pulso-local-build.lock
+canonical_app="$derived_data_path/Playground/Products/Debug/FirstlightOnboardingPlayground.app"
+build_lock=/tmp/firstlight-local-build.lock
 
 if ! mkdir "$build_lock" 2>/dev/null; then
-    print -u2 "Another canonical Pulso build is already running."
+    print -u2 "Another canonical Firstlight build is already running."
     exit 1
 fi
 trap 'rmdir "$build_lock" 2>/dev/null || true' EXIT
@@ -20,8 +20,8 @@ fi
 
 cd "$project_root"
 xcodegen generate
-xcodebuild -project PulsoOnboardingPlayground.xcodeproj \
-    -scheme PulsoOnboardingPlayground -configuration Debug \
+xcodebuild -project FirstlightOnboardingPlayground.xcodeproj \
+    -scheme FirstlightOnboardingPlayground -configuration Debug \
     -derivedDataPath "$derived_data_path" \
     "SYMROOT=$derived_data_path/Playground/Products" \
     "OBJROOT=$derived_data_path/Playground/Intermediates" \
@@ -39,16 +39,16 @@ rmdir "$build_lock"
 trap - EXIT
 
 if [[ "${1:-}" == "--verify-shader" ]]; then
-    exec "$canonical_app/Contents/MacOS/PulsoOnboardingPlayground" "$@"
+    exec "$canonical_app/Contents/MacOS/FirstlightOnboardingPlayground" "$@"
 fi
 
-# Replace only the lab, never the signed-in Pulso application.
-playground_process_pattern='/PulsoOnboardingPlayground[.]app/Contents/MacOS/PulsoOnboardingPlayground([[:space:]]|$)'
+# Replace only the lab, never the signed-in Firstlight application.
+playground_process_pattern='/FirstlightOnboardingPlayground[.]app/Contents/MacOS/FirstlightOnboardingPlayground([[:space:]]|$)'
 for pid in ${(f)$(pgrep -f "$playground_process_pattern" || true)}; do
     [[ -n "$pid" ]] || continue
     command=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    if [[ "$command" == */PulsoOnboardingPlayground.app/Contents/MacOS/PulsoOnboardingPlayground ]] ||
-       [[ "$command" == */PulsoOnboardingPlayground.app/Contents/MacOS/PulsoOnboardingPlayground\ * ]]; then
+    if [[ "$command" == */FirstlightOnboardingPlayground.app/Contents/MacOS/FirstlightOnboardingPlayground ]] ||
+       [[ "$command" == */FirstlightOnboardingPlayground.app/Contents/MacOS/FirstlightOnboardingPlayground\ * ]]; then
         kill -TERM "$pid" 2>/dev/null || true
     fi
 done
@@ -61,7 +61,7 @@ if pgrep -f "$playground_process_pattern" >/dev/null; then
     exit 1
 fi
 if [[ "${1:-}" == "--verify-window" ]]; then
-    exec "$canonical_app/Contents/MacOS/PulsoOnboardingPlayground" "$@"
+    exec "$canonical_app/Contents/MacOS/FirstlightOnboardingPlayground" "$@"
 fi
 open -n "$canonical_app" --args "$@"
 print "$canonical_app"

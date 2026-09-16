@@ -9,7 +9,7 @@ enum OnboardingShaderChecks {
     static func run() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw ShaderError.unavailable }
         let renderer = try MetalRenderer(device: device)
-        let folder = URL(fileURLWithPath: "/tmp/pulso-integrated-gas-frames", isDirectory: true)
+        let folder = URL(fileURLWithPath: "/tmp/firstlight-integrated-gas-frames", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let times: [Float] = [0, 0.7, 1.8, 2.8, 3.55, 3.72, 3.95, 4.1, 4.6, 5.8]
         var slowestGPU = 0.0

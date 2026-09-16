@@ -19,6 +19,13 @@ struct NativeResourceCacheChecks {
         precondition(cache.value(for: "people") == [3])
         precondition(!cache.isFresh("people", for: 30, now: start.addingTimeInterval(100)))
 
+        cache.insert([3], for: "people", now: start)
+        cache.update([3, 4], for: "people", now: start.addingTimeInterval(20))
+        precondition(cache.value(for: "people") == [3, 4])
+        precondition(!cache.isFresh("people", for: 30, now: start.addingTimeInterval(30))) // Growing keeps the age.
+        cache.update([5], for: "missing", now: start)
+        precondition(cache.value(for: "missing") == [5] && cache.isFresh("missing", for: 30, now: start))
+
         cache.removeValue(for: "people")
         precondition(!cache.contains("people"))
         cache.insert([], for: "empty", now: start)

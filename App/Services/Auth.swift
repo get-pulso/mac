@@ -67,6 +67,6 @@ actor Auth {
         case refreshToken
     }
 
-    private let keychain = Keychain(service: "com.get-pulso.mac.auth")
+    private let keychain = Keychain(service: "sh.firstlight.mac.auth")
     private let invalidationSubject = PassthroughSubject<Void, Never>()
 }

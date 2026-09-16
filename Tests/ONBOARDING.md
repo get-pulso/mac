@@ -10,7 +10,7 @@ session restoration or profile completion is in flight.
 - Fresh, signed-out launch: desktop dims, Cloud expands into a real titled window,
   then a separate 5.1-second welcome timeline starts: P rises from below, stays
   fully visible for 1.4 seconds, moves up
-  and disappears completely; `Welcome to Pulso` replaces it in the center, then
+  and disappears completely; `Welcome to Firstlight` replaces it in the center, then
   the bottom Continue / Enter button appears. The logo and heading never overlap.
   Both click and Return call the existing Google OAuth action directly.
   Welcome content is absent from the animation proxy and inaccessible during prewarming.
@@ -29,7 +29,7 @@ session restoration or profile completion is in flight.
   always reruns the full Cloud intro, even if welcome is already open.
   Signed-out menu-bar clicks open the same login window.
 - Closing login leaves the menu-bar app running and keeps authentication state intact.
-- The first completed intro sets `pulso.onboarding.opal.introSeen`. Reopening sign-in is instant.
+- The first completed intro sets `firstlight.onboarding.opal.introSeen`. Reopening sign-in is instant.
 - Escape skips the effect; in the native login window it closes the window.
   App deactivation, display changes, hide/sleep, Reduce Motion and Metal failure restore the desktop.
 - Native traffic lights, resizing, corners and shadows are supplied by AppKit.
@@ -43,10 +43,10 @@ Clerk's existing presentation anchor resolves the key onboarding NSWindow.
 
 From `mac/`, regenerate the Xcode project after adding files. The Metal source is
 a folder resource, compiled at runtime; the optional Metal build toolchain is not required.
-`PULSO_SKIP_SWIFTFORMAT=YES` prevents whole-tree formatting of parallel work.
+`FIRSTLIGHT_SKIP_SWIFTFORMAT=YES` prevents whole-tree formatting of parallel work.
 
 ```sh
-PULSO_SKIP_SWIFTFORMAT=YES Scripts/run-local-signed.sh
+FIRSTLIGHT_SKIP_SWIFTFORMAT=YES Scripts/run-local-signed.sh
 ```
 
 ## Isolated verification
@@ -57,18 +57,18 @@ The window checks briefly display/dim the desktop; avoid switching apps during t
 first six seconds, since switching intentionally ends the effect.
 
 ```sh
-mkdir -p /tmp/PulsoOnboardingChecks.app/Contents/MacOS \
-  /tmp/PulsoOnboardingChecks.app/Contents/Resources/OnboardingShaders
+mkdir -p /tmp/FirstlightOnboardingChecks.app/Contents/MacOS \
+  /tmp/FirstlightOnboardingChecks.app/Contents/Resources/OnboardingShaders
 cp App/Resources/OnboardingShaders/Waves.metal \
-  /tmp/PulsoOnboardingChecks.app/Contents/Resources/OnboardingShaders/Waves.metal
+  /tmp/FirstlightOnboardingChecks.app/Contents/Resources/OnboardingShaders/Waves.metal
 xcrun swiftc -O -swift-version 5 \
   App/Interface/Onboarding/IntroPlayback.swift \
   App/Interface/Onboarding/MetalOnboardingShaderView.swift \
   App/Interface/Onboarding/OnboardingView.swift \
   App/Interface/Onboarding/OnboardingWindowController.swift \
   Tests/OnboardingShaderChecks.swift Tests/NativeOnboardingChecks.swift \
-  -o /tmp/PulsoOnboardingChecks.app/Contents/MacOS/PulsoOnboardingChecks
-/tmp/PulsoOnboardingChecks.app/Contents/MacOS/PulsoOnboardingChecks
+  -o /tmp/FirstlightOnboardingChecks.app/Contents/MacOS/FirstlightOnboardingChecks
+/tmp/FirstlightOnboardingChecks.app/Contents/MacOS/FirstlightOnboardingChecks
 ```
 
 Checks 40 GPU frames at two sizes / scales, premultiplied alpha, flowing gas,
@@ -80,17 +80,17 @@ Welcome timing and cancellation checks:
 
 ```sh
 xcrun swiftc -O App/Interface/Onboarding/IntroPlayback.swift \
-  Tests/WelcomeRevealChecks.swift -o /tmp/pulso-welcome-reveal-checks
-/tmp/pulso-welcome-reveal-checks
+  Tests/WelcomeRevealChecks.swift -o /tmp/firstlight-welcome-reveal-checks
+/tmp/firstlight-welcome-reveal-checks
 xcrun swiftc -O App/Helpers/WelcomeAccount.swift \
-  Tests/WelcomeAccountChecks.swift -o /tmp/pulso-welcome-account-checks
-/tmp/pulso-welcome-account-checks
+  Tests/WelcomeAccountChecks.swift -o /tmp/firstlight-welcome-account-checks
+/tmp/firstlight-welcome-account-checks
 xcrun swiftc -O App/Interface/Status/StatusItemMenu.swift \
-  Tests/NativeStatusMenuChecks.swift -o /tmp/pulso-native-menu-checks
-/tmp/pulso-native-menu-checks
+  Tests/NativeStatusMenuChecks.swift -o /tmp/firstlight-native-menu-checks
+/tmp/firstlight-native-menu-checks
 xcrun swiftc -parse-as-library -O Tests/SignInHandoffContracts.swift \
-  -o /tmp/pulso-signin-handoff-checks
-/tmp/pulso-signin-handoff-checks
+  -o /tmp/firstlight-signin-handoff-checks
+/tmp/firstlight-signin-handoff-checks
 ```
 
 The handoff source contracts check that the menu-bar panel opens before the profile

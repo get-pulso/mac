@@ -25,7 +25,9 @@ final class WindowManager {
             },
             open: { [weak self] in self?.show() },
             invite: { [weak self] in
-                SocialStore.shared.open(.connect)
+                // Opened together with the popover, so the tray has no button
+                // to grow out of and simply arrives with it.
+                SocialStore.shared.openTray(.home, from: .none)
                 self?.show()
             },
             beforeMenu: { [weak self] in self?.hide() },
@@ -55,7 +57,7 @@ final class WindowManager {
     @MainActor
     func show() {
         @Dependency(\.appRouter) var router
-        // An active Clerk session can still be resolving its Pulso profile.
+        // An active Clerk session can still be resolving its Firstlight profile.
         // That work belongs here, without granting dashboard access early.
         guard Defaults[.currentUserID] != nil || router.destination == .signInCompletion else {
             self.showWelcome()

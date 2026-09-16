@@ -1,7 +1,7 @@
 # Icon source
 
-`pulso-icon.svg` is the master for `App/Resources/Assets.xcassets/AppIcon.appiconset`.
-`pulso-mark.svg` is the luminous mark alone, on a transparent ground.
+`firstlight-icon.svg` is the master for `App/Resources/Assets.xcassets/AppIcon.appiconset`.
+`firstlight-mark.svg` is the luminous mark alone, on a transparent ground.
 
 The mark is one closed path: the sun circle (r 44.09) minus the offset moon
 circle (r 46.21) gives the crescent, and seven wedges close on convex tips.
@@ -21,7 +21,7 @@ reads `icon-1024.png` and finds the mark by luminance, so that slot must stay
 filled.
 
 ```sh
-rsvg-convert -w 2048 -h 2048 Design/pulso-icon.svg -o /tmp/master.png
+rsvg-convert -w 2048 -h 2048 Design/firstlight-icon.svg -o /tmp/master.png
 # then add the shadow and downscale into the 10 appiconset slots
 xcrun actool App/Resources/Assets.xcassets --compile /tmp/out --platform macosx \
   --minimum-deployment-target 15.0 --app-icon AppIcon \

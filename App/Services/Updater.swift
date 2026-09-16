@@ -17,7 +17,7 @@ final class Updater {
             delegate: self.sparkleDelegate
         )
 
-        // Keep this assignment for existing installs: older Pulso versions persisted
+        // Keep this assignment for existing installs: older Firstlight versions persisted
         // automatic downloads as disabled in Sparkle's user defaults.
         self.updater.automaticallyDownloadsUpdates = true
     }
@@ -104,7 +104,7 @@ private final class SparkleDelegate: NSObject, SPUStandardUserDriverDelegate, SP
         willInstallUpdateOnQuit item: SUAppcastItem,
         immediateInstallationBlock installHandler: @escaping () -> Void
     ) -> Bool {
-        // Pulso has no document workflow. Once Sparkle has downloaded, verified,
+        // Firstlight has no document workflow. Once Sparkle has downloaded, verified,
         // and prepared an update, install it immediately instead of waiting for
         // this menu-bar app to be quit manually.
         DispatchQueue.main.async { installHandler() }

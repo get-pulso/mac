@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>PulsoAPIBaseURL</key>
-    <string>$(PULSO_API_BASE_URL)</string>
+    <key>FirstlightAPIBaseURL</key>
+    <string>$(FIRSTLIGHT_API_BASE_URL)</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>
@@ -18,7 +18,7 @@
 	<key>SUPublicEDKey</key>
 	<string>4MyqM8+nD83z41ffKQijzW2uqYwpbziF67rxiuYcfl8=</string>
 	<key>SUFeedURL</key>
-	<string>https://get-pulso.github.io/mac-releases/appcast.xml</string>
+	<string>https://firstlight.sh/appcast.xml</string>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
 	<key>CFBundleShortVersionString</key>
@@ -31,10 +31,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.get-pulso.mac</string>
+			<string>sh.firstlight.mac</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>pulso</string>
+				<string>firstlight</string>
 			</array>
 		</dict>
 	</array>

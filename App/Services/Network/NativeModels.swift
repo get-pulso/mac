@@ -8,6 +8,8 @@ struct NativeGroup: Decodable, Identifiable, Hashable {
 }
 
 struct NativePerson: Decodable, Identifiable {
+    // MARK: Internal
+
     let user_id: String
     let name: String?
     let avatar_url: String?
@@ -22,17 +24,39 @@ struct NativePerson: Decodable, Identifiable {
     let active_app: NativeAppPresence?
 
     var id: String { self.user_id }
-    var displayName: String { self.name?.isEmpty == false ? self.name! : "Pulso user" }
+    var displayName: String { self.name?.isEmpty == false ? self.name! : "Firstlight user" }
     var minutes: Int { DurationLabel.wholeMinutes(self.active_minutes ?? 0) }
     var timeLabel: String { DurationLabel.minutes(self.active_minutes ?? 0) }
     var isActiveNow: Bool {
-        guard let raw = last_active_at else { return false }
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) else { return false }
+        guard let raw = last_active_at, let date = Self.timestamp(raw) else { return false }
         let age = Date().timeIntervalSince(date)
         return age >= -30 && age <= 120
     }
+
+    // MARK: Private
+
+    // Every row asks this on each render; the formatters are shared rather
+    // than rebuilt per row. ISO8601DateFormatter is safe to share across threads.
+    private static let fractionalTimestamps: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let wholeTimestamps = ISO8601DateFormatter()
+
+    private static func timestamp(_ raw: String) -> Date? {
+        self.fractionalTimestamps.date(from: raw) ?? self.wholeTimestamps.date(from: raw)
+    }
+}
+
+/// One slice of a ranking, as `/api/friends/leaderboard` answers when asked
+/// for a `limit`. `me` is the caller's own row whether or not it made the page.
+struct NativeLeaderboardPage: Decodable {
+    let items: [NativePerson]
+    let total: Int
+    let next_offset: Int?
+    let me: NativePerson?
 }
 
 struct NativeContact: Decodable, Identifiable {
@@ -42,7 +66,7 @@ struct NativeContact: Decodable, Identifiable {
     let avatar_url: String?
     let is_creator: Bool?
 
-    var displayName: String { self.name ?? "Pulso user" }
+    var displayName: String { self.name ?? "Firstlight user" }
 }
 
 struct NativeFriendRequest: Decodable, Identifiable {
@@ -115,7 +139,7 @@ struct NativeDirectFriends: Decodable {
     let directFriendIds: [String]
 }
 
-enum InviteInput: Equatable {
+enum InviteInput: Hashable {
     case token(String)
     case friendCode(String)
 
@@ -124,17 +148,19 @@ enum InviteInput: Equatable {
     static func parse(_ text: String) throws -> InviteInput {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: value), let scheme = url.scheme {
-            guard ["https", "http", "pulso"].contains(scheme)
-            else { throw NativeError.message("Use a Pulso invitation link or friend code.") }
-            if scheme != "pulso" {
-                guard url.host == "pulso.sh" || url.host == "www.pulso.sh" || url.host == AppEnvironment.baseURL.host
+            guard ["https", "http", "firstlight"].contains(scheme)
+            else { throw NativeError.message("Use a Firstlight invitation link or friend code.") }
+            if scheme != "firstlight" {
+                guard url.host == "firstlight.sh" || url.host == "www.firstlight.sh" || url.host == AppEnvironment
+                    .baseURL.host
                 else {
-                    throw NativeError.message("This is not a Pulso invitation link.")
+                    throw NativeError.message("This is not a Firstlight invitation link.")
                 }
             }
-            let isInvite = scheme == "pulso" ? url.host == "invite" : url.path == "/invite"
-            let isJoin = scheme == "pulso" ? url.host == "join" : url.path.hasPrefix("/join/")
-            guard isInvite || isJoin else { throw NativeError.message("Use a Pulso invitation link or friend code.") }
+            let isInvite = scheme == "firstlight" ? url.host == "invite" : url.path == "/invite"
+            let isJoin = scheme == "firstlight" ? url.host == "join" : url.path.hasPrefix("/join/")
+            guard isInvite || isJoin
+            else { throw NativeError.message("Use a Firstlight invitation link or friend code.") }
             if let token = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
                 .first(where: { $0.name == "token" })?.value, isInvite, !token.isEmpty, token.count <= 128
             {

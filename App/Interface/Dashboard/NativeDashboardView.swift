@@ -11,13 +11,138 @@ private struct ProfileTitleBottom: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = min(value, nextValue()) }
 }
 
+/// How one screen gives way to the next, modelled on an iOS push with a hero
+/// element. The tapped avatar, name, location and total travel on the
+/// navigation spring (set where the screen changes). The screens themselves
+/// drift a few points the same way on that spring, so a push reads as going
+/// deeper and Back as returning; the one on top moves more than the one
+/// underneath, like a room seen past a door. Opacity cross-fades on shorter
+/// curves: the outgoing screen dims at once, the incoming one settles in a
+/// beat later, so the two never sit at half strength on top of each other.
+private enum ScreenMotion {
+    // MARK: Internal
+
+    /// How far the screen on top travels: in from the side on a push, back
+    /// out on a pop. Small on purpose; the popover is 350 pt wide.
+    static let topDrift: CGFloat = 16
+    /// The screen underneath moves less, the way the floor does.
+    static let behindDrift: CGFloat = 7
+    /// A tab change slides the whole list the way the tab lies.
+    static let tabDrift: CGFloat = 22
+
+    static func list(reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: self.drift(.appearing, .behind, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: 0.28).delay(0.05))),
+            removal: self.drift(.disappearing, .behind, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: 0.2)))
+        )
+    }
+
+    static func detail(reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: self.drift(.appearing, .navigating, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: 0.3).delay(0.06))),
+            removal: self.drift(.disappearing, .navigating, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: 0.18)))
+        )
+    }
+
+    static func tab(reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: self.drift(.appearing, .tab, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: 0.24).delay(0.04))),
+            removal: self.drift(.disappearing, .tab, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: 0.16)))
+        )
+    }
+
+    // MARK: Private
+
+    /// The drift carries no animation of its own, so it rides whatever the
+    /// screen change was wrapped in: the same spring as the flying avatar.
+    private static func drift(_ phase: ScreenDrift.Phase, _ role: ScreenDrift.Role, _ reduceMotion: Bool)
+        -> AnyTransition
+    {
+        .modifier(
+            active: ScreenDrift(phase: phase, role: role, reduceMotion: reduceMotion, progress: 1),
+            identity: ScreenDrift(phase: phase, role: role, reduceMotion: reduceMotion, progress: 0)
+        )
+    }
+}
+
+/// The sideways travel of a screen while it appears or leaves. Which way is
+/// read from the store as the modifier animates, not captured up front: the
+/// leaving screen is no longer updated, but it still has to go the right way.
+private struct ScreenDrift: ViewModifier, Animatable {
+    // MARK: Internal
+
+    enum Phase { case appearing, disappearing }
+
+    enum Role {
+        /// The list under every other screen. Always underneath.
+        case behind
+        /// A detail screen: on top when pushed, underneath when another is
+        /// pushed over it, on top again when popped.
+        case navigating
+        /// A list replaced by the same list for another tab.
+        case tab
+    }
+
+    let phase: Phase
+    let role: Role
+    let reduceMotion: Bool
+    var progress: Double
+
+    var animatableData: Double {
+        get { self.progress }
+        set { self.progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let motion = self.motion
+        content
+            .offset(x: motion.x * self.progress)
+            .scaleEffect(1 - motion.shrink * self.progress, anchor: .bottomTrailing)
+    }
+
+    // MARK: Private
+
+    @MainActor private var motion: (x: CGFloat, shrink: CGFloat) {
+        if self.reduceMotion { return (0, 0) }
+        let store = SocialStore.shared
+        switch self.role {
+        case .behind:
+            return (-ScreenMotion.behindDrift, 0)
+        case .tab:
+            let sign: CGFloat = self.phase == .appearing ? 1 : -1
+            return (sign * store.tabDirection * ScreenMotion.tabDrift, 0)
+        case .navigating:
+            let navigation = store.navigation
+            let screen = self.phase == .appearing ? navigation.to : navigation.from
+            let neighbour = self.phase == .appearing ? navigation.from : navigation.to
+            // Add friends is opened from the Invite button in the bottom right
+            // corner, so it grows out of that corner and shrinks back into it,
+            // the way a tray comes out of the button that asked for it.
+            if screen == .connect, neighbour == .list { return (0, 0.08) }
+            let onTop = (self.phase == .appearing) == (navigation.direction == .forward)
+            return onTop ? (ScreenMotion.topDrift, 0) : (-ScreenMotion.behindDrift, 0)
+        }
+    }
+}
+
 struct NativeDashboardView: View {
     // MARK: Internal
 
     var body: some View {
-        Group {
+        // Both screens live in the tree while one replaces the other, so they
+        // overlap instead of stacking; the popover keeps the taller height,
+        // which is the list height either way until the profile has loaded.
+        ZStack(alignment: .top) {
             if store.screen == .list {
                 people
+                    .geometryGroup()
+                    .transition(ScreenMotion.list(reduceMotion: self.reduceMotion))
             } else {
                 VStack(spacing: 0) {
                     if isPersonScreen { profileHeader }
@@ -40,8 +165,16 @@ struct NativeDashboardView: View {
                 }
                 .onPreferenceChange(ProfileTitleBottom.self) { bottom in profileTitleBottom = bottom }
                 .onChange(of: store.screen) { _, _ in profileTitleBottom = .greatestFiniteMagnitude }
+                .geometryGroup()
+                // Keyed on the screen, so Add friends → Sent requests is a
+                // push and Back from it a pop, not a swap of the contents.
+                .id(store.screen)
+                .transition(ScreenMotion.detail(reduceMotion: self.reduceMotion))
             }
         }
+        // The invite tray sits over whichever screen is showing, under the
+        // toasts, and dims what is beneath it without replacing it.
+        .overlay(alignment: .bottom) { self.inviteTrayLayer }
         .textFieldStyle(.roundedBorder).controlSize(.regular).font(.system(size: 13))
         .overlay(alignment: .top) {
             if let feedback = store.feedbackToast {
@@ -77,7 +210,13 @@ struct NativeDashboardView: View {
         .onReceive(windowManager.isVisiblePublisher.removeDuplicates().dropFirst()) { visible in
             if visible { refreshVisibleScreen() }
         }
-        .onExitCommand { if store.screen == .list { windowManager.hide() } else { store.goBack() } }
+        // The tray answers Escape first: Back where it has somewhere to go,
+        // close otherwise. Only with no tray does Escape reach the screens.
+        .onExitCommand {
+            if store.tray != nil { store.trayBack() }
+            else if store.screen == .list { windowManager.hide() }
+            else { store.goBack() }
+        }
         .onChange(of: session.pendingInvite) { _, _ in resumeInvite() }
         .alert(confirmationTitle, isPresented: $confirming) {
             Button("Cancel", role: .cancel) { confirmationAction = nil }
@@ -87,30 +226,6 @@ struct NativeDashboardView: View {
 
     // MARK: Private
 
-    /// Every row column shares the avatar's vertical centre, so the name, the
-    /// duration and the running app sit on one line whether or not the profile
-    /// carries a second line. The divider starts exactly where the text does.
-    private static let rowHorizontalPadding: CGFloat = 12
-    private static let rowAvatarSize: CGFloat = 40
-    private static let rowAvatarSpacing: CGFloat = 10
-    private static let rowDividerInset = rowHorizontalPadding + rowAvatarSize + rowAvatarSpacing
-
-    @ObservedObject private var store = SocialStore.shared
-    @ObservedObject private var session = NativeSession.shared
-    @Dependency(\.windowManager) private var windowManager
-    @State private var confirming = false
-    @State private var confirmationTitle = ""
-    @State private var confirmationAction: (() -> Void)?
-    @State private var headerScrollFades = HorizontalScrollFades()
-    @State private var profileTitleBottom = CGFloat.greatestFiniteMagnitude
-    private let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
-
-    /// The header stays empty until the profile's own name has scrolled out of
-    /// the viewport, then takes the name over.
-    private var showsProfileHeaderTitle: Bool { self.profileTitleBottom < 2 }
-
-    /// The leaderboard already tells us whether this profile has activity.
-    /// Reserve the finished profile height while its app breakdown catches up,
     private struct GroupDrag {
         let id: String
         let index: Int
@@ -119,6 +234,67 @@ struct NativeDashboardView: View {
         var target: Int
     }
 
+    /// Every row column shares the avatar's vertical centre, so the name, the
+    /// duration and the running app sit on one line whether or not the profile
+    /// carries a second line. The divider starts exactly where the text does.
+    private static let rowHorizontalPadding: CGFloat = 12
+    private static let rowAvatarSize: CGFloat = 40
+    private static let rowAvatarSpacing: CGFloat = 10
+    /// The place leads a ranked row in a fixed column, so the numbers line up
+    /// down the list however many digits they carry.
+    private static let rowPlaceWidth: CGFloat = 20
+    private static let rowPlaceSpacing: CGFloat = 8
+    private static let avatarMorphID = "avatar"
+    private static let nameMorphID = "name"
+    /// The location and the active total also sit on both screens. What is
+    /// already on screen and stays should travel, not vanish and reappear.
+    private static let locationMorphID = "location"
+    private static let timeMorphID = "time"
+    private static let rowDividerInset = rowHorizontalPadding + rowAvatarSize + rowAvatarSpacing
+    private static let rankedRowDividerInset = rowDividerInset + rowPlaceWidth + rowPlaceSpacing
+
+    // MARK: Group reordering
+
+    private static let groupStripSpace = "groupStrip"
+    private static let groupTabSpacing: CGFloat = 4
+
+    /// Trays never reach the popover's header; anything taller scrolls inside.
+    private static let trayMaximumHeight = NativeLayout.peopleBodyHeight - 8
+
+    @ObservedObject private var store = SocialStore.shared
+    @ObservedObject private var session = NativeSession.shared
+    @Dependency(\.windowManager) private var windowManager
+    @State private var confirming = false
+    @State private var confirmationTitle = ""
+    @State private var confirmationAction: (() -> Void)?
+    @State private var headerScrollFades = HorizontalScrollFades()
+    /// The group tab being dragged along the strip, if any.
+    @State private var groupDrag: GroupDrag?
+    /// Where each group tab sits in the strip while nothing is dragged; the
+    /// drag reads these to tell which neighbours the pointer has crossed.
+    @State private var groupTabFrames: [String: CGRect] = [:]
+    @State private var profileTitleBottom = CGFloat.greatestFiniteMagnitude
+    /// The row whose avatar flies into the profile. A person can sit in the
+    /// list and in the pinned row at once, so the origin is part of the key:
+    /// only one row may claim the shared geometry at a time.
+    @State private var morphSource: String?
+    @Namespace private var morph
+    /// The tab strip's one selection pill, shared between the tabs so it
+    /// slides from the old tab to the new instead of switching off and on.
+    @Namespace private var tabPill
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The tray's field takes focus when Home opens, so a code can be pasted
+    /// without a click. It keeps focus across Home ↔ Send request because the
+    /// field is the same view on both.
+    @FocusState private var inviteFieldFocused: Bool
+    private let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
+    /// The header stays empty until the profile's own name has scrolled out of
+    /// the viewport, then takes the name over.
+    private var showsProfileHeaderTitle: Bool { self.profileTitleBottom < 2 }
+
+    /// The leaderboard already tells us whether this profile has activity.
+    /// Reserve the finished profile height while its app breakdown catches up,
     /// instead of shrinking the popover and expanding it again a moment later.
     private var isLoadingProfileActivity: Bool {
         guard case .person = self.store.screen,
@@ -132,11 +308,6 @@ struct NativeDashboardView: View {
     private var needsInitialLoad: Bool {
         // The add-friends screen is usable while its invitation data loads.
         if self.store.screen == .connect { return false }
-
-    // MARK: Group reordering
-
-    private static let groupStripSpace = "groupStrip"
-    private static let groupTabSpacing: CGFloat = 4
         return self.store.screenLoading && !self.store.hasLoaded(self.store.screen)
     }
 
@@ -146,12 +317,6 @@ struct NativeDashboardView: View {
     }
 
     private var header: some View {
-    /// The group tab being dragged along the strip, if any.
-    @State private var groupDrag: GroupDrag?
-    /// Where each group tab sits in the strip while nothing is dragged; the
-    /// drag reads these to tell which neighbours the pointer has crossed.
-    @State private var groupTabFrames: [String: CGRect] = [:]
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
         HStack(spacing: 7) {
             ScrollViewReader { reader in
                 ScrollView(.horizontal) {
@@ -174,12 +339,44 @@ struct NativeDashboardView: View {
                                         Label("Copy invite link", systemImage: "doc.on.doc")
                                     }
                                     .disabled(store.busy)
+                                    Divider()
+                                    Button {
+                                        self.moveGroup(group.id, to: index - 1)
+                                    } label: {
+                                        Label("Move left", systemImage: "arrow.left")
+                                    }
+                                    .disabled(index == 0)
+                                    Button {
+                                        self.moveGroup(group.id, to: index + 1)
+                                    } label: {
+                                        Label("Move right", systemImage: "arrow.right")
+                                    }
+                                    .disabled(index == store.groups.count - 1)
                                 }
+                                .modifier(self.groupTabDragging(group.id, at: index))
                         }
                         tab("Leaderboard", id: "global")
                     }
+                    .coordinateSpace(name: Self.groupStripSpace)
+                    // The pill and the label colours move on a short, flat
+                    // curve of their own: a tab change is frequent, so it gets
+                    // the small touch, not the navigation spring.
+                    .animation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0), value: store.tab)
                 }
                 .scrollIndicators(.hidden)
+                // ⌘⇧[ and ⌘⇧], the Mac's previous and next tab. Invisible
+                // buttons carry the shortcuts; the tabs themselves answer.
+                .background {
+                    Group {
+                        Button("Previous tab") { store.selectAdjacentTab(-1) }
+                            .keyboardShortcut("[", modifiers: [.command, .shift])
+                        Button("Next tab") { store.selectAdjacentTab(1) }
+                            .keyboardShortcut("]", modifiers: [.command, .shift])
+                    }
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+                }
                 .onScrollGeometryChange(for: HorizontalScrollFades.self) { geometry in
                     HorizontalScrollFades(geometry: geometry)
                 } action: { _, fades in
@@ -187,6 +384,14 @@ struct NativeDashboardView: View {
                 }
                 .mask { HorizontalScrollFadeMask(fades: self.headerScrollFades) }
                 .onChange(of: store.tab) { _, value in withAnimation { reader.scrollTo(value, anchor: .center) } }
+                // A strip built afresh starts at its leading edge: returning
+                // from a profile, or opening the panel again, would leave a tab
+                // chosen further right cut off or off screen. Put the chosen
+                // tab back in view before the first frame, without animating.
+                .onAppear { reader.scrollTo(store.tab, anchor: .center) }
+                .onReceive(windowManager.isVisiblePublisher.removeDuplicates().dropFirst()) { visible in
+                    if visible { reader.scrollTo(store.tab, anchor: .center) }
+                }
             }
             .frame(maxWidth: .infinity)
 
@@ -211,25 +416,10 @@ struct NativeDashboardView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
-                                    Divider()
-                                    Button {
-                                        self.moveGroup(group.id, to: index - 1)
-                                    } label: {
-                                        Label("Move left", systemImage: "arrow.left")
-                                    }
-                                    .disabled(index == 0)
-                                    Button {
-                                        self.moveGroup(group.id, to: index + 1)
-                                    } label: {
-                                        Label("Move right", systemImage: "arrow.right")
-                                    }
-                                    .disabled(index == store.groups.count - 1)
             .padding(.horizontal, 10)
-                                .modifier(self.groupTabDragging(group.id, at: index))
             .padding(.vertical, 6)
             .contentShape(Rectangle())
             .background(Color.primary.opacity(0.11), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .coordinateSpace(name: Self.groupStripSpace)
             .animation(.snappy(duration: 0.22, extraBounce: 0), value: self.store.period)
         }
         .menuStyle(.button)
@@ -356,67 +546,247 @@ struct NativeDashboardView: View {
     }
 
     @ViewBuilder private var dashboardInviteButton: some View {
-        let label = Text("Invite").font(.system(size: 12, weight: .medium))
-
-        if #available(macOS 26.0, *) {
-            Button { store.open(.connect) } label: { label }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.capsule)
-                .controlSize(.regular)
-                .tint(.accentColor)
-                .help("Add a friend")
-        } else {
-            Button { store.open(.connect) } label: { label }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .controlSize(.regular)
-                .tint(.accentColor)
-                .help("Add a friend")
+        let waiting = self.store.incomingRequestCount
+        let help = waiting == 0 ? "Add a friend" : waiting == 1 ? "Add a friend · 1 request waiting" :
+            "Add a friend · \(waiting) requests waiting"
+        // The button carries the people waiting on an answer, so a request
+        // is visible without opening anything. The count rolls like a total.
+        let label = HStack(spacing: 6) {
+            Text("Invite").font(.system(size: 12, weight: .medium))
+            if waiting > 0 {
+                Text("\(waiting)")
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                    .contentTransition(.numericText(value: Double(waiting)))
+                    .padding(.horizontal, 5)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .background(.white.opacity(0.92), in: Capsule())
+                    .foregroundStyle(Color.accentColor)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
         }
+        .animation(self.reduceMotion ? nil : SocialStore.settle, value: waiting)
+
+        // While the tray is open the button has become the tray: it shrinks
+        // into the tray's corner and comes back when the tray does.
+        let trayOpen = self.store.tray != nil
+        Group {
+            if #available(macOS 26.0, *) {
+                Button { store.openTray(.home, from: .footerInvite) } label: { label }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.regular)
+                    .tint(.accentColor)
+                    .help(help)
+            } else {
+                Button { store.openTray(.home, from: .footerInvite) } label: { label }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.regular)
+                    .tint(.accentColor)
+                    .help(help)
+            }
+        }
+        .opacity(trayOpen ? 0 : 1)
+        .scaleEffect(trayOpen && !self.reduceMotion ? 0.6 : 1)
+        .allowsHitTesting(!trayOpen)
+        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.3, bounce: 0.1), value: trayOpen)
     }
 
     private var peopleList: some View {
         ScrollView {
-            LazyVStack(spacing: 0) {
-                switch listPhase {
-                case .initial:
-                    NativePeopleSkeleton(rows: 5)
-                case .failedEmpty:
-                    NativeStateMessage(
-                        title: "Couldn't load activity",
-                        message: "Check your connection and try again.",
-                        actionTitle: "Retry",
-                        action: { Task { await store.refresh(force: true) } }
-                    )
-                case .empty:
-                    NativeStateMessage(
-                        title: "No activity yet",
-                        message: store.tab == "global" ? "No activity for this period." :
-                            "Invite a friend or join a group to get started.",
-                        actionTitle: store.tab == "global" ? nil : "Invite a friend",
-                        action: store.tab == "global" ? nil : { store.open(.connect) }
-                    )
-                case .content,
-                     .refreshing,
-                     .failedWithContent:
-                    ForEach(Array(store.people.enumerated()), id: \.element.id) { index, person in
-                        Button {
-                            store.selectedPerson = person
-                            store.open(.person(person.id))
-                        } label: { personRow(person) }.buttonStyle(.plain)
-                        if index < store.people.count - 1 {
-                            Divider().padding(.leading, Self.rowDividerInset).opacity(0.55)
-                        }
+            // A ZStack, so the list for the previous tab and the one for the
+            // next overlap while one slides out and the other in, instead of
+            // stacking one under the other for the length of the slide.
+            ZStack(alignment: .top) {
+                peopleRows
+                    // Rows find their new place when a refresh reorders them,
+                    // and a new friend settles into the list instead of
+                    // appearing in it; never on a tab change, which is a slide.
+                    .animation(self.reduceMotion ? nil : SocialStore.settle, value: store.people.map(\.id))
+                    .id(store.tab)
+                    .transition(ScreenMotion.tab(reduceMotion: self.reduceMotion))
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let me = store.peopleList.pinnedMe { pinnedMeRow(me) }
+        }
+    }
+
+    private var peopleRows: some View {
+        LazyVStack(spacing: 0) {
+            switch listPhase {
+            case .initial:
+                NativePeopleSkeleton(rows: 5, showsPlaces: showsPlaces)
+            case .failedEmpty:
+                NativeStateMessage(
+                    title: "Couldn't load activity",
+                    message: "Check your connection and try again.",
+                    actionTitle: "Retry",
+                    action: { Task { await store.refresh(force: true) } }
+                )
+            case .empty:
+                NativeStateMessage(
+                    title: "No activity yet",
+                    message: store.tab == "global" ? "No activity for this period." :
+                        "Invite a friend or join a group to get started.",
+                    actionTitle: store.tab == "global" ? nil : "Invite a friend",
+                    action: store.tab == "global" ? nil : { store.openTray(.home, from: .emptyState) }
+                )
+            case .content,
+                 .refreshing,
+                 .failedWithContent:
+                ForEach(Array(store.people.enumerated()), id: \.element.id) { index, person in
+                    let source = Self.morphKey(origin: "list", person: person)
+                    Button {
+                        openPerson(person, from: source)
+                    } label: {
+                        personRow(
+                            person,
+                            place: LeaderboardPlace.place(rank: person.rank, loadedIndex: index),
+                            morphSource: source
+                        )
+                    }.buttonStyle(.plain)
+                    if person.id != store.people.last?.id {
+                        rowDivider
                     }
-                    if listPhase == .failedWithContent {
-                        NativeInlineError(message: store.listError ?? "Couldn't refresh activity") {
-                            Task { await store.refresh(force: true) }
-                        }.padding(12)
-                    }
+                }
+                if store.peopleList.hasMore { loadMoreRow }
+                if listPhase == .failedWithContent {
+                    NativeInlineError(message: store.listError ?? "Couldn't refresh activity") {
+                        Task { await store.refresh(force: true) }
+                    }.padding(12)
                 }
             }
         }
-        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    /// Standings belong to the Leaderboard, where the order is the whole
+    /// point. Friends and groups are the people you chose, not a race, so
+    /// their rows stay as they were.
+    private var showsPlaces: Bool { self.store.tab == "global" }
+
+    private var rowDivider: some View {
+        Divider()
+            .padding(.leading, self.showsPlaces ? Self.rankedRowDividerInset : Self.rowDividerInset)
+            .opacity(0.55)
+    }
+
+    /// Sits under the last loaded row and asks for the next page whenever it is
+    /// on screen. The task is keyed on the next offset, so a page that ends
+    /// above the fold still pulls the one after it; a failed page waits for Retry.
+    @ViewBuilder private var loadMoreRow: some View {
+        rowDivider
+        if let message = store.loadMoreError {
+            NativeInlineError(message: message) { Task { await store.loadMore() } }.padding(12)
+        } else {
+            ProgressView()
+                .controlSize(.small)
+                .frame(maxWidth: .infinity)
+                .frame(height: 44)
+                .task(id: store.peopleList.nextOffset) { await store.loadMore() }
+                .accessibilityLabel("Loading more people")
+        }
+    }
+
+    // MARK: Invite tray
+
+    /// The tray and the veil under it. The veil is the popover's own colour
+    /// at 72 %, so the list fades towards the background rather than going
+    /// grey, and a click on it closes the tray like ×.
+    @ViewBuilder private var inviteTrayLayer: some View {
+        if let tray = store.tray {
+            ZStack(alignment: .bottom) {
+                Color(nsColor: .windowBackgroundColor).opacity(0.72)
+                    .contentShape(Rectangle())
+                    .onTapGesture { store.closeTray() }
+                    .transition(.opacity.animation(.easeOut(duration: 0.3)))
+                    .accessibilityHidden(true)
+                self.inviteTray(tray)
+                    .padding(8)
+                    .transition(self.trayTransition)
+            }
+        }
+    }
+
+    /// The tray grows out of what was tapped and shrinks back into it. A deep
+    /// link or the status-item menu opens popover and tray together, with
+    /// nothing to grow from, so those only fade. Closing is quicker than
+    /// opening, the way a pop is quicker than a push.
+    private var trayTransition: AnyTransition {
+        if self.reduceMotion {
+            return .asymmetric(
+                insertion: .opacity.animation(.easeOut(duration: 0.24)),
+                removal: .opacity.animation(.easeIn(duration: 0.2))
+            )
+        }
+        let anchor: UnitPoint
+        switch self.store.trayOrigin {
+        case .footerInvite: anchor = UnitPoint(x: 0.91, y: 0.94)
+        case .emptyState: anchor = UnitPoint(x: 0.5, y: 0.5)
+        case .none:
+            return .asymmetric(
+                insertion: .opacity.animation(.easeOut(duration: 0.24)),
+                removal: .opacity.animation(.easeIn(duration: 0.2))
+            )
+        }
+        return .asymmetric(
+            insertion: .scale(scale: 0.18, anchor: anchor)
+                .combined(with: .opacity.animation(.easeOut(duration: 0.2).delay(0.04))),
+            removal: .scale(scale: 0.18, anchor: anchor).combined(with: .opacity)
+                .animation(.easeIn(duration: 0.3))
+        )
+    }
+
+    private var sentRequestsPill: some View {
+        Button { store.pushTray(.sentRequests) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "paperplane").font(.system(size: 10, weight: .medium))
+                Text("Sent").font(.system(size: 11))
+                Text("\(store.requests.outgoing.count)")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .contentTransition(.numericText(value: Double(store.requests.outgoing.count)))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(Color.primary.opacity(0.06), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Sent requests")
+        .transition(.opacity)
+    }
+
+    private var inviteField: some View {
+        TextField("Paste a link or enter a friend code", text: self.$store.query)
+            .labelsHidden()
+            .focused(self.$inviteFieldFocused)
+            .onChange(of: self.store.query) { _, _ in self.store.queryChanged() }
+            .onSubmit { self.store.addFromQuery() }
+            .disabled(self.store.isRunning("accept-invite"))
+    }
+
+    @ViewBuilder private var incomingRequestRows: some View {
+        ForEach(self.store.requests.incoming) { request in
+            if let person = request.requester {
+                self.requestRow(person, detail: "Sent you a friend request") {
+                    self.operationButton(
+                        "Accept",
+                        loadingTitle: "Accepting…",
+                        key: "accept-request-\(request.id)",
+                        prominent: true
+                    ) { self.store.respond(request.id, action: "accept") }
+                    self.operationButton(
+                        "Decline",
+                        loadingTitle: "Declining…",
+                        key: "decline-request-\(request.id)"
+                    ) { self.store.respond(request.id, action: "decline") }
+                }
+                .transition(self.store.acceptedRequestIDs.contains(request.id) ? .acceptedRequest : .opacity)
+            }
+        }
     }
 
     /// Everything the screen is for, in the order it gets used: who is waiting
@@ -440,6 +810,9 @@ struct NativeDashboardView: View {
                                 key: "decline-request-\(request.id)"
                             ) { self.store.respond(request.id, action: "decline") }
                         }
+                        // An accepted request leaves towards the list, where
+                        // the new friend now is; a declined one simply goes.
+                        .transition(self.store.acceptedRequestIDs.contains(request.id) ? .acceptedRequest : .opacity)
                     }
                 }
                 Divider()
@@ -460,9 +833,14 @@ struct NativeDashboardView: View {
                     "Sent requests",
                     detail: self.store.requests.outgoing.count == 1 ? "1 waiting for a reply" :
                         "\(self.store.requests.outgoing.count) waiting for a reply"
-                ) { self.store.open(.requests) }
+                ) { self.store.pushTray(.sentRequests) }
             }
         }
+        // Rare moments get the room to move: a request leaving, the field
+        // moving up into its place, the sent count arriving underneath.
+        .animation(self.reduceMotion ? nil : SocialStore.settle, value: self.store.requests.incoming.map(\.id))
+        .animation(self.reduceMotion ? nil : SocialStore.settle, value: self.store.requests.outgoing.count)
+        .animation(self.reduceMotion ? nil : SocialStore.settle, value: self.store.inviteCandidate == nil)
     }
 
     @ViewBuilder private var yourInviteBlock: some View {
@@ -559,6 +937,9 @@ struct NativeDashboardView: View {
                     .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // A sent invitation drops down towards Sent requests, where it is
+            // counted next; a dismissed one only fades.
+            .transition(self.store.inviteDeparting ? .sentInvite : .opacity)
         }
     }
 
@@ -611,6 +992,186 @@ struct NativeDashboardView: View {
 
     private var backDestinationTitle: String {
         self.screenTitle(for: self.store.previousScreen ?? .list)
+    }
+
+    private static func morphKey(origin: String, person: NativePerson) -> String { "\(origin)-\(person.id)" }
+
+    private func inviteTray(_ tray: SocialStore.Tray) -> some View {
+        VStack(spacing: 0) {
+            self.trayHeader(tray)
+            VStack(alignment: .leading, spacing: 12) {
+                if tray.showsField { self.inviteField }
+                self.trayStep(tray)
+            }
+            .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: Self.trayMaximumHeight, alignment: .top)
+        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.16), radius: 18, y: 6)
+        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.38, bounce: 0.1), value: tray)
+        .onChange(of: tray, initial: true) { _, value in
+            if value == .home { self.inviteFieldFocused = true }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(self.trayTitle(tray))
+    }
+
+    private func trayHeader(_ tray: SocialStore.Tray) -> some View {
+        HStack(spacing: 10) {
+            self.trayDismissButton(back: tray.canGoBack)
+            Text(self.trayTitle(tray))
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+                .contentTransition(.opacity)
+            Spacer(minLength: 0)
+            if tray == .home || tray == .sent, !store.requests.outgoing.isEmpty {
+                self.sentRequestsPill
+            }
+        }
+        .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 6)
+    }
+
+    /// One button, two shapes. On the first tray it closes; deeper in it
+    /// goes back. The × turns a quarter into the ‹ instead of being swapped.
+    private func trayDismissButton(back: Bool) -> some View {
+        Button { store.trayBack() } label: {
+            ZStack {
+                Image(systemName: "xmark")
+                    .rotationEffect(.degrees(back ? 90 : 0))
+                    .opacity(back ? 0 : 1)
+                Image(systemName: "chevron.left")
+                    .rotationEffect(.degrees(back ? 0 : -90))
+                    .opacity(back ? 1 : 0)
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .frame(width: 26, height: 26)
+            .background(Color.primary.opacity(0.07), in: Circle())
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.3, bounce: 0.15), value: back)
+        .help(back ? "Back" : "Close")
+        .accessibilityLabel(back ? "Back" : "Close")
+        .keyboardShortcut("[", modifiers: .command)
+    }
+
+    private func trayTitle(_ tray: SocialStore.Tray) -> String {
+        switch tray {
+        case .home: "Add a friend"
+        case .incoming: "Wants to be friends"
+        case let .candidate(input):
+            switch input {
+            case .token: "Group invitation"
+            case let .friendCode(code):
+                code.caseInsensitiveCompare(self.store.personalInvite?.personalInviteCode ?? "") == .orderedSame ?
+                    "Add a friend" : "Send request"
+            }
+        case .sent: "Sent"
+        case .joined: "Joined"
+        case .sentRequests: "Sent requests"
+        }
+    }
+
+    /// One step per tray, on the components the old screen already had. The
+    /// field lives outside the step so it survives Home ↔ Send request.
+    @ViewBuilder private func trayStep(_ tray: SocialStore.Tray) -> some View {
+        switch tray {
+        case .home:
+            self.yourInviteBlock
+            if !self.store.requests.incoming.isEmpty {
+                Divider()
+                self.navigationRow(
+                    self.store.requests.incoming.count == 1 ? "1 wants to be friends" :
+                        "\(self.store.requests.incoming.count) want to be friends",
+                    detail: "Accept or decline"
+                ) { self.store.pushTray(.incoming) }
+            }
+        case .incoming:
+            self.incomingRequestRows
+            if self.store.requests.incoming.isEmpty { self.quiet("That's everyone.") }
+        case .candidate:
+            self.inviteBanner
+        case .sent:
+            self.trayResult(title: "Request sent", message: "They show up here once they accept.") {
+                Button("Add another") { self.store.pushTray(.home) }
+                    .buttonStyle(.link).font(.system(size: 12))
+            }
+        case let .joined(groupName):
+            self.trayResult(title: "You're in \(groupName)", message: "Its tab is waiting at the top.") {
+                EmptyView()
+            }
+        case .sentRequests:
+            if self.store.requests.outgoing.isEmpty { self.quiet("No pending requests.") }
+            ForEach(self.store.requests.outgoing) { request in
+                if let person = request.target_user {
+                    self.requestRow(person, detail: "Waiting for a response") {
+                        self.operationButton(
+                            "Cancel",
+                            loadingTitle: "Cancelling…",
+                            key: "cancel-request-\(request.id)"
+                        ) { self.store.respond(request.id, action: "cancel") }
+                    }
+                    .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    /// The tray a finished flow ends on: a mark, one line, one quiet line.
+    private func trayResult(title: String, message: String, @ViewBuilder action: () -> some View) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.green)
+                .frame(width: 36, height: 36)
+                .background(Color.green.opacity(0.14), in: Circle())
+                .padding(.bottom, 4)
+            Text(title).font(.system(size: 13, weight: .medium))
+            Text(message).font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            action()
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+    }
+
+    /// The shared id for the profile side, or for the one row that was tapped.
+    /// Every other row gets an id of its own that matches nothing, and with
+    /// reduced motion nothing matches at all, leaving the plain cross-fade.
+    private func morphID(_ id: String, row: String? = nil) -> String {
+        if self.reduceMotion { return "still-\(id)-\(row ?? "profile")" }
+        if let row, self.morphSource != row { return "\(id)-\(row)" }
+        return id
+    }
+
+    /// The caller's own place in a ranking they have not scrolled down to yet.
+    private func pinnedMeRow(_ person: NativePerson) -> some View {
+        let source = Self.morphKey(origin: "pinned", person: person)
+        return VStack(spacing: 0) {
+            Divider().opacity(0.55)
+            Button {
+                openPerson(person, from: source)
+            } label: {
+                personRow(
+                    person,
+                    place: LeaderboardPlace.place(rank: person.rank, loadedIndex: nil),
+                    morphSource: source
+                )
+            }.buttonStyle(.plain)
+        }
+        .background(Color.primary.opacity(0.035))
+    }
+
+    /// Remember which row was tapped before the screen switches, so the
+    /// profile avatar knows where to fly from and, on Back, where to return.
+    private func openPerson(_ person: NativePerson, from source: String) {
+        self.morphSource = source
+        self.store.selectedPerson = person
+        self.store.open(.person(person.id))
     }
 
     private func periodMenuButton(_ label: String, value: String) -> some View {
@@ -705,70 +1266,205 @@ struct NativeDashboardView: View {
             }
     }
 
-    private func tab(_ label: String, id: String) -> some View {
-        Button { store.tab = id } label: {
-            Text(label).font(.system(size: 13, weight: .medium)).fixedSize()
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(
-                    store.tab == id ? Color.primary.opacity(0.11) : .clear,
-                    in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-                )
-        }.buttonStyle(.plain).id(id).accessibilityAddTraits(self.store.tab == id ? [.isSelected] : [])
+    private func moveGroup(_ id: String, to index: Int) {
+        withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
+            self.store.moveGroup(id, to: index)
+        }
     }
 
-    private func personRow(_ person: NativePerson) -> some View {
-        let location = self.profileText(person.location)
-        let subtitle = [location, profileText(person.bio)].compactMap { $0 }.joined(separator: " · ")
-        return HStack(spacing: Self.rowAvatarSpacing) {
-            PulsoAvatar(
-                url: person.avatar_url,
-                name: person.displayName,
-                size: Self.rowAvatarSize,
-                showsOnlineIndicator: person.id == Defaults[.currentUserID] || person.isActiveNow
-            )
-            HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                        if person
-                            .id ==
-                            Defaults[.currentUserID] { Text("You").foregroundStyle(.tertiary).font(.system(size: 13)) }
+    /// The dragged tab follows the pointer; the neighbours it has crossed
+    /// slide aside by its width so the gap shows where it lands. The list
+    /// itself changes only on release, so no tab jumps under the pointer.
+    private func groupTabDragging(_ id: String, at index: Int) -> some ViewModifier {
+        let drag = self.groupDrag
+        var shift: CGFloat = 0
+        if let drag, drag.id != id, let width = self.groupTabFrames[drag.id]?.width {
+            let step = width + Self.groupTabSpacing
+            if drag.index < index, index <= drag.target { shift = -step }
+            else if drag.target <= index, index < drag.index { shift = step }
+        }
+        return GroupTabDragModifier(
+            isDragged: drag?.id == id,
+            offset: drag?.id == id ? (drag?.translation ?? 0) : shift,
+            reduceMotion: self.reduceMotion,
+            frameChanged: { frame in
+                // Frames measured mid-drag include the drag's own offsets.
+                if self.groupDrag == nil { self.groupTabFrames[id] = frame }
+            },
+            gesture: DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.groupStripSpace))
+                .onChanged { value in
+                    let translation = value.translation.width
+                    if self.groupDrag == nil {
+                        self.groupDrag = GroupDrag(id: id, index: index, translation: translation, target: index)
+                    } else {
+                        self.groupDrag?.translation = translation
                     }
-                    if !subtitle.isEmpty {
-                        HStack(spacing: 3) {
-                            if location != nil { NativeLocationIcon().foregroundStyle(.secondary) }
-                            Text(subtitle)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .multilineTextAlignment(.leading)
+                    guard let frame = self.groupTabFrames[id] else { return }
+                    let center = frame.midX + translation
+                    let target = self.store.groups.indices.filter { other in
+                        other != index && (self.groupTabFrames[self.store.groups[other].id]?.midX ?? 0) < center
+                    }.count
+                    if self.groupDrag?.target != target {
+                        withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0)) {
+                            self.groupDrag?.target = target
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .onEnded { _ in
+                    let target = self.groupDrag?.target ?? index
+                    withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
+                        self.groupDrag = nil
+                        self.store.moveGroup(id, to: target)
+                    }
+                }
+        )
+    }
 
-                VStack(alignment: .trailing, spacing: 2) {
-                    AnimatedDuration(minutes: person.active_minutes ?? 0)
-                        .foregroundStyle(.secondary).font(.system(size: 12))
-                        .fixedSize()
-                    if let activeApp = person.active_app, person.isActiveNow {
-                        HStack(spacing: 4) {
-                            NativeTrackedAppIcon(url: activeApp.icon_url, size: 16)
-                            Text(activeApp.name)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                        .frame(maxWidth: 110, alignment: .trailing)
-                        .help(activeApp.name)
+    private func tab(_ label: String, id: String) -> some View {
+        let selected = self.store.tab == id
+        return Button { store.selectTab(id) } label: {
+            Text(label).font(.system(size: 13, weight: .medium)).fixedSize()
+                // The label is the same object before and after: only its
+                // state changes, so the colour crosses over with the pill.
+                .foregroundStyle(selected ? Color.primary : Color.secondary)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(Color.primary.opacity(0.11))
+                            .matchedGeometryEffect(id: "pill", in: self.tabPill)
                     }
                 }
+        }
+        .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion))
+        .id(id)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    private func personRow(_ person: NativePerson, place: Int?, morphSource: String) -> some View {
+        let location = self.profileText(person.location)
+        let bio = self.profileText(person.bio)
+        return HStack(spacing: Self.rowPlaceSpacing) {
+            if self.showsPlaces { self.placeColumn(place) }
+            HStack(spacing: Self.rowAvatarSpacing) {
+                // Only the tapped row shares the profile's id. A non-source view
+                // with a shared id does not stay put: it takes the source's frame,
+                // so every other avatar would pile onto the tapped one.
+                FirstlightAvatar(
+                    url: person.avatar_url,
+                    name: person.displayName,
+                    size: Self.rowAvatarSize,
+                    showsOnlineIndicator: person.id == Defaults[.currentUserID] || person.isActiveNow,
+                    morph: .init(id: self.morphID(Self.avatarMorphID, row: morphSource), namespace: self.morph)
+                )
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                .matchedGeometryEffect(
+                                    id: self.morphID(Self.nameMorphID, row: morphSource),
+                                    in: self.morph,
+                                    properties: .position
+                                )
+                            if person
+                                .id ==
+                                Defaults[.currentUserID]
+                            {
+                                Text("You").foregroundStyle(.tertiary).font(.system(size: 13))
+                            }
+                        }
+                        if location != nil || bio != nil {
+                            // The location is its own text so it can travel to
+                            // the profile; the bio, which the profile shows
+                            // elsewhere, is what gives way when the row is tight.
+                            HStack(spacing: 3) {
+                                if let location {
+                                    NativeLocationIcon().foregroundStyle(.secondary)
+                                    Text(location)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .layoutPriority(1)
+                                        .matchedGeometryEffect(
+                                            id: self.morphID(Self.locationMorphID, row: morphSource),
+                                            in: self.morph,
+                                            properties: .position
+                                        )
+                                }
+                                if let bio {
+                                    Text(location == nil ? bio : "· \(bio)")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .multilineTextAlignment(.leading)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        AnimatedDuration(minutes: person.active_minutes ?? 0)
+                            .foregroundStyle(.secondary).font(.system(size: 12))
+                            .fixedSize()
+                            // The same total the profile leads with: it goes
+                            // there, so the eye is sure it is the same number.
+                            .matchedGeometryEffect(
+                                id: self.morphID(Self.timeMorphID, row: morphSource),
+                                in: self.morph,
+                                properties: .position
+                            )
+                        if let activeApp = person.active_app, person.isActiveNow {
+                            HStack(spacing: 4) {
+                                NativeTrackedAppIcon(url: activeApp.icon_url, size: 16)
+                                Text(activeApp.name)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            .frame(maxWidth: 110, alignment: .trailing)
+                            .help(activeApp.name)
+                        }
+                    }
+                }
+                .frame(height: Self.rowAvatarSize)
             }
-            .frame(height: Self.rowAvatarSize)
         }
         .padding(.horizontal, Self.rowHorizontalPadding).padding(.vertical, 10)
         .contentShape(Rectangle())
+    }
+
+    /// A place every row carries, whether or not the person did anything this
+    /// period. A chart numeral: large enough to give the row its structure,
+    /// light enough to stay behind the name. The podium is struck in metal by
+    /// `LeaderboardPlaceStyle`; everything below it stays grey.
+    @ViewBuilder private func placeColumn(_ place: Int?) -> some View {
+        Group {
+            if let place {
+                Text("\(place)")
+                    .font(.system(size: 17, weight: LeaderboardPlaceStyle.weight(for: place)))
+                    // A place that changes on refresh counts up or down in
+                    // step with the row moving, instead of flicking.
+                    .contentTransition(.numericText(value: Double(place)))
+                    .foregroundStyle(LeaderboardPlaceStyle.numeral(for: place))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+                    .accessibilityLabel("Place \(place)")
+            } else {
+                Text("–").font(.system(size: 17)).foregroundStyle(.quaternary).accessibilityHidden(true)
+            }
+        }
+        // Centred, not trailing: right alignment pushes a single digit away
+        // from the edge and opens a gap the two-digit rows do not have.
+        .frame(width: Self.rowPlaceWidth, alignment: .center)
+    }
+
+    /// The place this profile holds in the ranking on screen, so a person
+    /// opened from the board keeps their standing in view.
+    private func placeSummary(for id: String) -> String? {
+        guard self.showsPlaces else { return nil }
+        return LeaderboardPlace.summary(place: self.store.place(of: id), total: self.store.peopleList.total)
     }
 
     // Location and bio are the only profile text the list carries. Social links
@@ -826,60 +1522,6 @@ struct NativeDashboardView: View {
                 )
             }
         }
-    private func moveGroup(_ id: String, to index: Int) {
-        withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
-            self.store.moveGroup(id, to: index)
-        }
-    }
-
-    /// The dragged tab follows the pointer; the neighbours it has crossed
-    /// slide aside by its width so the gap shows where it lands. The list
-    /// itself changes only on release, so no tab jumps under the pointer.
-    private func groupTabDragging(_ id: String, at index: Int) -> some ViewModifier {
-        let drag = self.groupDrag
-        var shift: CGFloat = 0
-        if let drag, drag.id != id, let width = self.groupTabFrames[drag.id]?.width {
-            let step = width + Self.groupTabSpacing
-            if drag.index < index, index <= drag.target { shift = -step }
-            else if drag.target <= index, index < drag.index { shift = step }
-        }
-        return GroupTabDragModifier(
-            isDragged: drag?.id == id,
-            offset: drag?.id == id ? (drag?.translation ?? 0) : shift,
-            reduceMotion: self.reduceMotion,
-            frameChanged: { frame in
-                // Frames measured mid-drag include the drag's own offsets.
-                if self.groupDrag == nil { self.groupTabFrames[id] = frame }
-            },
-            gesture: DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.groupStripSpace))
-                .onChanged { value in
-                    let translation = value.translation.width
-                    if self.groupDrag == nil {
-                        self.groupDrag = GroupDrag(id: id, index: index, translation: translation, target: index)
-                    } else {
-                        self.groupDrag?.translation = translation
-                    }
-                    guard let frame = self.groupTabFrames[id] else { return }
-                    let center = frame.midX + translation
-                    let target = self.store.groups.indices.filter { other in
-                        other != index && (self.groupTabFrames[self.store.groups[other].id]?.midX ?? 0) < center
-                    }.count
-                    if self.groupDrag?.target != target {
-                        withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0)) {
-                            self.groupDrag?.target = target
-                        }
-                    }
-                }
-                .onEnded { _ in
-                    let target = self.groupDrag?.target ?? index
-                    withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
-                        self.groupDrag = nil
-                        self.store.moveGroup(id, to: target)
-                    }
-                }
-        )
-    }
-
     }
 
     private func memberCount(_ count: Int) -> String {
@@ -897,16 +1539,23 @@ struct NativeDashboardView: View {
     @ViewBuilder private func personDetail(_ id: String) -> some View {
         if let person = store.selectedPerson {
             VStack(spacing: 8) {
-                PulsoAvatar(
+                // Flies in from the tapped row. Kept above the name and the rest
+                // of the profile so the portrait never passes underneath text.
+                FirstlightAvatar(
                     url: person.avatar_url,
                     name: person.displayName,
                     size: 76,
-                    showsOnlineIndicator: id == Defaults[.currentUserID] || person.isActiveNow
+                    showsOnlineIndicator: id == Defaults[.currentUserID] || person.isActiveNow,
+                    morph: .init(id: self.morphID(Self.avatarMorphID), namespace: self.morph)
                 )
+                .zIndex(1)
 
+                // The name travels from the row too. Position only: the two
+                // sizes cross-fade in place instead of one being stretched.
                 Text(person.displayName)
                     .font(.system(size: 20, weight: .semibold))
                     .lineLimit(1)
+                    .matchedGeometryEffect(id: self.morphID(Self.nameMorphID), in: self.morph, properties: .position)
                     .background(GeometryReader { geometry in
                         Color.clear.preference(
                             key: ProfileTitleBottom.self,
@@ -915,7 +1564,13 @@ struct NativeDashboardView: View {
                     })
 
                 if let location = person.location, !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // Travels with the name, from the row's second line.
                     NativeLocationLabel(text: location)
+                        .matchedGeometryEffect(
+                            id: self.morphID(Self.locationMorphID),
+                            in: self.morph,
+                            properties: .position
+                        )
                 }
             }
             .frame(maxWidth: .infinity)
@@ -959,14 +1614,30 @@ struct NativeDashboardView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                // The list already has the total. Keep it visible while a more
-                // recent total loads; never replace known data with a spinner.
-                if let minutes = store.activity?.active_minutes ?? person.active_minutes {
-                    AnimatedDuration(minutes: minutes).font(.system(size: 20, weight: .medium))
-                } else if store.screenLoading {
-                    NativeSkeletonShape(width: 52, height: 20, radius: 5)
-                } else {
-                    Text("Unavailable").foregroundStyle(.secondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    // The list already has the total. Keep it visible while a more
+                    // recent total loads; never replace known data with a spinner.
+                    if let minutes = store.activity?.active_minutes ?? person.active_minutes {
+                        // Arrives from the tapped row's total. Position only, so
+                        // the two sizes cross-fade instead of one stretching.
+                        AnimatedDuration(minutes: minutes).font(.system(size: 20, weight: .medium))
+                            .fixedSize()
+                            .matchedGeometryEffect(
+                                id: self.morphID(Self.timeMorphID),
+                                in: self.morph,
+                                properties: .position
+                            )
+                    } else if store.screenLoading {
+                        NativeSkeletonShape(width: 52, height: 20, radius: 5)
+                    } else {
+                        Text("Unavailable").foregroundStyle(.secondary)
+                    }
+                    if let standing = placeSummary(for: id) {
+                        Text(standing)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Place \(standing.dropFirst())")
+                    }
                 }
             }
             .padding(12)
@@ -1064,6 +1735,7 @@ struct NativeDashboardView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.system(size: 12, weight: .medium))
                     Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
@@ -1078,7 +1750,7 @@ struct NativeDashboardView: View {
         @ViewBuilder actions: () -> some View
     ) -> some View {
         HStack(spacing: 10) {
-            PulsoAvatar(url: person.avatar_url, name: person.displayName, size: 32)
+            FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 32)
             VStack(alignment: .leading, spacing: 3) {
                 Text(person.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
                 Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
@@ -1126,7 +1798,8 @@ struct NativeDashboardView: View {
 
     private func resumeInvite() {
         guard let value = session.pendingInvite else { return }
-        self.store.open(.connect)
+        // The popover and the tray arrive together: nothing to grow from.
+        self.store.openTray(.home, from: .none)
         self.store.query = value
         self.store.queryChanged()
     }
@@ -1180,6 +1853,22 @@ private struct HorizontalScrollFadeMask: View {
     }
 }
 
+extension AnyTransition {
+    /// A request row accepted: it slides off to the left, where the list is
+    /// (Back goes that way), rather than fading on the spot.
+    static let acceptedRequest: AnyTransition = .asymmetric(
+        insertion: .opacity,
+        removal: .offset(x: -28).combined(with: .opacity)
+    )
+
+    /// The invitation banner once its request has gone out: it settles down
+    /// towards the Sent requests row that counts it from now on.
+    static let sentInvite: AnyTransition = .asymmetric(
+        insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .top)),
+        removal: .offset(y: 26).combined(with: .opacity)
+    )
+}
+
 private struct InvitePrompt {
     let icon: String
     let title: String
@@ -1222,13 +1911,22 @@ private struct NativeFeedbackToast: View {
     }
 }
 
-struct PulsoAvatar: View {
+struct FirstlightAvatar: View {
     // MARK: Internal
+
+    /// Shared geometry with another avatar, so the portrait flies between a
+    /// list row and a profile. The effect sits under the avatar's own fixed
+    /// frame: above it the size would be pinned and only the position would move.
+    struct Morph {
+        let id: String
+        let namespace: Namespace.ID
+    }
 
     let url: String?
     let name: String
     var size: CGFloat = 44
     var showsOnlineIndicator = false
+    var morph: Morph?
 
     var body: some View {
         LazyImage(url: url.flatMap(URL.init(string:))) { state in
@@ -1240,9 +1938,8 @@ struct PulsoAvatar: View {
                 }
             }
         }
-        .frame(width: size, height: size)
         .mask {
-            PulsoAvatarMask(
+            FirstlightAvatarMask(
                 cutsOutOnlineIndicator: showsOnlineIndicator,
                 indicatorSize: onlineIndicatorSize,
                 indicatorInset: onlineIndicatorInset,
@@ -1257,10 +1954,16 @@ struct PulsoAvatar: View {
                     .offset(x: -onlineIndicatorInset, y: -onlineIndicatorInset)
             }
         }
+        // Always applied so the view keeps one identity; without a morph the
+        // avatar is alone in its own namespace and matches nothing.
+        .matchedGeometryEffect(id: morph?.id ?? "avatar", in: morph?.namespace ?? unmatched)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 
     // MARK: Private
+
+    @Namespace private var unmatched
 
     /// The indicator is a badge, not a part of the portrait: it needs a floor to stay
     /// readable on small avatars and a ceiling so it does not turn into an object of its
@@ -1278,7 +1981,7 @@ struct PulsoAvatar: View {
     }
 }
 
-private struct PulsoAvatarMask: Shape {
+private struct FirstlightAvatarMask: Shape {
     let cutsOutOnlineIndicator: Bool
     let indicatorSize: CGFloat
     let indicatorInset: CGFloat
@@ -1325,6 +2028,46 @@ private struct NativeTrackedAppIcon: View {
 }
 
 /// A tab in the group strip that can be picked up and dragged along it.
+/// A tab answers the pointer before anything happens: a faint fill under
+/// the pointer, a slight press on mouse down, then release does the switch.
+/// Three events, three motions, each shorter than the one before.
+private struct NativeTabButtonStyle: ButtonStyle {
+    let reduceMotion: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .modifier(NativeTabHover(pressed: configuration.isPressed))
+            .scaleEffect(configuration.isPressed && !self.reduceMotion ? 0.96 : 1)
+            .animation(.snappy(duration: 0.16, extraBounce: 0), value: configuration.isPressed)
+    }
+}
+
+/// The fill under a tab: faint under the pointer, firmer while pressed. An
+/// unselected tab is only 13 pt of text, and a press with nothing but text
+/// to shrink is invisible; the fill gives the press a surface, so pressing
+/// any tab looks the same as pressing the selected one with its pill.
+private struct NativeTabHover: ViewModifier {
+    // MARK: Internal
+
+    let pressed: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.primary.opacity(self.pressed ? 0.09 : self.hovering ? 0.05 : 0))
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .onHover { self.hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: self.hovering)
+            .animation(.easeOut(duration: 0.08), value: self.pressed)
+    }
+
+    // MARK: Private
+
+    @State private var hovering = false
+}
+
 private struct GroupTabDragModifier<DragAlong: Gesture>: ViewModifier {
     let isDragged: Bool
     let offset: CGFloat

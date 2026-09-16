@@ -1,3 +1,3 @@
-yes | rm -rf Pulso.xcodeproj
+yes | rm -rf Firstlight.xcodeproj
 ~/bin/xcodegen generate
-open Pulso.xcodeproj
+open Firstlight.xcodeproj

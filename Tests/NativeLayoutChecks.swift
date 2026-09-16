@@ -27,7 +27,7 @@ struct NativeLayoutChecks {
         precondition(split.splitViewItems.count == 2)
         precondition(NativeLayout.popoverHeaderHeight == 50)
         precondition(NativeLayout.peopleListHeight == 310)
-        precondition(NativeLayout.peopleFooterHeight == 38)
+        precondition(NativeLayout.peopleFooterHeight == 45)
         precondition(NativeLayout.selectionListHeight == 410)
         // Full-size content includes the titlebar. Its safe-area inset changes
         // with toolbar style and OS version; do not assume a compact 50 pt bar.

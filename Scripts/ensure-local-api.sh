@@ -5,8 +5,8 @@ set -euo pipefail
 project_root=${0:A:h:h}
 web_root=${project_root:h}/web
 api_url=http://localhost:3001/api/native/config
-log_path=/tmp/pulso-web.log
-launch_label=com.get-pulso.local-api
+log_path=/tmp/firstlight-web.log
+launch_label=sh.firstlight.local-api
 
 api_is_ready() {
     local response
@@ -31,12 +31,12 @@ if [ -n "$listener_pid" ]; then
 fi
 
 if [ ! -d "$web_root/node_modules" ]; then
-    print -u2 "Pulso API dependencies are missing in $web_root."
+    print -u2 "Firstlight API dependencies are missing in $web_root."
     exit 1
 fi
 
 launchctl remove "$launch_label" 2>/dev/null || true
-launch_command="cd ${(q)web_root} && NEXT_DIST_DIR=.next-pulso-local exec pnpm exec next dev --turbopack -p 3001 >>${(q)log_path} 2>&1"
+launch_command="cd ${(q)web_root} && NEXT_DIST_DIR=.next-firstlight-local exec pnpm exec next dev --turbopack -p 3001 >>${(q)log_path} 2>&1"
 launchctl submit -l "$launch_label" -- /bin/zsh -lc "$launch_command"
 
 for _ in {1..120}; do
@@ -46,6 +46,6 @@ for _ in {1..120}; do
     sleep 0.25
 done
 
-print -u2 "Pulso API did not become ready on port 3001."
+print -u2 "Firstlight API did not become ready on port 3001."
 tail -n 30 "$log_path" >&2 || true
 exit 1

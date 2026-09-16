@@ -1,63 +1,61 @@
 import SwiftUI
 
 struct StatusIcon: View {
-    let avatars: [NSImage?]
+    // MARK: Internal
+
+    let avatars: [NSImage]
     let iconSize: CGFloat
     let markColor: Color
 
     var body: some View {
         if self.avatars.isEmpty {
-            PulsoMark()
+            FirstlightMark()
                 .fill(self.markColor)
                 .frame(width: self.iconSize, height: self.iconSize)
                 .background(Color.clear)
         } else {
-            let avatarDiameter = self.iconSize * 0.7
-            let overlap: CGFloat = avatarDiameter * 0.35 // 35% overlap
+            let avatarDiameter = self.iconSize * 0.9
+            let overlap = avatarDiameter * Self.avatarOverlapRatio
             let count = min(self.avatars.count, 3)
             let totalWidth = StatusIcon.totalWidth(forAvatarCount: count, iconSize: self.iconSize)
-            HStack(spacing: self.iconSize * 0.18) { // Always a gap between icon and avatars
-                PulsoMark()
-                    .fill(self.markColor)
-                    .frame(width: self.iconSize, height: self.iconSize)
-                ZStack(alignment: .leading) {
-                    ForEach(Array(self.avatars.prefix(3).enumerated()), id: \ .offset) { index, image in
-                        if let image {
-                            ZStack {
-                                Image(nsImage: image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: avatarDiameter, height: avatarDiameter)
-                                    .clipShape(Circle())
-                                Circle()
-                                    .stroke(Color.green, lineWidth: 1.5)
-                                    .frame(width: avatarDiameter, height: avatarDiameter)
-                            }
-                            .shadow(color: Color.black.opacity(0.18), radius: 2, x: 0, y: 1)
-                            .offset(x: CGFloat(index) * (avatarDiameter - overlap))
-                            .zIndex(Double(index))
-                        }
+            ZStack(alignment: .leading) {
+                ForEach(Array(self.avatars.prefix(3).enumerated()), id: \ .offset) { index, image in
+                    ZStack {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: avatarDiameter, height: avatarDiameter)
+                            .clipShape(Circle())
+                        Circle()
+                            .stroke(self.markColor.opacity(0.26), lineWidth: Self.avatarBorderWidth)
+                            .frame(width: avatarDiameter, height: avatarDiameter)
                     }
+                    .offset(x: CGFloat(index) * (avatarDiameter - overlap))
+                    .zIndex(Double(index))
                 }
-                .frame(width: totalWidth, height: self.iconSize, alignment: .leading)
             }
-            .frame(height: self.iconSize)
+            .frame(width: totalWidth, height: self.iconSize, alignment: .leading)
             .background(Color.clear)
         }
     }
 
     static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat) -> CGFloat {
-        let avatarDiameter = iconSize * 0.7
-        let overlap: CGFloat = avatarDiameter * 0.35
+        guard count > 0 else { return iconSize }
+        let avatarDiameter = iconSize * 0.9
+        let overlap = avatarDiameter * Self.avatarOverlapRatio
         let count = min(count, 3)
-        let border: CGFloat = 2 // 1.5pt border, add a bit more for shadow
-        return (count > 0 ? avatarDiameter + CGFloat(count - 1) * (avatarDiameter - overlap) : 0) + border
+        return avatarDiameter + CGFloat(count - 1) * (avatarDiameter - overlap)
     }
+
+    // MARK: Private
+
+    private static let avatarOverlapRatio: CGFloat = 0.32
+    private static let avatarBorderWidth: CGFloat = 0.5
 }
 
-/// The Pulso mark: an eclipse crescent with seven rays, laid out in a 128x128 box.
+/// The Firstlight mark: an eclipse crescent with seven rays, laid out in a 128x128 box.
 /// Pure outline geometry, so it also reads correctly as a menu bar template image.
-private struct PulsoMark: Shape {
+private struct FirstlightMark: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         // crescent cusp, lower right

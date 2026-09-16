@@ -1,7 +1,7 @@
 import AppKit
 
 /// Builds and exercises real NSMenu actions without creating a status item,
-/// showing UI, terminating Pulso, or accessing a signed-in account.
+/// showing UI, terminating Firstlight, or accessing a signed-in account.
 @main
 enum NativeStatusMenuChecks {
     @MainActor static func main() {
@@ -28,7 +28,7 @@ enum NativeStatusMenuChecks {
         expect(StatusItemMenu.opensContextMenu(type: .leftMouseUp, modifiers: .control))
         expect(!StatusItemMenu.opensContextMenu(type: nil, modifiers: []))
         let menu = controller.makeMenu()
-        expect(menu.items.map(\.title) == ["Open Pulso", "Invite a Friend", "Settings…", "", "Replay onboarding", "", "Quit Pulso"])
+        expect(menu.items.map(\.title) == ["Open Firstlight", "Invite a Friend", "Settings…", "", "Replay onboarding", "", "Quit Firstlight"])
         expect(!menu.items[1].isEnabled && !menu.items[2].isEnabled)
         expect(menu.items[3].isSeparatorItem)
         expect(menu.items[2].keyEquivalent == "," && menu.items[6].keyEquivalent == "q")

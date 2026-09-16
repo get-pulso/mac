@@ -19,7 +19,7 @@ enum OnboardingPreview {
     // MARK: Private
 
     @MainActor private static let controller = OnboardingWindowController(
-        defaults: UserDefaults(suiteName: "com.get-pulso.onboarding.preview")!
+        defaults: UserDefaults(suiteName: "sh.firstlight.onboarding.preview")!
     )
 }
 

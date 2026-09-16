@@ -38,14 +38,14 @@ final class StatusItemMenu: NSObject {
         item.button?.target = self
         item.button?.action = #selector(self.clicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        item.button?.setAccessibilityLabel("Pulso")
-        item.button?.toolTip = "Pulso · Right-click for options"
+        item.button?.setAccessibilityLabel("Firstlight")
+        item.button?.toolTip = "Firstlight · Right-click for options"
     }
 
     func makeMenu() -> NSMenu {
-        let menu = NSMenu(title: "Pulso")
+        let menu = NSMenu(title: "Firstlight")
         menu.autoenablesItems = false
-        menu.addItem(self.item("Open Pulso", action: #selector(self.openPulso)))
+        menu.addItem(self.item("Open Firstlight", action: #selector(self.openFirstlight)))
         let invitation = self.item("Invite a Friend", action: #selector(self.openInvite))
         invitation.isEnabled = self.canOpenSettings()
         menu.addItem(invitation)
@@ -60,7 +60,7 @@ final class StatusItemMenu: NSObject {
         replay.isEnabled = self.canReplayOnboarding()
         menu.addItem(replay)
         menu.addItem(.separator())
-        menu.addItem(self.item("Quit Pulso", action: #selector(self.quitPulso), key: "q"))
+        menu.addItem(self.item("Quit Firstlight", action: #selector(self.quitFirstlight), key: "q"))
         return menu
     }
 
@@ -98,9 +98,9 @@ final class StatusItemMenu: NSObject {
         return item
     }
 
-    @objc private func openPulso() { self.open() }
+    @objc private func openFirstlight() { self.open() }
     @objc private func openInvite() { if self.canOpenSettings() { self.invite() } }
     @objc private func showSettings() { if self.canOpenSettings() { self.settings() } }
     @objc private func replayWelcome() { if self.canReplayOnboarding() { self.replayOnboarding() } }
-    @objc private func quitPulso() { self.quit() }
+    @objc private func quitFirstlight() { self.quit() }
 }
