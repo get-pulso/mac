@@ -97,22 +97,12 @@ struct NativeSettingsView: View {
                         Text("@\(username)").foregroundStyle(.secondary)
                     }
                     let location = model.metadata("location")
-                    if !location
-                        .isEmpty { Label(location, systemImage: "mappin").font(.callout).foregroundStyle(.secondary) }
+                    if !location.isEmpty { NativeLocationLabel(text: location, size: 13) }
                 }
                 Spacer(minLength: 8)
                 Button("Edit profile") { model.navigate(.account, page: "edit") }
                     .nativeSettingsActionButton()
             }.padding(.vertical, 6)
-            panel("About you") {
-                let bio = model.metadata("bio")
-                Text(bio.isEmpty ? "Add a little about yourself in Edit profile." : bio)
-                    .foregroundStyle(bio.isEmpty ? .secondary : .primary)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
             if ["website", "twitter", "telegram"].contains(where: { !model.metadata($0).isEmpty }) {
                 panel("Links") {
                     profileLink("Website", raw: model.metadata("website"))

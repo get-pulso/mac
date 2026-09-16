@@ -3,6 +3,7 @@
 
 # Xcode
 Pulso.xcodeproj
+dist/
 
 ## User settings
 xcuserdata/

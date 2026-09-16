@@ -14,7 +14,7 @@ if ! mkdir "$build_lock" 2>/dev/null; then
 fi
 trap 'rmdir "$build_lock" 2>/dev/null || true' EXIT
 
-if ! security find-identity -v -p codesigning | rg -F "$signing_identity" >/dev/null; then
+if ! security find-identity -v -p codesigning | grep -F "$signing_identity" >/dev/null; then
     print -u2 "Missing signing identity: $signing_identity"
     exit 1
 fi

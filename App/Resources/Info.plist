@@ -6,6 +6,8 @@
     <string>$(PULSO_API_BASE_URL)</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
 	<key>LSApplicationCategory</key>
 	<string>public.app-category.social-networking</string>
 	<key>NSAppTransportSecurity</key>
@@ -14,7 +16,7 @@
 		<true/>
 	</dict>
 	<key>SUPublicEDKey</key>
-	<string>BICZUGaq7i2Fy6x29pOK/BOEhrFwqqMyns0tdAOcKkM=</string>
+	<string>4MyqM8+nD83z41ffKQijzW2uqYwpbziF67rxiuYcfl8=</string>
 	<key>SUFeedURL</key>
 	<string>https://get-pulso.github.io/mac-releases/appcast.xml</string>
 	<key>SUEnableInstallerLauncherService</key>

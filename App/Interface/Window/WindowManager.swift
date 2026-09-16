@@ -25,7 +25,7 @@ final class WindowManager {
             },
             open: { [weak self] in self?.show() },
             invite: { [weak self] in
-                SocialStore.shared.openConnect(.shareMine)
+                SocialStore.shared.open(.connect)
                 self?.show()
             },
             beforeMenu: { [weak self] in self?.hide() },

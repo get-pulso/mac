@@ -24,12 +24,38 @@ enum NativeWindowMotionChecks {
             controls.contains("@State private var measuredHeight = NativeLayout.peopleBodyHeight"),
             "A detail screen must begin at the current list body height"
         )
-        expect(!controls.contains("@State private var measuredHeight: CGFloat = 120"),
-               "A detail screen must not animate through an arbitrary placeholder height")
+        expect(
+            controls.contains("var maximumHeight = NativeLayout.peopleBodyHeight"),
+            "Detail screens must use the same maximum body height as the people list"
+        )
+        expect(
+            !controls.contains("@State private var measuredHeight: CGFloat = 120"),
+            "A detail screen must not animate through an arbitrary placeholder height"
+        )
+        expect(
+            controls.contains("var reservesMaximumHeight = false"),
+            "A loading profile must be able to reserve the finished detail height"
+        )
+        expect(
+            controls.contains("reservesMaximumHeight ? maximumHeight"),
+            "Reserved profile loading must use the maximum detail height"
+        )
+
+        let dashboard = try read("App/Interface/Dashboard/NativeDashboardView.swift")
+        expect(
+            dashboard.contains("PopoverContent(reservesMaximumHeight: self.isLoadingProfileActivity)"),
+            "A profile with known activity must not resize again while its breakdown loads"
+        )
+        expect(
+            dashboard.contains("label: \"Loading app activity\", delay: .zero"),
+            "The delayed activity breakdown needs an immediate native loading indicator"
+        )
 
         let layout = try read("App/Helpers/NativeLayout.swift")
-        expect(layout.contains("peopleBodyHeight = peopleListHeight + peopleFooterHeight"),
-               "The initial detail height must track the actual list layout")
+        expect(
+            layout.contains("peopleBodyHeight = peopleListHeight + peopleFooterHeight"),
+            "The initial detail height must track the actual list layout"
+        )
 
         print("Native window motion checks passed: \(checks)")
     }

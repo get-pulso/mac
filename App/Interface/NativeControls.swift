@@ -335,7 +335,8 @@ struct NativeBackButton: View {
 struct PopoverContent<Content: View>: View {
     // MARK: Internal
 
-    var maximumHeight: CGFloat = 410
+    var maximumHeight = NativeLayout.peopleBodyHeight
+    var reservesMaximumHeight = false
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -348,7 +349,8 @@ struct PopoverContent<Content: View>: View {
                 })
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(height: min(maximumHeight, max(44, measuredHeight)))
+        .coordinateSpace(.named(NativeLayout.popoverScrollSpace))
+        .frame(height: reservesMaximumHeight ? maximumHeight : min(maximumHeight, max(44, measuredHeight)))
         .onPreferenceChange(ContentHeight.self) { height in
             if abs(measuredHeight - height) > 0.5 { measuredHeight = height }
         }
@@ -401,4 +403,32 @@ struct NativeSearchField: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+}
+
+/// One pin for every surface that shows where a person is: the people list, the
+/// popover profile and the account overview.
+struct NativeLocationIcon: View {
+    var size: CGFloat = 11
+
+    var body: some View {
+        Image("ProfileLocation")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: self.size, height: self.size)
+    }
+}
+
+struct NativeLocationLabel: View {
+    let text: String
+    var size: CGFloat = 12
+
+    var body: some View {
+        HStack(spacing: 3) {
+            NativeLocationIcon(size: self.size - 1)
+            Text(self.text).font(.system(size: self.size))
+        }
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
 }

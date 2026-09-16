@@ -15,7 +15,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         let wasVisible = self.window?.isVisible == true
         let previousRoute = self.model?.route
         if self.window == nil { self.makeWindow() }
-        if let section { self.model?.navigate(section, page: page, groupsPage: groupsPage) }
+        self.model?.navigate(section ?? .general, page: page, groupsPage: groupsPage)
         if !wasVisible, previousRoute == self.model?.route { self.model?.refreshCurrentRoute() }
         self.updateNavigation()
         if let window, let bounds = window.contentView?.bounds,
@@ -139,7 +139,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
             defer: false
         )
         window.contentViewController = split
-        window.title = "Account"
+        window.title = model.title
         window.toolbarStyle = NativeLayout.settingsToolbarStyle
         window.contentMinSize = NativeLayout.settingsMinimumSize
         window.isReleasedWhenClosed = false

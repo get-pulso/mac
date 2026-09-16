@@ -3,6 +3,14 @@ import Dependencies
 import NukeUI
 import SwiftUI
 
+/// Distance from the top of the scrolling viewport to the bottom of a detail
+/// screen's own title. Negative once the title has scrolled past the header.
+private struct ProfileTitleBottom: PreferenceKey {
+    static var defaultValue: CGFloat { .greatestFiniteMagnitude }
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = min(value, nextValue()) }
+}
+
 struct NativeDashboardView: View {
     // MARK: Internal
 
@@ -15,7 +23,7 @@ struct NativeDashboardView: View {
                     if isPersonScreen { profileHeader }
                     else { subheader }
                     if !isPersonScreen { Divider().opacity(0.5) }
-                    PopoverContent {
+                    PopoverContent(reservesMaximumHeight: self.isLoadingProfileActivity) {
                         if needsInitialLoad { detailSkeleton }
                         else if store.screen != .connect, store.error != nil, !store.hasLoaded(store.screen) {
                             NativeStateMessage(
@@ -30,6 +38,8 @@ struct NativeDashboardView: View {
                         }
                     }
                 }
+                .onPreferenceChange(ProfileTitleBottom.self) { bottom in profileTitleBottom = bottom }
+                .onChange(of: store.screen) { _, _ in profileTitleBottom = .greatestFiniteMagnitude }
             }
         }
         .textFieldStyle(.roundedBorder).controlSize(.regular).font(.system(size: 13))
@@ -84,9 +94,27 @@ struct NativeDashboardView: View {
     @State private var confirmationTitle = ""
     @State private var confirmationAction: (() -> Void)?
     @State private var headerScrollFades = HorizontalScrollFades()
+    @State private var profileTitleBottom = CGFloat.greatestFiniteMagnitude
     private let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
+    /// The header stays empty until the profile's own name has scrolled out of
+    /// the viewport, then takes the name over.
+    private var showsProfileHeaderTitle: Bool { self.profileTitleBottom < 2 }
+
+    /// The leaderboard already tells us whether this profile has activity.
+    /// Reserve the finished profile height while its app breakdown catches up,
+    /// instead of shrinking the popover and expanding it again a moment later.
+    private var isLoadingProfileActivity: Bool {
+        guard case .person = self.store.screen,
+              self.store.screenLoading,
+              self.store.activity == nil,
+              let minutes = self.store.selectedPerson?.active_minutes
+        else { return false }
+        return minutes > 0
+    }
+
     private var needsInitialLoad: Bool {
+        // The add-friends screen is usable while its invitation data loads.
         if self.store.screen == .connect { return false }
         return self.store.screenLoading && !self.store.hasLoaded(self.store.screen)
     }
@@ -97,43 +125,86 @@ struct NativeDashboardView: View {
     }
 
     private var header: some View {
-        ScrollViewReader { reader in
-            ScrollView(.horizontal) {
-                HStack(spacing: 4) {
-                    tab("Friends", id: "friends")
-                    ForEach(store.groups) { group in
-                        tab(group.name, id: group.id)
-                            .contextMenu {
-                                Button {
-                                    SettingsWindowController.shared.show(
-                                        section: .groups,
-                                        groupsPage: .details(group.id)
-                                    )
-                                } label: {
-                                    Label("Group settings", systemImage: "gearshape")
+        HStack(spacing: 7) {
+            ScrollViewReader { reader in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 4) {
+                        tab("Friends", id: "friends")
+                        ForEach(store.groups) { group in
+                            tab(group.name, id: group.id)
+                                .contextMenu {
+                                    Button {
+                                        SettingsWindowController.shared.show(
+                                            section: .groups,
+                                            groupsPage: .details(group.id)
+                                        )
+                                    } label: {
+                                        Label("Group settings", systemImage: "gearshape")
+                                    }
+                                    Button {
+                                        store.copyGroupInvite(group.id)
+                                    } label: {
+                                        Label("Copy invite link", systemImage: "doc.on.doc")
+                                    }
+                                    .disabled(store.busy)
                                 }
-                                Button {
-                                    store.copyGroupInvite(group.id)
-                                } label: {
-                                    Label("Copy invite link", systemImage: "doc.on.doc")
-                                }
-                                .disabled(store.busy)
-                            }
+                        }
+                        tab("Leaderboard", id: "global")
                     }
-                    tab("Leaderboard", id: "global")
                 }
+                .scrollIndicators(.hidden)
+                .onScrollGeometryChange(for: HorizontalScrollFades.self) { geometry in
+                    HorizontalScrollFades(geometry: geometry)
+                } action: { _, fades in
+                    self.headerScrollFades = fades
+                }
+                .mask { HorizontalScrollFadeMask(fades: self.headerScrollFades) }
+                .onChange(of: store.tab) { _, value in withAnimation { reader.scrollTo(value, anchor: .center) } }
             }
-            .scrollIndicators(.hidden)
-            .onScrollGeometryChange(for: HorizontalScrollFades.self) { geometry in
-                HorizontalScrollFades(geometry: geometry)
-            } action: { _, fades in
-                self.headerScrollFades = fades
-            }
-            .mask { HorizontalScrollFadeMask(fades: self.headerScrollFades) }
-            .onChange(of: store.tab) { _, value in withAnimation { reader.scrollTo(value, anchor: .center) } }
+            .frame(maxWidth: .infinity)
+
+            periodPicker
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
         .frame(height: NativeLayout.popoverHeaderHeight)
+    }
+
+    private var periodPicker: some View {
+        Menu {
+            periodMenuButton("Day", value: "24h")
+            periodMenuButton("Week", value: "7d")
+            periodMenuButton("Month", value: "30d")
+        } label: {
+            HStack(spacing: 4) {
+                Text(periodLabel)
+                    .font(.system(size: 13, weight: .medium))
+                    .fixedSize(horizontal: true, vertical: false)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .background(Color.primary.opacity(0.11), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .animation(.snappy(duration: 0.22, extraBounce: 0), value: self.store.period)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .help("Choose activity period")
+        .accessibilityLabel("Activity period")
+        .accessibilityValue(periodLabel)
+    }
+
+    private var periodLabel: String {
+        switch self.store.period {
+        case "7d": "Week"
+        case "30d": "Month"
+        default: "Day"
+        }
     }
 
     private var subheader: some View {
@@ -151,9 +222,16 @@ struct NativeDashboardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("Profile")
-                .font(.system(size: 13, weight: .medium))
-                .fixedSize()
+            Group {
+                if self.showsProfileHeaderTitle {
+                    Text(self.store.selectedPerson?.displayName ?? "Profile")
+                        .font(.system(size: 13, weight: .medium))
+                        .fixedSize()
+                        .lineLimit(1)
+                        .transition(.opacity.combined(with: .offset(y: 10)))
+                }
+            }
+            .animation(.snappy(duration: 0.2), value: self.showsProfileHeaderTitle)
 
             HStack {
                 if case let .person(id) = store.screen {
@@ -240,14 +318,14 @@ struct NativeDashboardView: View {
         let label = Text("Invite").font(.system(size: 12, weight: .medium))
 
         if #available(macOS 26.0, *) {
-            Button { store.openConnect(.useInvite) } label: { label }
+            Button { store.open(.connect) } label: { label }
                 .buttonStyle(.glassProminent)
                 .buttonBorderShape(.capsule)
                 .controlSize(.regular)
                 .tint(.accentColor)
                 .help("Add a friend")
         } else {
-            Button { store.openConnect(.useInvite) } label: { label }
+            Button { store.open(.connect) } label: { label }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.capsule)
                 .controlSize(.regular)
@@ -275,7 +353,7 @@ struct NativeDashboardView: View {
                         message: store.tab == "global" ? "No activity for this period." :
                             "Invite a friend or join a group to get started.",
                         actionTitle: store.tab == "global" ? nil : "Invite a friend",
-                        action: store.tab == "global" ? nil : { store.openConnect(.shareMine) }
+                        action: store.tab == "global" ? nil : { store.open(.connect) }
                     )
                 case .content,
                      .refreshing,
@@ -300,6 +378,153 @@ struct NativeDashboardView: View {
         .scrollBounceBehavior(.basedOnSize)
     }
 
+    /// Everything the screen is for, in the order it gets used: who is waiting
+    /// on you, a field for someone else's invitation, then your own.
+    private var connectScreen: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !self.store.requests.incoming.isEmpty {
+                self.sectionHeading("Wants to be friends")
+                ForEach(self.store.requests.incoming) { request in
+                    if let person = request.requester {
+                        self.requestRow(person, detail: "Sent you a friend request") {
+                            self.operationButton(
+                                "Accept",
+                                loadingTitle: "Accepting…",
+                                key: "accept-request-\(request.id)",
+                                prominent: true
+                            ) { self.store.respond(request.id, action: "accept") }
+                            self.operationButton(
+                                "Decline",
+                                loadingTitle: "Declining…",
+                                key: "decline-request-\(request.id)"
+                            ) { self.store.respond(request.id, action: "decline") }
+                        }
+                    }
+                }
+                Divider()
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Their invitation").font(.system(size: 11)).foregroundStyle(.secondary)
+                TextField("Paste a link or enter a friend code", text: self.$store.query)
+                    .labelsHidden()
+                    .onChange(of: self.store.query) { _, _ in self.store.queryChanged() }
+                    .onSubmit { self.store.addFromQuery() }
+            }
+            self.inviteBanner
+            Divider()
+            self.yourInviteBlock
+            if !self.store.requests.outgoing.isEmpty {
+                Divider()
+                self.navigationRow(
+                    "Sent requests",
+                    detail: self.store.requests.outgoing.count == 1 ? "1 waiting for a reply" :
+                        "\(self.store.requests.outgoing.count) waiting for a reply"
+                ) { self.store.open(.requests) }
+            }
+        }
+    }
+
+    @ViewBuilder private var yourInviteBlock: some View {
+        if let invite = store.personalInvite {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YOUR FRIEND CODE").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                Text(self.displayFriendCode(invite.personalInviteCode))
+                    .font(.system(size: 24, weight: .medium, design: .monospaced))
+                    .tracking(1.5).lineLimit(1).minimumScaleFactor(0.68).textSelection(.enabled)
+                    .accessibilityLabel("Your friend code \(invite.personalInviteCode)")
+                HStack(spacing: 6) {
+                    Button { self.store.copyFriendCode(invite.personalInviteCode) } label: {
+                        NativeCopyButtonLabel(title: "Copy code", copied: self.store.copiedItem == .friendCode)
+                    }.controlSize(.small).disabled(self.store.busy)
+                    Button { self.store.copyPersonalInviteLink() } label: {
+                        NativeCopyButtonLabel(
+                            title: "Copy link",
+                            copied: self.store.copiedItem == .inviteLink,
+                            loadingTitle: "Preparing…",
+                            isLoading: self.store.isRunning("copy-invite-link")
+                        )
+                    }.controlSize(.small).disabled(self.store.busy)
+                    Spacer(minLength: 0)
+                }
+                Text("Show the code nearby, or send the same invitation as a link.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else if store.screenLoading {
+            NativeDelayedSkeleton {
+                VStack(alignment: .leading, spacing: 10) {
+                    NativeSkeletonShape(width: 108, height: 13)
+                    NativeSkeletonShape(width: 154, height: 28, radius: 5)
+                    NativeSkeletonShape(width: 168, height: 20, radius: 6)
+                }.padding(12)
+            }
+        } else {
+            self.quiet("Your friend code isn't available right now.")
+        }
+    }
+
+    /// A pasted link or code answers itself in place: the list shows who is
+    /// inviting and the single action that follows from it.
+    @ViewBuilder private var inviteBanner: some View {
+        if let candidate = store.inviteCandidate {
+            let prompt = self.invitePrompt(for: candidate)
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: prompt.icon)
+                        .font(.system(size: 14)).foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(prompt.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                        Text(prompt.message).font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 6)
+                    if self.store.checkingInvite {
+                        NativeProgress(active: true, label: "Checking invitation")
+                    }
+                }
+                HStack(spacing: 6) {
+                    if let actionTitle = prompt.actionTitle {
+                        Button { self.store.addFromQuery() } label: {
+                            NativeAsyncButtonLabel(
+                                title: actionTitle,
+                                loadingTitle: prompt.loadingTitle,
+                                isLoading: self.store.isRunning("accept-invite")
+                            )
+                        }.buttonStyle(.borderedProminent).controlSize(.small).disabled(self.store.busy)
+                    } else if self.store.inviteError != nil {
+                        Button("Try again") { self.store.queryChanged() }
+                            .controlSize(.small).disabled(self.store.busy)
+                    }
+                    Button("Dismiss") { self.store.dismissInvite() }
+                        .controlSize(.small).disabled(self.store.busy)
+                    Spacer(minLength: 0)
+                }
+                if prompt.actionTitle != nil {
+                    HStack(spacing: 5) {
+                        Text("As \(self.accountLabel)").font(.system(size: 11)).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                        Button("Switch…") { self.switchAccountForInvite() }
+                            .buttonStyle(.link).font(.system(size: 11)).disabled(self.store.busy)
+                    }
+                }
+            }
+            .padding(11)
+            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var accountLabel: String {
+        self.session.user?.primaryEmailAddress?.emailAddress ?? "your current account"
+    }
+
     private var listPhase: ContentLoadPhase {
         ContentLoadPhase.resolve(
             isLoading: self.store.loading && !self.store.hasLoadedCurrentList,
@@ -310,8 +535,6 @@ struct NativeDashboardView: View {
 
     @ViewBuilder private var detailSkeleton: some View {
         switch store.screen {
-        case .connect:
-            NativeMetricSkeleton()
         case .requests:
             NativeRowsSkeleton(rows: 3, showActions: true)
         default:
@@ -322,29 +545,9 @@ struct NativeDashboardView: View {
     @ViewBuilder private var content: some View {
         switch store.screen {
         case .list: EmptyView()
-        case .connect: connectForm
+        case .connect: connectScreen
         case .requests:
-            sectionHeading("Incoming")
-            if store.requests.incoming.isEmpty { quiet("No incoming requests.") }
-            ForEach(store.requests.incoming) { request in
-                if let person = request.requester {
-                    requestRow(person, detail: "Wants to be friends") {
-                        operationButton(
-                            "Accept",
-                            loadingTitle: "Accepting…",
-                            key: "accept-request-\(request.id)",
-                            prominent: true
-                        ) { store.respond(request.id, action: "accept") }
-                        operationButton(
-                            "Decline",
-                            loadingTitle: "Declining…",
-                            key: "decline-request-\(request.id)"
-                        ) { store.respond(request.id, action: "decline") }
-                    }
-                }
-            }
-            Divider()
-            sectionHeading("Sent")
+            intro("Sent requests", message: "Invitations you sent that are still waiting.")
             if store.requests.outgoing.isEmpty { quiet("No pending requests.") }
             ForEach(store.requests.outgoing) { request in
                 if let person = request.target_user {
@@ -361,149 +564,22 @@ struct NativeDashboardView: View {
         }
     }
 
-    private var connectForm: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            connectModeTabs
-
-            if store.connectMode == .useInvite { useInviteForm }
-            else { shareInviteForm }
-        }
-    }
-
-    @ViewBuilder private var connectModeTabs: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: 6) {
-                HStack(spacing: 6) {
-                    liquidGlassConnectModeTab("Use invite", mode: .useInvite)
-                    liquidGlassConnectModeTab("Share mine", mode: .shareMine)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .frame(maxWidth: .infinity)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Add friends method")
-        } else {
-            HStack(spacing: 3) {
-                connectModeTab("Use invite", mode: .useInvite)
-                connectModeTab("Share mine", mode: .shareMine)
-            }
-            .padding(3)
-            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .frame(maxWidth: .infinity)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Add friends method")
-        }
-    }
-
-    private var shareInviteForm: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            intro("Your invite", message: "Show the code nearby, or send the same invite as a link.")
-            if let invite = store.personalInvite {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("FRIEND CODE").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    HStack(spacing: 10) {
-                        Text(displayFriendCode(invite.personalInviteCode))
-                            .font(.system(size: 26, weight: .medium, design: .monospaced))
-                            .tracking(1.5).lineLimit(1).minimumScaleFactor(0.68).textSelection(.enabled)
-                            .accessibilityLabel("Friend code \(invite.personalInviteCode)")
-                        Spacer(minLength: 4)
-                        Button(store.copiedItem == .friendCode ? "Copied" : "Copy code") {
-                            store.copyFriendCode(invite.personalInviteCode)
-                        }.controlSize(.small)
-                    }
-                }
-                .padding(12)
-                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            } else if store.screenLoading {
-                NativeDelayedSkeleton {
-                    VStack(alignment: .leading, spacing: 10) {
-                        NativeSkeletonShape(width: 108, height: 13)
-                        HStack(spacing: 10) {
-                            NativeSkeletonShape(width: 154, height: 28, radius: 5)
-                            Spacer()
-                            NativeSkeletonShape(width: 68, height: 22, radius: 6)
-                        }
-                    }.padding(12)
-                }
-            }
-            field("Invite to") {
-                Picker("Invite to", selection: $store.inviteGroup) {
-                    Text("Friends").tag("")
-                    ForEach(store.groups) { Text($0.name).tag($0.id) }
-                }.labelsHidden().pickerStyle(.menu).frame(maxWidth: .infinity)
-            }
-            if !store.inviteGroup
-                .isEmpty { Stepper("Uses: \(store.usageLimit)", value: $store.usageLimit, in: 1 ... 100) }
-            primary(
-                store.copiedItem == .inviteLink ? "Copied" : "Copy invite link",
-                loadingTitle: "Creating link…",
-                key: "create-invite",
-                fillsWidth: true,
-                action: store.shareInvite
-            ).disabled(store.inviteGroup.isEmpty && store.personalInvite == nil)
-        }
-        .onChange(of: store.inviteGroup) { _, _ in store.clearGeneratedInvite() }
-        .onChange(of: store.usageLimit) { _, _ in store.clearGeneratedInvite() }
-    }
-
-    private var useInviteForm: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            intro("Use their invite", message: "Paste a Pulso link or enter any friend code.")
-            field("Link or code") {
-                TextField("Paste a link or enter a code", text: $store.input).labelsHidden()
-                    .onChange(of: store.input) { _, _ in store.inviteInfo = nil; store.notice = nil }
-            }
-            if !store.canAcceptInvite {
-                primary(
-                    "Check invite",
-                    loadingTitle: "Checking…",
-                    key: "inspect-invite",
-                    fillsWidth: true,
-                    action: store.inspectInvite
-                ).disabled(store.input.isEmpty)
-            }
-            if let info = store.inviteInfo {
-                Divider()
-                intro(
-                    info.invite.groupName,
-                    message: "Invited by \(info.invite.inviterName). \(info.invite.memberCount) members."
-                )
-            } else if store.canAcceptInvite, store.inspectedInviteIsFriendCode {
-                Divider()
-                intro("Friend request", message: "The code owner will choose whether to accept.")
-            }
-            if store.canAcceptInvite {
-                quiet("Continue as \(session.user?.primaryEmailAddress?.emailAddress ?? "your current account").")
-                primary(
-                    store.inspectedInviteIsFriendCode ? "Send friend request" : "Accept invitation",
-                    loadingTitle: store.inspectedInviteIsFriendCode ? "Sending…" : "Joining…",
-                    key: "accept-invite",
-                    fillsWidth: true,
-                    action: store.acceptInvite
-                )
-                Button {
-                    confirm("Sign out and accept this invitation with another account?") {
-                        session.pendingInvite = store.input
-                        store.run("Signing out…", key: "switch-account") { try await session.signOut() }
-                    }
-                } label: {
-                    NativeAsyncButtonLabel(
-                        title: "Use another account…",
-                        loadingTitle: "Signing out…",
-                        isLoading: store.isRunning("switch-account")
-                    )
-                }.disabled(store.busy)
-                Button("Cancel", action: store.declineInvite)
-            }
-        }
-    }
-
     private var screenTitle: String {
         self.screenTitle(for: self.store.screen)
     }
 
     private var backDestinationTitle: String {
         self.screenTitle(for: self.store.previousScreen ?? .list)
+    }
+
+    private func periodMenuButton(_ label: String, value: String) -> some View {
+        Button { self.store.setPeriod(value) } label: {
+            if self.store.period == value {
+                Label(label, systemImage: "checkmark")
+            } else {
+                Text(label)
+            }
+        }
     }
 
     @ViewBuilder private func profileHeaderAction(
@@ -550,52 +626,11 @@ struct NativeDashboardView: View {
         }
     }
 
-    @available(macOS 26.0, *)
-    private func liquidGlassConnectModeTab(_ title: String, mode: SocialStore.ConnectMode) -> some View {
-        let selected = self.store.connectMode == mode
-        return Button {
-            withAnimation(.snappy(duration: 0.24)) { self.store.connectMode = mode }
-        } label: {
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .frame(maxWidth: .infinity, minHeight: 32)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-        .glassEffect(
-            selected ? .regular.tint(Color.primary.opacity(0.10)).interactive() : .clear.interactive(),
-            in: .rect(cornerRadius: 10)
-        )
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-
-    private func connectModeTab(_ title: String, mode: SocialStore.ConnectMode) -> some View {
-        let selected = self.store.connectMode == mode
-        return Button {
-            withAnimation(.easeInOut(duration: 0.16)) { self.store.connectMode = mode }
-        } label: {
-            Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .frame(maxWidth: .infinity, minHeight: 30)
-                .contentShape(Rectangle())
-                .background(
-                    selected ? Color.primary.opacity(0.10) : .clear,
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
-        }
-        .buttonStyle(.plain)
-        .frame(maxWidth: .infinity)
-        .accessibilityAddTraits(selected ? [.isSelected] : [])
-    }
-
     private func screenTitle(for screen: SocialStore.Screen) -> String {
         switch screen {
         case .list: "Friends"
         case .connect: "Add friends"
-        case .requests: "Friend requests"
+        case .requests: "Sent requests"
         case .person: "Profile"
         }
     }
@@ -656,15 +691,11 @@ struct NativeDashboardView: View {
                         Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
                         if person
                             .id ==
-                            Defaults[.currentUserID] { Text("you").foregroundStyle(.tertiary).font(.system(size: 11)) }
+                            Defaults[.currentUserID] { Text("You").foregroundStyle(.tertiary).font(.system(size: 13)) }
                     }
                     if !subtitle.isEmpty {
                         HStack(spacing: 3) {
-                            if location != nil {
-                                Image(systemName: "mappin")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
-                            }
+                            if location != nil { NativeLocationIcon().foregroundStyle(.secondary) }
                             Text(subtitle)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
@@ -701,9 +732,73 @@ struct NativeDashboardView: View {
         }.padding(.horizontal, 13).padding(.vertical, 10).contentShape(Rectangle())
     }
 
+    // Location and bio are the only profile text the list carries. Social links
+    // stay on the person's profile. An unfilled profile gets no second line at
+    // all, so the row keeps its single centred title.
     private func profileText(_ value: String?) -> String? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
         return value
+    }
+
+    private func invitePrompt(for candidate: InviteInput) -> InvitePrompt {
+        switch candidate {
+        case let .friendCode(code):
+            if code.caseInsensitiveCompare(self.store.personalInvite?.personalInviteCode ?? "") == .orderedSame {
+                InvitePrompt(
+                    icon: "person.crop.circle",
+                    title: "That's your own friend code",
+                    message: "Send it to someone else so they can add you.",
+                    actionTitle: nil,
+                    loadingTitle: ""
+                )
+            } else {
+                InvitePrompt(
+                    icon: "person.badge.plus",
+                    title: "Send a friend request",
+                    message: "Code \(self.displayFriendCode(code)). They choose whether to accept.",
+                    actionTitle: "Send request",
+                    loadingTitle: "Sending…"
+                )
+            }
+        case .token:
+            if let info = store.inviteInfo {
+                InvitePrompt(
+                    icon: "envelope.open",
+                    title: info.invite.groupName,
+                    message: "Invited by \(info.invite.inviterName) · \(self.memberCount(info.invite.memberCount))",
+                    actionTitle: "Accept invitation",
+                    loadingTitle: "Joining…"
+                )
+            } else if let error = store.inviteError {
+                InvitePrompt(
+                    icon: "exclamationmark.triangle",
+                    title: "Couldn't open this invitation",
+                    message: error,
+                    actionTitle: nil,
+                    loadingTitle: ""
+                )
+            } else {
+                InvitePrompt(
+                    icon: "link",
+                    title: "Checking this invitation…",
+                    message: "Reading the link you pasted.",
+                    actionTitle: nil,
+                    loadingTitle: ""
+                )
+            }
+        }
+    }
+
+    private func memberCount(_ count: Int) -> String {
+        count == 1 ? "1 member" : "\(count) members"
+    }
+
+    private func switchAccountForInvite() {
+        let invite = self.store.query
+        self.confirm("Sign out and accept this invitation with another account?") {
+            session.pendingInvite = invite
+            store.run("Signing out…", key: "switch-account") { try await session.signOut() }
+        }
     }
 
     @ViewBuilder private func personDetail(_ id: String) -> some View {
@@ -715,19 +810,19 @@ struct NativeDashboardView: View {
                     size: 76,
                     showsOnlineIndicator: id == Defaults[.currentUserID] || person.isActiveNow
                 )
-                .overlay { Circle().strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5) }
 
                 Text(person.displayName)
                     .font(.system(size: 20, weight: .semibold))
                     .lineLimit(1)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: ProfileTitleBottom.self,
+                            value: geometry.frame(in: .named(NativeLayout.popoverScrollSpace)).maxY
+                        )
+                    })
 
                 if let location = person.location, !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Label(location, systemImage: "mappin")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                } else if id == Defaults[.currentUserID] {
-                    Text("You").font(.system(size: 12)).foregroundStyle(.secondary)
+                    NativeLocationLabel(text: location)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -786,6 +881,11 @@ struct NativeDashboardView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
+            }
+            if self.isLoadingProfileActivity {
+                NativeProgress(active: true, label: "Loading app activity", delay: .zero)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
             }
             if let activeApp = store.activity?.active_app {
                 self.trackedAppRow(activeApp, showsActiveState: true)
@@ -855,20 +955,6 @@ struct NativeDashboardView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func contact(_ person: NativeContact) -> some View {
-        HStack(spacing: 10) {
-            PulsoAvatar(url: person.avatar_url, name: person.displayName, size: 32)
-            Text(person.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
-        }
-    }
-
-    private func contact(_ person: NativePerson) -> some View {
-        HStack(spacing: 10) {
-            PulsoAvatar(url: person.avatar_url, name: person.displayName, size: 32)
-            Text(person.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
-        }
-    }
-
     private func intro(_ title: String, message: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.system(size: 14, weight: .medium))
@@ -881,11 +967,18 @@ struct NativeDashboardView: View {
         Text(title).font(.system(size: 12, weight: .semibold))
     }
 
-    private func field(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
-            content()
-        }
+    private func navigationRow(_ title: String, detail: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 12, weight: .medium))
+                    Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }.padding(.vertical, 4).contentShape(Rectangle())
+        }.buttonStyle(.plain)
     }
 
     private func requestRow(
@@ -906,58 +999,6 @@ struct NativeDashboardView: View {
 
     private func quiet(_ text: String) -> some View { Text(text).font(.callout).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
-    }
-
-    @ViewBuilder private func primary(
-        _ title: String,
-        loadingTitle: String? = nil,
-        key: String? = nil,
-        fillsWidth: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        if fillsWidth {
-            if #available(macOS 26.0, *) {
-                Button(action: action) {
-                    primaryLabel(title, loadingTitle: loadingTitle, key: key)
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(maxWidth: .infinity, minHeight: 38)
-                        .contentShape(Rectangle())
-                }
-                .controlSize(.large)
-                .buttonStyle(.glassProminent)
-                .frame(maxWidth: .infinity)
-                .disabled(store.busy)
-                .keyboardShortcut(.defaultAction)
-            } else {
-                Button(action: action) {
-                    primaryLabel(title, loadingTitle: loadingTitle, key: key)
-                        .font(.system(size: 13, weight: .medium))
-                        .frame(maxWidth: .infinity, minHeight: 36)
-                        .contentShape(Rectangle())
-                }
-                .controlSize(.large)
-                .buttonStyle(.borderedProminent)
-                .frame(maxWidth: .infinity)
-                .disabled(self.store.busy)
-                .keyboardShortcut(.defaultAction)
-            }
-        } else {
-            HStack {
-                Spacer()
-                Button(action: action) { primaryLabel(title, loadingTitle: loadingTitle, key: key) }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(store.busy)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-    }
-
-    private func primaryLabel(_ title: String, loadingTitle: String?, key: String?) -> some View {
-        NativeAsyncButtonLabel(
-            title: title,
-            loadingTitle: loadingTitle ?? title,
-            isLoading: key.map(self.store.isRunning) ?? false
-        )
     }
 
     private func operationButton(
@@ -994,7 +1035,9 @@ struct NativeDashboardView: View {
 
     private func resumeInvite() {
         guard let value = session.pendingInvite else { return }
-        self.store.openConnect(.useInvite); self.store.input = value
+        self.store.open(.connect)
+        self.store.query = value
+        self.store.queryChanged()
     }
 
     private func refreshVisibleScreen() {
@@ -1046,6 +1089,14 @@ private struct HorizontalScrollFadeMask: View {
     }
 }
 
+private struct InvitePrompt {
+    let icon: String
+    let title: String
+    let message: String
+    let actionTitle: String?
+    let loadingTitle: String
+}
+
 private struct NativeFeedbackToast: View {
     let state: SocialStore.FeedbackToast
 
@@ -1081,6 +1132,8 @@ private struct NativeFeedbackToast: View {
 }
 
 struct PulsoAvatar: View {
+    // MARK: Internal
+
     let url: String?
     let name: String
     var size: CGFloat = 44
@@ -1096,16 +1149,68 @@ struct PulsoAvatar: View {
                 }
             }
         }
-        .frame(width: size, height: size).clipShape(Circle())
+        .frame(width: size, height: size)
+        .mask {
+            PulsoAvatarMask(
+                cutsOutOnlineIndicator: showsOnlineIndicator,
+                indicatorSize: onlineIndicatorSize,
+                indicatorInset: onlineIndicatorInset,
+                indicatorGap: onlineIndicatorGap
+            )
+            .fill()
+        }
         .overlay(alignment: .bottomTrailing) {
             if showsOnlineIndicator {
                 Circle().fill(Color.green)
-                    .frame(width: max(8, size * 0.23), height: max(8, size * 0.23))
-                    .overlay(Circle().stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1.5))
-                    .offset(x: 1, y: 1)
+                    .frame(width: onlineIndicatorSize, height: onlineIndicatorSize)
+                    .offset(x: -onlineIndicatorInset, y: -onlineIndicatorInset)
             }
         }
         .accessibilityHidden(true)
+    }
+
+    // MARK: Private
+
+    /// The indicator is a badge, not a part of the portrait: it needs a floor to stay
+    /// readable on small avatars and a ceiling so it does not turn into an object of its
+    /// own on large ones. Whole points keep the edge crisp on Retina.
+    private var onlineIndicatorSize: CGFloat {
+        min(16, max(8, (8 + (self.size - 24) * 6 / 52).rounded()))
+    }
+
+    private var onlineIndicatorGap: CGFloat { self.size <= 32 ? 1.5 : 2 }
+
+    /// Holds the indicator centre on the diagonal at 0.315 x size from the avatar centre,
+    /// whatever the diameter, so the badge stays put when its size changes.
+    private var onlineIndicatorInset: CGFloat {
+        max(0, self.size * 0.1854 - self.onlineIndicatorSize / 2)
+    }
+}
+
+private struct PulsoAvatarMask: Shape {
+    let cutsOutOnlineIndicator: Bool
+    let indicatorSize: CGFloat
+    let indicatorInset: CGFloat
+    let indicatorGap: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let avatar = Path(ellipseIn: rect)
+        guard self.cutsOutOnlineIndicator else { return avatar }
+
+        let cutoutRadius = self.indicatorSize / 2 + self.indicatorGap
+        let indicatorCenter = CGPoint(
+            x: rect.maxX - self.indicatorInset - self.indicatorSize / 2,
+            y: rect.maxY - self.indicatorInset - self.indicatorSize / 2
+        )
+        // Subtract instead of an even-odd fill. The cutout reaches past the edge of
+        // the avatar, and even-odd turns that overhang into an opaque region: the
+        // corner of the photo would show up outside the circle, next to the badge.
+        return avatar.subtracting(Path(ellipseIn: CGRect(
+            x: indicatorCenter.x - cutoutRadius,
+            y: indicatorCenter.y - cutoutRadius,
+            width: cutoutRadius * 2,
+            height: cutoutRadius * 2
+        )))
     }
 }
 

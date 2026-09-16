@@ -17,7 +17,9 @@ final class Updater {
             delegate: self.sparkleDelegate
         )
 
-        self.updater.automaticallyDownloadsUpdates = false
+        // Keep this assignment for existing installs: older Pulso versions persisted
+        // automatic downloads as disabled in Sparkle's user defaults.
+        self.updater.automaticallyDownloadsUpdates = true
     }
 
     // MARK: Internal
@@ -95,5 +97,17 @@ private final class SparkleDelegate: NSObject, SPUStandardUserDriverDelegate, SP
         untilInvokingBlock installHandler: @escaping () -> Void
     ) -> Bool {
         false
+    }
+
+    func updater(
+        _ updater: SPUUpdater,
+        willInstallUpdateOnQuit item: SUAppcastItem,
+        immediateInstallationBlock installHandler: @escaping () -> Void
+    ) -> Bool {
+        // Pulso has no document workflow. Once Sparkle has downloaded, verified,
+        // and prepared an update, install it immediately instead of waiting for
+        // this menu-bar app to be quit manually.
+        DispatchQueue.main.async { installHandler() }
+        return true
     }
 }

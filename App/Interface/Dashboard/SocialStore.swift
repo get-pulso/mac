@@ -7,8 +7,6 @@ import SwiftUI
 final class SocialStore: ObservableObject {
     // MARK: Internal
 
-    enum ConnectMode: String, CaseIterable { case useInvite, shareMine }
-
     enum CopiedItem: Equatable { case friendCode, inviteLink }
 
     enum FeedbackToast: Equatable {
@@ -35,14 +33,15 @@ final class SocialStore: ObservableObject {
     static let shared = SocialStore()
 
     @Published var screen: Screen = .list
-    @Published var connectMode = ConnectMode.useInvite
     @Published var tab = "friends"
     @Published private(set) var period = SocialStore.storedPeriod
     @Published var groups: [NativeGroup] = []
     @Published var people: [NativePerson] = []
     @Published var requests = NativeRequests()
     @Published var personalInvite: NativePersonalInvite?
-    @Published var inviteInfo: NativeInviteInfo?
+    @Published private(set) var inviteInfo: NativeInviteInfo?
+    @Published private(set) var checkingInvite = false
+    @Published private(set) var inviteError: String?
     @Published var directFriendIDs = Set<String>()
     @Published var activity: NativeActivity?
     @Published var loading = true
@@ -54,24 +53,25 @@ final class SocialStore: ObservableObject {
     @Published var error: String?
     @Published var notice: String?
     @Published var feedbackToast: FeedbackToast?
-    @Published var input = ""
-    @Published var inviteGroup = ""
-    @Published var usageLimit = 1
-    @Published var generatedLink = ""
+    @Published var query = ""
     @Published private(set) var copiedItem: CopiedItem?
     @Published var selectedPerson: NativePerson?
     @Dependency(\.network) var network
 
-    var canAcceptInvite: Bool {
-        guard let inspectedInvite, inspectedInvite == (try? InviteInput.parse(self.input)) else { return false }
-        if case .token = inspectedInvite { return self.inviteInfo != nil }
-        return true
+    /// What the field currently holds, read as an invitation. A code is only
+    /// offered once it is long enough to be one, so half-typed input stays quiet.
+    var inviteCandidate: InviteInput? {
+        let value = self.trimmedQuery
+        guard !value.isEmpty else { return nil }
+        if value.contains("://") { return try? InviteInput.parse(value) }
+        let compact = value.replacingOccurrences(of: " ", with: "")
+        guard compact.count >= 6, compact.count <= 24,
+              compact.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" })
+        else { return nil }
+        return try? InviteInput.parse(compact)
     }
 
-    var inspectedInviteIsFriendCode: Bool {
-        if case .friendCode = self.inspectedInvite { return true }
-        return false
-    }
+    var trimmedQuery: String { self.query.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var previousScreen: Screen? { self.navigationHistory.previous }
     var hasLoadedCurrentList: Bool { self.listCache.contains(self.tab + self.period) }
@@ -82,13 +82,6 @@ final class SocialStore: ObservableObject {
         case .connect: self.personalInviteCache.contains("invite")
         default: true
         }
-    }
-
-    func openConnect(_ mode: ConnectMode, groupID: String? = nil) {
-        self.connectMode = mode
-        if let groupID { self.inviteGroup = groupID }
-        else if self.screen != .connect { self.inviteGroup = "" }
-        self.open(.connect)
     }
 
     func setPeriod(_ period: String) {
@@ -102,12 +95,12 @@ final class SocialStore: ObservableObject {
             self.showList()
             return
         }
-        self.navigate(to: previous, resetsTransientState: false)
+        self.navigate(to: previous)
     }
 
     func showList(notice: String? = nil) {
         self.navigationHistory.removeAll()
-        self.navigate(to: .list, resetsTransientState: true)
+        self.navigate(to: .list)
         self.notice = notice
     }
 
@@ -187,8 +180,10 @@ final class SocialStore: ObservableObject {
             self.showList()
             return
         }
+        // Opening the screen fresh must not surface the last invitation typed.
+        if next == .connect, self.screen != .connect { self.clearQuery() }
         self.navigationHistory.record(self.screen, before: next)
-        self.navigate(to: next, resetsTransientState: next != self.screen)
+        self.navigate(to: next)
     }
 
     func isRunning(_ key: String) -> Bool { self.busy && self.operationKey == key }
@@ -211,18 +206,14 @@ final class SocialStore: ObservableObject {
 
     func retry() {
         if self.screen == .list { Task { await self.refresh(force: true) } }
-        else {
-            let input = self.input
-            self.navigate(to: self.screen, resetsTransientState: false, forceRefresh: true)
-            self.input = input
-        }
+        else { self.navigate(to: self.screen, forceRefresh: true) }
     }
 
     func refreshCurrentScreen(force: Bool = false) {
         if self.screen == .list { Task { await self.refresh(force: force) } }
         else {
             if case .person = self.screen { Task { await self.refresh(force: force) } }
-            self.navigate(to: self.screen, resetsTransientState: false, forceRefresh: force)
+            self.navigate(to: self.screen, forceRefresh: force)
         }
     }
 
@@ -233,7 +224,7 @@ final class SocialStore: ObservableObject {
 
     func refreshPersonIfVisible(_ userID: String) {
         guard case let .person(id) = self.screen, id == userID else { return }
-        self.navigate(to: self.screen, resetsTransientState: false, forceRefresh: true)
+        self.navigate(to: self.screen, forceRefresh: true)
     }
 
     func removeDirectFriend(_ id: String) {
@@ -273,26 +264,20 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    func shareInvite() {
-        if !self.generatedLink.isEmpty {
-            self.copyInviteLink(self.generatedLink)
+    func copyPersonalInviteLink() {
+        if let link = self.personalInvite?.personalInviteLink, !link.isEmpty {
+            self.copy(link, feedback: .inviteLink)
             return
         }
-        if self.inviteGroup.isEmpty, let link = self.personalInvite?.personalInviteLink, !link.isEmpty {
-            self.generatedLink = link
-            self.copyInviteLink(link)
-            return
-        }
-        self.run("Creating invitation…", key: "create-invite") {
-            struct Options: Encodable { let usageLimit: Int }
-            let path = self.inviteGroup.isEmpty ? "/api/invites/universal" : "/api/groups/\(self.inviteGroup)/invite"
-            let result: NativeInviteLink = try await self.network.request(
-                path: path,
-                method: .post,
-                body: Options(usageLimit: self.usageLimit)
-            )
-            self.generatedLink = result.inviteLink
-            self.copyInviteLink(result.inviteLink)
+        self.run("Preparing link…", key: "copy-invite-link") {
+            let result: NativePersonalInvite = try await self.network
+                .request(path: "/api/user/invite-link", method: .get)
+            self.personalInvite = result
+            self.personalInviteCache.insert(result, for: "invite")
+            guard !result.personalInviteLink.isEmpty else {
+                throw NativeError.message("Your invite link isn't ready yet.")
+            }
+            self.copy(result.personalInviteLink, feedback: .inviteLink)
         }
     }
 
@@ -321,52 +306,70 @@ final class SocialStore: ObservableObject {
         self.copy(code, feedback: .friendCode)
     }
 
-    func clearGeneratedInvite() {
-        self.generatedLink = ""
-        if self.copiedItem == .inviteLink {
-            self.copyFeedbackTask?.cancel()
-            self.copiedItem = nil
+    /// A pasted link is looked up as soon as it lands, so the list can offer the
+    /// invitation itself instead of a separate screen with a check button.
+    func queryChanged() {
+        self.inviteLookup?.cancel()
+        self.inviteError = nil
+        self.checkingInvite = false
+        guard case let .token(token)? = self.inviteCandidate else {
+            self.inviteInfo = nil
+            self.lookedUpToken = nil
+            return
         }
-    }
-
-    func inspectInvite() {
-        self.run("Checking invitation…", key: "inspect-invite") {
-            let parsed = try InviteInput.parse(self.input)
-            switch parsed {
-            case .friendCode: self.inviteInfo = nil
-            case let .token(token): self.inviteInfo = try await self.network
-                .request(path: "/api/invite/info", method: .get, query: ["token": token])
+        guard self.lookedUpToken != token else { return }
+        self.inviteInfo = nil
+        self.lookedUpToken = nil
+        self.checkingInvite = true
+        self.inviteLookup = Task {
+            do { try await Task.sleep(for: .milliseconds(280)) } catch { return }
+            do {
+                let info: NativeInviteInfo = try await self.network
+                    .request(path: "/api/invite/info", method: .get, query: ["token": token])
+                guard !Task.isCancelled else { return }
+                self.inviteInfo = info
+                self.lookedUpToken = token
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError) else { return }
+                self.inviteError = error.localizedDescription
             }
-            self.notice = nil
-            self.inspectedInvite = parsed
+            self.checkingInvite = false
         }
     }
 
-    func acceptInvite() {
-        self.run("Joining…", key: "accept-invite") {
-            guard let parsed = self.inspectedInvite,
-                  parsed == (try InviteInput.parse(self.input))
-            else { throw NativeError.message("Check the invitation before accepting.") }
-            let success: String
-            switch parsed {
-            case let .friendCode(code):
+    func addFromQuery() {
+        guard let candidate = self.inviteCandidate else { return }
+        switch candidate {
+        case let .friendCode(code):
+            self.run("Sending request…", key: "accept-invite") {
                 try await self.mutate("/api/friends/request", body: ["inviteCode": code])
-                success = "Friend request sent."
-            case let .token(token):
+                self.finishInvite(notice: "Friend request sent.")
+                try? await self.loadRequests()
+                await self.refresh(force: true)
+            }
+        case let .token(token):
+            self.run("Joining…", key: "accept-invite") {
                 try await self.mutate("/api/invite/accept", body: ["token": token])
                 SettingsWindowController.shared.invalidateGroups()
-                success = "Invitation accepted."
+                self.finishInvite(notice: "Invitation accepted.")
+                await self.refresh(force: true)
             }
-            NativeSession.shared.pendingInvite = nil
-            self.showList(notice: success)
-            await self.refresh(force: true)
         }
     }
 
-    func declineInvite() {
-        // Dismissing a shared invite must not revoke the sender's link for others.
+    /// Dismissing a shared invite must not revoke the sender's link for others.
+    func dismissInvite() {
         NativeSession.shared.pendingInvite = nil
-        self.goBack()
+        self.clearQuery()
+    }
+
+    func clearQuery() {
+        self.inviteLookup?.cancel()
+        self.query = ""
+        self.inviteInfo = nil
+        self.inviteError = nil
+        self.checkingInvite = false
+        self.lookedUpToken = nil
     }
 
     func reset() {
@@ -374,11 +377,12 @@ final class SocialStore: ObservableObject {
         self.screenTask?.cancel(); self.screenLoading = false; self.activityCache.removeAll(); self.listError = nil
         self.listCache.removeAll(); self.groupsCache.removeAll(); self.displayedListKey = ""; self.navigationHistory
             .removeAll()
-        self.screen = .list; self.connectMode = .useInvite; self.tab = "friends"; self.groups = []; self.people = []
+        self.screen = .list; self.tab = "friends"; self.groups = []; self.people = []
         self.requests = NativeRequests()
-        self.personalInvite = nil; self.inviteInfo = nil; self.selectedPerson = nil
-        self.activity = nil; self.inspectedInvite = nil
-        self.input = ""; self.inviteGroup = ""; self.usageLimit = 1; self.generatedLink = ""
+        self.personalInvite = nil; self.selectedPerson = nil
+        self.activity = nil
+        self.inviteLookup?.cancel(); self.query = ""; self.inviteInfo = nil
+        self.inviteError = nil; self.checkingInvite = false; self.lookedUpToken = nil
         self.error = nil; self.notice = nil; self.feedbackToast = nil
         self.copiedItem = nil
         self.copyFeedbackTask?.cancel()
@@ -409,13 +413,16 @@ final class SocialStore: ObservableObject {
     private var requestsCache = NativeResourceCache<String, NativeRequests>()
     private var personalInviteCache = NativeResourceCache<String, NativePersonalInvite>()
     private var directFriendsCache = NativeResourceCache<String, Set<String>>()
-    @Published private var inspectedInvite: InviteInput?
     private var refreshID = UUID()
     private var refreshingList = false
     private var copyFeedbackTask: Task<Void, Never>?
+    private var inviteLookup: Task<Void, Never>?
+    private var lookedUpToken: String?
 
-    private func copyInviteLink(_ link: String) {
-        self.copy(link, feedback: .inviteLink)
+    private func finishInvite(notice: String) {
+        NativeSession.shared.pendingInvite = nil
+        self.clearQuery()
+        self.notice = notice
     }
 
     private func copy(_ value: String, feedback: CopiedItem) {
@@ -435,25 +442,15 @@ final class SocialStore: ObservableObject {
         NSPasteboard.general.setString(value, forType: .string)
     }
 
-    private func navigate(to next: Screen, resetsTransientState: Bool, forceRefresh: Bool = false) {
+    private func navigate(to next: Screen, forceRefresh: Bool = false) {
         self.screenTask?.cancel()
         self.screen = next
         self.error = nil
         self.notice = nil
         self.feedbackToast = nil
-        if resetsTransientState {
-            self.input = ""
-            self.inviteInfo = nil
-            self.inspectedInvite = nil
-        }
         self.screenLoading = false
         self.restoreCachedValue(for: next)
-        switch next {
-        case .list: return
-        case .connect:
-            if resetsTransientState { self.clearGeneratedInvite() }
-        default: break
-        }
+        if next == .list { return }
         if !forceRefresh, self.isFresh(next) { return }
         self.screenLoading = true
         self.screenTask = Task {
@@ -463,10 +460,18 @@ final class SocialStore: ObservableObject {
                 case .requests:
                     try await self.loadRequests()
                 case .connect:
-                    let result: NativePersonalInvite = try await self.network
+                    // The screen shows incoming requests and the user's own code,
+                    // so it needs both before it is fully populated.
+                    async let loadedInvite: NativePersonalInvite = self.network
                         .request(path: "/api/user/invite-link", method: .get)
-                    self.personalInvite = result
-                    self.personalInviteCache.insert(result, for: "invite")
+                    async let loadedRequests: NativeRequests = self.network
+                        .request(path: "/api/friends/requests", method: .get)
+                    let invite = try await loadedInvite
+                    let requests = try await loadedRequests
+                    self.personalInvite = invite
+                    self.personalInviteCache.insert(invite, for: "invite")
+                    self.requests = requests
+                    self.requestsCache.insert(requests, for: "requests")
                 case let .person(id):
                     // The leaderboard already supplies the visible total. Treat
                     // this fresher detail request as an optional enhancement so
@@ -504,6 +509,7 @@ final class SocialStore: ObservableObject {
             if let cached = self.requestsCache.value(for: "requests") { self.requests = cached }
         case .connect:
             if let cached = self.personalInviteCache.value(for: "invite") { self.personalInvite = cached }
+            if let cached = self.requestsCache.value(for: "requests") { self.requests = cached }
         case let .person(id):
             self.activity = self.activityCache.value(for: id + self.period)
             if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
@@ -515,7 +521,9 @@ final class SocialStore: ObservableObject {
         switch screen {
         case .list: true
         case .requests: self.requestsCache.isFresh("requests", for: Self.cacheLifetime)
-        case .connect: self.personalInviteCache.isFresh("invite", for: Self.cacheLifetime)
+        case .connect:
+            self.personalInviteCache.isFresh("invite", for: Self.cacheLifetime) &&
+                self.requestsCache.isFresh("requests", for: Self.cacheLifetime)
         case let .person(id):
             self.activityCache.isFresh(id + self.period, for: Self.cacheLifetime) &&
                 self.directFriendsCache.isFresh("friends", for: Self.cacheLifetime)

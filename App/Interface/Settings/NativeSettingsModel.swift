@@ -50,7 +50,7 @@ final class NativeSettingsModel: ObservableObject {
 
     let groupSettings = NativeGroupsModel(client: .live)
 
-    @Published var route = Route(section: .account)
+    @Published var route = Route(section: .general)
     @Published var search = ""
     @Published var busy = false
     @Published var operationLabel = "Saving changes…"
@@ -435,7 +435,7 @@ final class NativeSettingsModel: ObservableObject {
     private var groupsObservation: AnyCancellable?
     private var pendingEmail: EmailAddress?
     private var pendingAction: (() async throws -> Void)?
-    private var history = [Route(section: .account)]
+    private var history = [Route(section: .general)]
     @Published private var historyIndex = 0
     @Dependency(\.network) private var network
 

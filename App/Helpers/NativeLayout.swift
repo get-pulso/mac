@@ -9,6 +9,9 @@ enum NativeLayout {
     static let settingsSize = NSSize(width: 680, height: 500)
     static let settingsMinimumSize = NSSize(width: 640, height: 440)
     static let settingsToolbarStyle: NSWindow.ToolbarStyle = .unified
+    /// Detail screens measure their own title against the scrolling viewport,
+    /// so the header can take the title over once it scrolls away.
+    static let popoverScrollSpace = "popoverScroll"
 
     @MainActor static func sizeSettingsWindow(_ window: NSWindow) {
         window.contentMinSize = self.settingsMinimumSize
