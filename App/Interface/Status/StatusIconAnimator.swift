@@ -14,12 +14,13 @@ final class StatusIconAnimator {
         self.statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         menu.attach(to: self.statusBarItem)
         self.observeLiveUsers()
-        self.startAnimationTimer()
+        self.observeMenuBarAppearance()
+        self.renderIcon()
     }
 
     deinit {
         NSStatusBar.system.removeStatusItem(self.statusBarItem)
-        self.iconTimer?.invalidate()
+        self.appearanceObservation?.invalidate()
     }
 
     // MARK: Internal
@@ -39,18 +40,20 @@ final class StatusIconAnimator {
     // MARK: Private
 
     private static let iconSize: CGFloat = 20
-    private static let totalFrames = 40
-    private static let frameInterval: TimeInterval = 0.1
     private static let maxAvatars = 3
 
     private var statusBarItem: NSStatusItem
     private let menu: StatusItemMenu
-    private var iconFrames: [NSImage] = []
-    private var iconFrameIndex: Int = 0
-    private var iconTimer: Timer?
+    private var avatarImages: [NSImage?] = []
     private var cancellable: AnyCancellable?
+    private var appearanceObservation: NSKeyValueObservation?
 
     @Dependency(\.storage) private var storage
+
+    private var menuBarMarkColor: Color {
+        let appearance = self.statusBarItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
+        return appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
+    }
 
     private func observeLiveUsers() {
         self.cancellable = self.storage.friendsStream(filter: .last24h)
@@ -72,7 +75,17 @@ final class StatusIconAnimator {
                 return self.fetchAvatars(for: Array(urls))
             }
             .sink { [weak self] avatarImages in
-                self?.rerenderIconFrames(with: avatarImages)
+                self?.avatarImages = avatarImages
+                self?.renderIcon()
+            }
+    }
+
+    /// A template image follows the menu bar on its own; the avatar row cannot be one,
+    /// so the mark is drawn in the bar's own colour instead and redrawn when it flips.
+    private func observeMenuBarAppearance() {
+        self.appearanceObservation = self.statusBarItem.button?
+            .observe(\.effectiveAppearance) { [weak self] _, _ in
+                Task { @MainActor in self?.renderIcon() }
             }
     }
 
@@ -95,33 +108,21 @@ final class StatusIconAnimator {
             .eraseToAnyPublisher()
     }
 
-    private func rerenderIconFrames(with avatarImages: [NSImage?]) {
-        let width = StatusIcon.totalWidth(forAvatarCount: avatarImages.count, iconSize: Self.iconSize) + Self
+    private func renderIcon() {
+        let avatars = self.avatarImages
+        let asTemplate = avatars.isEmpty
+        let width = StatusIcon.totalWidth(forAvatarCount: avatars.count, iconSize: Self.iconSize) + Self
             .iconSize * 1.18 // add icon + spacing
-        self.iconFrames = (0 ..< Self.totalFrames).map { frameIndex in
-            let phase = Double(frameIndex) / Double(Self.totalFrames)
-            let view = StatusIcon(
-                phase: phase,
-                avatars: avatarImages,
-                iconSize: Self.iconSize
-            )
-            .frame(width: width, height: Self.iconSize)
-            let renderer = ImageRenderer(content: view)
-            renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
-            return renderer.nsImage ?? NSImage()
-        }
-    }
-
-    private func startAnimationTimer() {
-        self.iconTimer = Timer.scheduledTimer(withTimeInterval: Self.frameInterval, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            DispatchQueue.main.async {
-                guard self.iconFrames.count == Self.totalFrames else { return }
-
-                self.iconFrameIndex = (self.iconFrameIndex + 1) % Self.totalFrames
-                self.statusBarItem.button?.image = self.iconFrames[self.iconFrameIndex]
-            }
-        }
-        RunLoop.main.add(self.iconTimer!, forMode: .common)
+        let view = StatusIcon(
+            avatars: avatars,
+            iconSize: Self.iconSize,
+            markColor: asTemplate ? .black : self.menuBarMarkColor
+        )
+        .frame(width: width, height: Self.iconSize)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        guard let image = renderer.nsImage else { return }
+        image.isTemplate = asTemplate
+        self.statusBarItem.button?.image = image
     }
 }
