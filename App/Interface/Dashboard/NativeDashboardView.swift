@@ -1,5 +1,6 @@
 import Defaults
 import Dependencies
+import Nuke
 import NukeUI
 import SwiftUI
 
@@ -39,28 +40,65 @@ private enum ScreenMotion {
     /// A tab change slides the whole list the way the tab lies.
     static let tabDrift: CGFloat = 22
 
-    static func list(reduceMotion: Bool) -> AnyTransition {
-        self.screen(.behind, fade: self.navigationFade, reduceMotion)
+    @MainActor static func list(reduceMotion: Bool) -> AnyTransition {
+        self.screen(.behind, fade: self.fade(for: SocialStore.shared.navigation), reduceMotion)
     }
 
-    static func detail(reduceMotion: Bool) -> AnyTransition {
-        self.screen(.navigating, fade: self.navigationFade, reduceMotion)
+    @MainActor static func detail(reduceMotion: Bool) -> AnyTransition {
+        self.screen(.navigating, fade: self.fade(for: SocialStore.shared.navigation), reduceMotion)
     }
 
+    /// A tab change is not a push, and nothing in it is doubled: the rows of
+    /// one tab share no geometry with the rows of another, so the list leaving
+    /// has nothing to hand over and no reason to hold its opacity while it
+    /// goes. It drops first and quickly; the one arriving comes up behind it.
+    /// Holding both near half — which a push needs, so the one portrait drawn
+    /// on both screens stays solid — only prints two lists over each other
+    /// here, the same people at two heights, sliding opposite ways.
     static func tab(reduceMotion: Bool) -> AnyTransition {
-        self.screen(.tab, fade: self.tabFade, reduceMotion)
+        .asymmetric(
+            insertion: self.drift(.appearing, .tab, reduceMotion)
+                .combined(with: .opacity.animation(.easeOut(duration: self.tabInFade))),
+            removal: self.drift(.disappearing, .tab, reduceMotion)
+                .combined(with: .opacity.animation(.easeIn(duration: self.tabOutFade)))
+        )
     }
 
     // MARK: Private
 
-    /// A little under the navigation spring, so the picture is settled just
+    /// A little under the navigation curve, so the picture is settled just
     /// before the motion is and the arrival reads as a stop rather than a fade.
     /// The list leaving and the detail arriving are two halves of one push, so
-    /// they have to share this number or the halves will not add up.
-    private static let navigationFade: Double = 0.28
+    /// they have to share this number or the halves will not add up — and each
+    /// direction keeps the same share of its own length, which is shorter on
+    /// the way back than on the way out.
+    private static let navigationOpenFade: Double = 0.24
+    private static let navigationCloseFade: Double = 0.19
     /// Tabs swap one list for another with nothing travelling between them,
-    /// so the swap can be quicker than a push.
-    private static let tabFade: Double = 0.22
+    /// so the swap can be quicker than a push — and the halves are not equal.
+    /// The list leaving is gone before the panel has finished moving, which is
+    /// what keeps the two out of each other's way; the one arriving takes
+    /// longer, so it reads as settling in rather than being cut on.
+    private static let tabOutFade: Double = 0.1
+    private static let tabInFade: Double = 0.2
+    /// A portrait opening has one object travelling and nothing arriving
+    /// behind it, so the trade is over almost before it starts: the picture is
+    /// solid a frame or two into the flight and the profile is gone from under
+    /// it. Any longer and the flight is chasing a fade instead of leading it.
+    /// Each side keeps the same share of its own flight, which is longer on
+    /// the way out than on the way back.
+    private static let photoOpenFade: Double = 0.17
+    private static let photoCloseFade: Double = 0.14
+
+    /// Read as the change happens, not captured up front: the screen on its way
+    /// out is no longer updated and still has to fade on the same terms as the
+    /// one arriving.
+    @MainActor private static func fade(for navigation: SocialStore.Navigation) -> Double {
+        if navigation.isPhoto {
+            return navigation.isOpening ? self.photoOpenFade : self.photoCloseFade
+        }
+        return navigation.isOpening ? self.navigationOpenFade : self.navigationCloseFade
+    }
 
     private static func screen(_ role: ScreenDrift.Role, fade: Double, _ reduceMotion: Bool) -> AnyTransition {
         .asymmetric(
@@ -123,6 +161,10 @@ private struct ScreenDrift: ViewModifier, Animatable {
     @MainActor private var drift: CGFloat {
         if self.reduceMotion { return 0 }
         let store = SocialStore.shared
+        // The portrait opening is one picture growing, not two screens
+        // trading places. A screen sliding out from under it would say the
+        // opposite of what the flight is saying.
+        if store.navigation.isPhoto { return 0 }
         switch self.role {
         case .behind:
             return -ScreenMotion.behindDrift
@@ -140,6 +182,7 @@ struct NativeDashboardView: View {
     // MARK: Internal
 
     var body: some View {
+        let detailScreen = self.store.screen
         // Both screens live in the tree while one replaces the other, so they
         // overlap instead of stacking. They do not share a height while they
         // do: a screen still running its removal transition is drawn but no
@@ -157,7 +200,11 @@ struct NativeDashboardView: View {
                 // the profile's to use. See `profileActions`.
                 PopoverContent(
                     maximumHeight: NativeLayout.peopleBodyHeight + NativeLayout.popoverHeaderHeight,
-                    reservesMaximumHeight: self.profileFillsPanel
+                    reservesMaximumHeight: self.profileFillsPanel,
+                    scrollOffset: Binding(
+                        get: { self.store.detailScrollOffsets[detailScreen] ?? 0 },
+                        set: { self.store.detailScrollOffsets[detailScreen] = $0 }
+                    )
                 ) {
                     content.disabled(store.busy)
                     // The tray shows its own errors; only with it closed
@@ -166,7 +213,9 @@ struct NativeDashboardView: View {
                         NativeInlineError(message: error, retry: store.retry)
                     }
                 }
-                .overlay(alignment: .top) { profileActions }
+                .overlay(alignment: .top) {
+                    profileActions
+                }
                 .onPreferenceChange(ProfileTitleCenter.self) { center in profileTitleCenter = center }
                 .onChange(of: store.screen) { _, _ in profileTitleCenter = .greatestFiniteMagnitude }
                 .geometryGroup()
@@ -179,6 +228,11 @@ struct NativeDashboardView: View {
         // The invite tray sits over whichever screen is showing, under the
         // toasts, and dims what is beneath it without replacing it.
         .overlay(alignment: .bottom) { self.inviteTrayLayer }
+        .animation(
+            NativeTrayMorph.animation(isExpanded: self.store.tray != nil, reduceMotion: self.reduceMotion),
+            value: self.store.tray != nil
+        )
+        .bumpSurface()
         // A profile's own trays sit the same way, over the profile.
         .textFieldStyle(.roundedBorder).controlSize(.regular).font(.system(size: 13))
         .overlay(alignment: .top) {
@@ -197,7 +251,13 @@ struct NativeDashboardView: View {
         .animation(.snappy(duration: 0.16), value: store.feedbackToast)
         .animation(.snappy(duration: 0.16), value: store.notice)
         .task { resumeInvite() }
-        .task(id: store.listKey) { await store.refresh() }
+        .task(id: store.listKey) {
+            await store.refresh()
+            if case .person = store.screen { store.refreshCurrentScreen(force: true) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .init("FirstlightSharingChanged"))) { _ in
+            self.appDirectory.clear()
+        }
         .task(id: store.feedbackToast) {
             guard case let .success(message) = store.feedbackToast else { return }
             let expected = SocialStore.FeedbackToast.success(message)
@@ -213,12 +273,22 @@ struct NativeDashboardView: View {
         }
         .onReceive(timer) { _ in refreshVisibleScreen() }
         .onReceive(windowManager.isVisiblePublisher.removeDuplicates().dropFirst()) { visible in
-            if visible { refreshVisibleScreen() }
+            if visible {
+                refreshVisibleScreen()
+                if self.showingAppRanking {
+                    let bundle = self.visibleAppBundle
+                    let period = self.store.period
+                    Task { await self.appDirectory.load(bundle, period: period) }
+                }
+            }
         }
         // The tray answers Escape first: Back where it has somewhere to go,
         // close otherwise. Only with no tray does Escape reach the screens.
         .onExitCommand {
-            if store.tray != nil { store.trayBack() }
+            if BumpEffects.shared.incoming != nil { BumpEffects.shared.dismissIncoming() }
+            else if BumpEffects.shared.trayOpen {
+                BumpEffects.shared.trayOpen = false
+            } else if store.tray != nil { store.trayBack() }
             else if store.screen == .list { windowManager.hide() }
             else { store.goBack() }
         }
@@ -332,6 +402,8 @@ struct NativeDashboardView: View {
     /// down the list however many digits they carry.
     private static let rowPlaceWidth: CGFloat = 20
     private static let rowPlaceSpacing: CGFloat = 8
+    /// The portrait on a profile, and the circle the photograph opens out of.
+    private static let profileAvatarSize: CGFloat = 76
     private static let avatarMorphID = "avatar"
     private static let nameMorphID = "name"
     /// The location sits on both screens too, right under the name, so it
@@ -340,9 +412,8 @@ struct NativeDashboardView: View {
     /// a tile in the profile, and far enough apart that the flight reads as
     /// a number wandering across the popover.
     private static let locationMorphID = "location"
-    /// The "agent working" mark. It travels from the row into the Agents
-    /// card, the way a pending spinner moves to where the result will live.
-    private static let agentMorphID = "agent"
+    /// The icon of what a person is in, beside their time in the row.
+    private static let appMorphID = "app"
     private static let rowDividerInset = rowHorizontalPadding + rowAvatarSize + rowAvatarSpacing
     private static let rankedRowDividerInset = rowDividerInset + rowPlaceWidth + rowPlaceSpacing
 
@@ -377,7 +448,12 @@ struct NativeDashboardView: View {
     private static let profileTopInset: CGFloat = 26
 
     @ObservedObject private var store = SocialStore.shared
+    @StateObject private var appDirectory = NativeAppDirectory()
+    @Namespace private var appMorph
+    @Namespace private var inviteMorph
+    @State private var appMorphSources: [String: String] = [:]
     @ObservedObject private var session = NativeSession.shared
+    @ObservedObject private var bumps = BumpCenter.liveValue
     @Dependency(\.windowManager) private var windowManager
     /// The chart column the pointer is on, shared by the two numbers above it.
     @State private var agentsHovered: AgentBucket?
@@ -392,9 +468,6 @@ struct NativeDashboardView: View {
     @State private var groupTabFrames: [String: CGRect] = [:]
     /// The AppKit view the period menu pops up from, and the object its
     /// items call back into. Both live as long as the view does.
-    @State private var periodMenuAnchor = NativeViewBox()
-    @State private var periodMenuTarget = NativeMenuTarget()
-    @State private var periodMenuOpen = false
     @State private var profileTitleCenter = CGFloat.greatestFiniteMagnitude
     /// The row whose avatar flies into the profile. A person can sit in the
     /// list and in the pinned row at once, so the origin is part of the key:
@@ -481,6 +554,7 @@ struct NativeDashboardView: View {
     /// a panel with room; a panel that resizes after it has arrived reads as a
     /// mistake.
     private var profileFillsPanel: Bool {
+        if case .app = self.store.screen { return true }
         guard case .person = self.store.screen, let person = self.store.selectedPerson else { return false }
         // Either board's figure counts: on the agent board a person can have
         // agent minutes and no time of their own, and the card still fills.
@@ -587,30 +661,20 @@ struct NativeDashboardView: View {
     /// other click did nothing. Here the press is the button's own, like a
     /// tab's, and the choices come up as a native menu on release.
     private var periodPicker: some View {
-        Button { self.presentPeriodMenu() } label: {
-            HStack(spacing: 4) {
-                PeriodLabel(period: self.store.period)
-                if self.store.metric != "active" {
-                    // A board by something other than active time says so on
-                    // the pill, with the metric's glyph, and the label width
-                    // animates the same way the period does.
-                    NativeMetricMark(metric: self.store.metric)
-                        .transition(.scale(scale: 0.5, anchor: .leading).combined(with: .opacity))
-                }
-                PeriodChevron(open: self.periodMenuOpen)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .background(Color.primary.opacity(0.11), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .animation(.snappy(duration: 0.22, extraBounce: 0), value: self.store.period)
-            .animation(.snappy(duration: 0.22, extraBounce: 0), value: self.store.metric)
-        }
-        .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion))
-        .background(NativeMenuAnchor(box: self.periodMenuAnchor))
-        .help("Choose activity period and ranking")
-        .accessibilityLabel("Activity period and ranking")
-        .accessibilityValue("\(periodLabel), by \(self.metricLabel)")
+        NativePeriodPicker(
+            period: self.store.period, metric: self.store.metric,
+            apps: self.showingAppRanking,
+            canChooseBoard: self.store.screen == .list && self.store.tab == "global",
+            appScope: self.appDirectory.context(for: self.visibleAppBundle).scope,
+            appGroups: self.store.groups.map { (id: $0.id, name: $0.name) },
+            onPeriod: self.store.setPeriod, onMetric: self.store.setMetric,
+            onApps: { apps in
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { self.store.showsApps = apps }
+            },
+            onAppScope: { self.appDirectory.setScope($0, for: self.visibleAppBundle) }
+        )
     }
 
     private var periodLabel: String {
@@ -622,11 +686,7 @@ struct NativeDashboardView: View {
     }
 
     private var metricLabel: String {
-        switch self.store.metric {
-        case "agent": "agent time"
-        case "tokens": "tokens"
-        default: "active time"
-        }
+        self.store.metric == "agent" ? "agent time" : "active time"
     }
 
     /// A profile already carries its own title: the portrait, and the name
@@ -639,7 +699,8 @@ struct NativeDashboardView: View {
     private var profileActions: some View {
         HStack(spacing: 0) {
             HStack {
-                NativeBackButton(help: "Back to \(backDestinationTitle)") { store.goBack() }
+                NativeBackButton(title: backDestinationTitle, help: "Back to \(backDestinationTitle)") { store.goBack()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -648,7 +709,8 @@ struct NativeDashboardView: View {
             // `profileName`.
 
             HStack {
-                if case let .person(id) = store.screen {
+                if case .app = store.screen { periodPicker }
+                else if case let .person(id) = store.screen {
                     if id == Defaults[.currentUserID] {
                         profileAction("Edit") {
                             SettingsWindowController.shared.show(section: .account, page: "edit")
@@ -690,22 +752,25 @@ struct NativeDashboardView: View {
     }
 
     @ViewBuilder private var people: some View {
-        if #available(macOS 26.0, *) {
-            peopleList
-                .safeAreaBar(edge: .top, spacing: 0) { header }
-                .safeAreaBar(edge: .bottom, spacing: 0) { peopleFooter }
-                .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
-                .frame(height: NativeLayout.popoverHeaderHeight + NativeLayout.peopleBodyHeight)
-        } else {
-            peopleList
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    legacyPeopleBar(edge: .top) { header }
-                }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    legacyPeopleBar(edge: .bottom) { peopleFooter }
-                }
-                .frame(height: NativeLayout.popoverHeaderHeight + NativeLayout.peopleBodyHeight)
+        Group {
+            if #available(macOS 26.0, *) {
+                peopleList
+                    .contentMargins(.bottom, NativeLayout.peopleFooterHeight, for: .scrollContent)
+                    .safeAreaBar(edge: .top, spacing: 0) { header }
+                    .scrollEdgeEffectStyle(.soft, for: .top)
+                    .scrollEdgeEffectHidden(true, for: .bottom)
+            } else {
+                peopleList
+                    .contentMargins(.bottom, NativeLayout.peopleFooterHeight, for: .scrollContent)
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        legacyPeopleBar(edge: .top) { header }
+                    }
+            }
         }
+        .frame(height: NativeLayout.popoverHeaderHeight + NativeLayout.peopleBodyHeight)
+        // Only the controls float above the list. The bottom margin belongs
+        // to the scrollable content, so it never clips rows into a footer bar.
+        .overlay(alignment: .bottom) { peopleFooter }
     }
 
     private var peopleFooter: some View {
@@ -725,7 +790,7 @@ struct NativeDashboardView: View {
             Button { SettingsWindowController.shared.show() } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 13, weight: .medium))
-                    .frame(width: 18, height: 20)
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
@@ -737,7 +802,7 @@ struct NativeDashboardView: View {
             Button { SettingsWindowController.shared.show() } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 13, weight: .medium))
-                    .frame(width: 18, height: 20)
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.bordered)
             .buttonBorderShape(.circle)
@@ -763,36 +828,17 @@ struct NativeDashboardView: View {
                     .padding(.horizontal, 5)
                     .frame(minWidth: 16, minHeight: 16)
                     .background(.white.opacity(0.92), in: Capsule())
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.firstlight)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
+        .frame(minWidth: 42, minHeight: 22)
         .animation(self.reduceMotion ? nil : SocialStore.settle, value: waiting)
 
-        // While the tray is open the button has become the tray: it shrinks
-        // into the tray's corner and comes back when the tray does.
-        let trayOpen = self.store.tray != nil
-        Group {
-            if #available(macOS 26.0, *) {
-                Button { store.openTray(.home, from: .footerInvite) } label: { label }
-                    .buttonStyle(.glassProminent)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.regular)
-                    .tint(.accentColor)
-                    .help(help)
-            } else {
-                Button { store.openTray(.home, from: .footerInvite) } label: { label }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.regular)
-                    .tint(.accentColor)
-                    .help(help)
-            }
-        }
-        .opacity(trayOpen ? 0 : 1)
-        .scaleEffect(trayOpen && !self.reduceMotion ? 0.6 : 1)
-        .allowsHitTesting(!trayOpen)
-        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.3, bounce: 0.1), value: trayOpen)
+        NativeTrayMorphButton(morph: self.inviteButtonMorph(from: .footerInvite)) {
+            store.openTray(.home, from: .footerInvite)
+        } label: { label }
+            .help(help)
     }
 
     private var peopleList: some View {
@@ -801,7 +847,7 @@ struct NativeDashboardView: View {
             // next overlap while one slides out and the other in, instead of
             // stacking one under the other for the length of the slide.
             ZStack(alignment: .top) {
-                peopleRows
+                VStack(spacing: 0) { directoryRows }
                     // Rows find their new place when a refresh reorders them,
                     // and a new friend settles into the list instead of
                     // appearing in it; never on a tab change, which is a slide.
@@ -813,7 +859,7 @@ struct NativeDashboardView: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if let me = store.peopleList.pinnedMe { pinnedMeRow(me) }
+            if !self.showingAppRanking, let me = store.peopleList.pinnedMe { pinnedMeRow(me) }
         }
     }
 
@@ -830,7 +876,7 @@ struct NativeDashboardView: View {
                  .refreshing,
                  .failedWithContent:
                 ForEach(Array(store.people.enumerated()), id: \.element.id) { index, person in
-                    let source = Self.morphKey(origin: "list", person: person)
+                    let source = self.morphKey(origin: "list", person: person)
                     Button {
                         openPerson(person, from: source)
                     } label: {
@@ -840,6 +886,10 @@ struct NativeDashboardView: View {
                             morphSource: source
                         )
                     }.buttonStyle(.plain)
+                        .contextMenu { bumpMenuItems(person) }
+                        // The pointer reaches a row before the click does.
+                        // That is most of what the profile behind it costs.
+                        .onHover { inside in if inside { store.warmPerson(person.id) } }
                     if person.id != store.people.last?.id {
                         rowDivider
                     }
@@ -891,6 +941,7 @@ struct NativeDashboardView: View {
                 title: "No friends yet",
                 actionTitle: "Invite a friend",
                 action: { self.store.openTray(.home, from: .emptyState) },
+                actionMorph: self.inviteButtonMorph(from: .emptyState),
                 minHeight: NativeLayout.peopleListHeight
             )
         default:
@@ -899,6 +950,7 @@ struct NativeDashboardView: View {
                 title: "Nobody's active yet",
                 actionTitle: "Invite someone",
                 action: { self.store.openTray(.home, from: .emptyState) },
+                actionMorph: self.inviteButtonMorph(from: .emptyState),
                 minHeight: NativeLayout.peopleListHeight
             )
         }
@@ -907,7 +959,10 @@ struct NativeDashboardView: View {
     /// Standings belong to the Leaderboard, where the order is the whole
     /// point. Friends and groups are the people you chose, not a race, so
     /// their rows stay as they were.
-    private var showsPlaces: Bool { self.store.tab == "global" }
+    private var showsPlaces: Bool {
+        if case .app = self.store.screen { return true }
+        return self.store.tab == "global"
+    }
 
     private var rowDivider: some View {
         Divider()
@@ -947,7 +1002,7 @@ struct NativeDashboardView: View {
                 Color(nsColor: .windowBackgroundColor).opacity(0.72)
                     .contentShape(Rectangle())
                     .onTapGesture { store.closeTray() }
-                    .transition(.opacity.animation(.easeOut(duration: 0.3)))
+                    .transition(.opacity.animation(.easeOut(duration: 0.14)))
                     .accessibilityHidden(true)
             }
             if let tray = store.tray {
@@ -959,33 +1014,10 @@ struct NativeDashboardView: View {
         .allowsHitTesting(self.store.tray != nil)
     }
 
-    /// The tray grows out of what was tapped and shrinks back into it. A deep
-    /// link or the status-item menu opens popover and tray together, with
-    /// nothing to grow from, so those only fade. Closing is quicker than
-    /// opening, the way a pop is quicker than a push.
+    /// The shared surface carries the geometry; its contents keep their size.
+    /// Deep links have no visible source and use the same quick fade.
     private var trayTransition: AnyTransition {
-        if self.reduceMotion {
-            return .asymmetric(
-                insertion: .opacity.animation(.easeOut(duration: 0.24)),
-                removal: .opacity.animation(.easeIn(duration: 0.2))
-            )
-        }
-        let anchor: UnitPoint
-        switch self.store.trayOrigin {
-        case .footerInvite: anchor = UnitPoint(x: 0.91, y: 0.94)
-        case .emptyState: anchor = UnitPoint(x: 0.5, y: 0.5)
-        case .none:
-            return .asymmetric(
-                insertion: .opacity.animation(.easeOut(duration: 0.24)),
-                removal: .opacity.animation(.easeIn(duration: 0.2))
-            )
-        }
-        return .asymmetric(
-            insertion: .scale(scale: 0.18, anchor: anchor)
-                .combined(with: .opacity.animation(.easeOut(duration: 0.2).delay(0.04))),
-            removal: .scale(scale: 0.18, anchor: anchor).combined(with: .opacity)
-                .animation(.easeIn(duration: 0.3))
-        )
+        .opacity.animation(.easeOut(duration: 0.12))
     }
 
     /// The one field of the flow, sized for a code you read across a room:
@@ -1011,7 +1043,7 @@ struct NativeDashboardView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(
-                    self.inviteFieldFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.09),
+                    self.inviteFieldFocused ? Color.firstlight.opacity(0.7) : Color.primary.opacity(0.09),
                     lineWidth: self.inviteFieldFocused ? 1.5 : 0.5
                 )
                 .animation(.easeOut(duration: 0.15), value: self.inviteFieldFocused)
@@ -1125,6 +1157,8 @@ struct NativeDashboardView: View {
 
     @ViewBuilder private var content: some View {
         if case let .person(id) = store.screen { personDetail(id) }
+        if case .photo = store.screen { photoDetail }
+        if case let .app(bundle) = store.screen { appDetail(bundle) }
     }
 
     private var backDestinationTitle: String {
@@ -1174,11 +1208,11 @@ struct NativeDashboardView: View {
                     .contentTransition(.numericText(value: Double(count)))
                     .animation(self.reduceMotion ? nil : .spring(duration: 0.35, bounce: 0), value: count)
             }
-            .foregroundStyle(landing ? Color.accentColor : .secondary)
+            .foregroundStyle(landing ? Color.firstlight : .secondary)
             .padding(.horizontal, 9)
             .frame(height: 22)
             .background(
-                landing ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06),
+                landing ? Color.firstlight.opacity(0.18) : Color.primary.opacity(0.06),
                 in: Capsule()
             )
             .contentShape(Capsule())
@@ -1200,6 +1234,29 @@ struct NativeDashboardView: View {
         }
     }
 
+    /// The photograph, alone on the screen under the Back button. The person
+    /// is the one the profile behind it is about: it is reached from there and
+    /// returns there.
+    private var photoDetail: some View {
+        ProfilePhotoScreen(
+            url: self.store.selectedPerson?.avatar_url,
+            name: self.store.selectedPerson?.displayName ?? "",
+            // Shared with the portrait on the profile behind it, so the
+            // picture grows out of that circle and shrinks back into it.
+            morph: self.reduceMotion
+                ? nil
+                : .init(id: self.morphID(Self.avatarMorphID), namespace: self.morph),
+            avatarSize: Self.profileAvatarSize,
+            // Pulling the picture off the panel is the same move as Back, and
+            // lands in the same place: the profile it was opened from.
+            close: { self.store.goBack() }
+        )
+        // Clear of the header: Back hangs over the content on these screens,
+        // and a button on top of a face is a button nobody finds.
+        .padding(.top, NativeLayout.popoverHeaderHeight - NativeLayout.popoverContentPadding)
+        .frame(maxWidth: .infinity)
+    }
+
     /// Where a value sits between two points, as 0 to 1. `from` is the far
     /// end because the name's distance falls as the profile scrolls up.
     private static func progress(_ value: CGFloat, from: CGFloat, to: CGFloat) -> Double {
@@ -1211,8 +1268,6 @@ struct NativeDashboardView: View {
         reduceMotion ? "joined-check-still" : "joined-check"
     }
 
-    private static func morphKey(origin: String, person: NativePerson) -> String { "\(origin)-\(person.id)" }
-
     /// Header, field and paddings: everything in a tray that is not the step.
     private static func trayFixedHeight(_ tray: SocialStore.Tray) -> CGFloat {
         44 + (tray.showsField ? 40 + 12 : 0) + 6 + 14
@@ -1220,6 +1275,26 @@ struct NativeDashboardView: View {
 
     private static func firstName(of name: String) -> String {
         name.split(separator: " ").first.map(String.init) ?? name
+    }
+
+    private func inviteButtonMorph(from origin: SocialStore.TrayOrigin) -> NativeTrayMorph {
+        NativeTrayMorph(
+            id: origin == .footerInvite ? "invite-footer" : "invite-empty",
+            namespace: self.inviteMorph,
+            isExpanded: self.store.tray != nil && self.store.trayOrigin == origin
+        )
+    }
+
+    /// The key that stands for one row, and the tab is part of it. A tab change
+    /// swaps the whole list by identity, so the list leaving and the list
+    /// arriving are both on screen for the length of the slide: a person in
+    /// both tabs would otherwise hand the same id to two rows at once, and a
+    /// matched group with two sources has no defined answer. SwiftUI picks one
+    /// frame and drops the other row's avatar into it — out of its row, often
+    /// past the edge the scroll view cuts at. Keyed by tab, the two rows are
+    /// two ids, and each list slides with its own portraits.
+    private func morphKey(origin: String, person: NativePerson) -> String {
+        "\(origin)-\(self.store.tab)-\(person.id)"
     }
 
     /// The profile's name and the row's title are one text. It rides the
@@ -1254,38 +1329,6 @@ struct NativeDashboardView: View {
             // up to it. Until then the portrait keeps the front, so the hero
             // flight from the list passes behind it as it always did.
             .zIndex(progress > 0 ? 2 : 0)
-    }
-
-    /// Shows the periods under the button and returns when one is chosen or
-    /// the menu is dismissed. The chevron stays turned for exactly that long.
-    private func presentPeriodMenu() {
-        guard let anchor = self.periodMenuAnchor.view else { return }
-        let menu = NSMenu()
-        for (title, value) in [("Day", "24h"), ("Week", "7d"), ("Month", "30d")] {
-            let item = NSMenuItem(title: title, action: #selector(NativeMenuTarget.choose(_:)), keyEquivalent: "")
-            item.target = self.periodMenuTarget
-            item.representedObject = "period:" + value
-            item.state = self.store.period == value ? .on : .off
-            menu.addItem(item)
-        }
-        // The second half of the same menu: what the board ranks by. One
-        // control for the two questions a board answers, when and by what.
-        menu.addItem(.separator())
-        for (title, value) in [("Active time", "active"), ("Agent time", "agent"), ("Tokens", "tokens")] {
-            let item = NSMenuItem(title: title, action: #selector(NativeMenuTarget.choose(_:)), keyEquivalent: "")
-            item.target = self.periodMenuTarget
-            item.representedObject = "metric:" + value
-            item.state = self.store.metric == value ? .on : .off
-            menu.addItem(item)
-        }
-        self.periodMenuTarget.onChoose = { [store] value in
-            if value.hasPrefix("metric:") { store.setMetric(String(value.dropFirst(7))) }
-            else { store.setPeriod(String(value.dropFirst(7))) }
-        }
-        self.periodMenuOpen = true
-        let below = anchor.isFlipped ? anchor.bounds.maxY + 4 : -4
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: below), in: anchor)
-        self.periodMenuOpen = false
     }
 
     /// The step a joined group ends on. The mark lands, the refreshed groups
@@ -1558,7 +1601,7 @@ struct NativeDashboardView: View {
         }
         .modifier(NativeCapsuleProminentButton())
         .controlSize(.large)
-        .tint(.accentColor)
+        .tint(.firstlight)
         .disabled(!enabled || self.store.busy)
         .opacity(enabled ? 1 : 0.45)
         .animation(.easeOut(duration: 0.25), value: enabled)
@@ -1597,11 +1640,13 @@ struct NativeDashboardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
-        }
+        .modifier(
+            NativeTraySurface(
+                morph: self.store.trayOrigin == .none ? nil :
+                    self.inviteButtonMorph(from: self.store.trayOrigin),
+                backgroundMaterial: .thick
+            )
+        )
         .shadow(color: .black.opacity(0.16), radius: 18, y: 6)
         .onChange(of: tray, initial: true) { previous, value in
             if value == .home { self.inviteFieldFocused = true }
@@ -1682,26 +1727,30 @@ struct NativeDashboardView: View {
 
     /// One button, two shapes. On the first tray it closes; deeper in it
     /// goes back. The × turns a quarter into the ‹ instead of being swapped.
-    private func trayDismissButton(back: Bool) -> some View {
-        Button { store.trayBack() } label: {
-            ZStack {
-                Image(systemName: "xmark")
-                    .rotationEffect(.degrees(back ? 90 : 0))
-                    .opacity(back ? 0 : 1)
-                Image(systemName: "chevron.left")
-                    .rotationEffect(.degrees(back ? 0 : -90))
-                    .opacity(back ? 1 : 0)
+    @ViewBuilder private func trayDismissButton(back: Bool) -> some View {
+        if back {
+            NativeBackButton(title: self.trayTitle(self.store.previousTray ?? .home), help: "Back") { store.trayBack() }
+        } else {
+            Button { store.trayBack() } label: {
+                ZStack {
+                    Image(systemName: "xmark")
+                        .rotationEffect(.degrees(back ? 90 : 0))
+                        .opacity(back ? 0 : 1)
+                    Image(systemName: "chevron.left")
+                        .rotationEffect(.degrees(back ? 0 : -90))
+                        .opacity(back ? 1 : 0)
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 18, height: 22)
             }
-            .font(.system(size: 12, weight: .semibold))
-            .frame(width: 18, height: 22)
+            // The same round glass control as Back in a profile and the gear in
+            // the footer, so the tray's one button belongs to the same family.
+            .modifier(NativeRoundGlassButton())
+            .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.3, bounce: 0.15), value: back)
+            .help(back ? "Back" : "Close")
+            .accessibilityLabel(back ? "Back" : "Close")
+            .keyboardShortcut("[", modifiers: .command)
         }
-        // The same round glass control as Back in a profile and the gear in
-        // the footer, so the tray's one button belongs to the same family.
-        .modifier(NativeRoundGlassButton())
-        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.3, bounce: 0.15), value: back)
-        .help(back ? "Back" : "Close")
-        .accessibilityLabel(back ? "Back" : "Close")
-        .keyboardShortcut("[", modifiers: .command)
     }
 
     private func trayTitle(_ tray: SocialStore.Tray) -> String {
@@ -1786,6 +1835,12 @@ struct NativeDashboardView: View {
     /// The shared id for the profile side, or for the one row that was tapped.
     /// Every other row gets an id of its own that matches nothing, and with
     /// reduced motion nothing matches at all, leaving the plain cross-fade.
+    /// A row shares geometry with the profile and with nothing else — not with
+    /// the same person's row in another tab. The key carries the tab, so the
+    /// two are two ids and neither can claim the other's frame. People are not
+    /// inherited across a tab change on purpose: the lists slide opposite ways,
+    /// and a portrait that stayed put while its row left would be saying the
+    /// person is in both places at once.
     private func morphID(_ id: String, row: String? = nil) -> String {
         if self.reduceMotion { return "still-\(id)-\(row ?? "profile")" }
         if let row, self.morphSource != row { return "\(id)-\(row)" }
@@ -1794,7 +1849,7 @@ struct NativeDashboardView: View {
 
     /// The caller's own place in a ranking they have not scrolled down to yet.
     private func pinnedMeRow(_ person: NativePerson) -> some View {
-        let source = Self.morphKey(origin: "pinned", person: person)
+        let source = self.morphKey(origin: "pinned", person: person)
         return VStack(spacing: 0) {
             Divider().opacity(0.55)
             Button {
@@ -1806,6 +1861,7 @@ struct NativeDashboardView: View {
                     morphSource: source
                 )
             }.buttonStyle(.plain)
+                .onHover { inside in if inside { store.warmPerson(person.id) } }
         }
         .background(Color.primary.opacity(0.035))
     }
@@ -1814,6 +1870,8 @@ struct NativeDashboardView: View {
     /// profile avatar knows where to fly from and, on Back, where to return.
     private func openPerson(_ person: NativePerson, from source: String) {
         self.morphSource = source
+        if let current = self.store.selectedPerson { self.store.profilePeople[current.id] = current }
+        self.store.profilePeople[person.id] = person
         self.store.selectedPerson = person
         self.store.open(.person(person.id))
     }
@@ -1851,6 +1909,21 @@ struct NativeDashboardView: View {
         }
     }
 
+    @ViewBuilder private func bumpMenuItems(_ person: NativePerson) -> some View {
+        if person.id != Defaults[.currentUserID], person.public_apps_only != true,
+           self.store.directFriendIDs.contains(person.id) || self.store.tab != "global"
+        {
+            Menu("Bump") {
+                ForEach(BumpEffect.allCases) { effect in
+                    Button(effect.title) {
+                        store.open(.person(person.id))
+                        BumpEffects.shared.send(effect, to: person, systemReduced: reduceMotion)
+                    }
+                }
+            }
+        }
+    }
+
     private func removeFriend(_ person: NativePerson, id: String) {
         self.confirm("Remove \(person.displayName) from your friends?") {
             store.run("Removing friend…", key: "remove-friend-\(id)") {
@@ -1864,8 +1937,12 @@ struct NativeDashboardView: View {
 
     private func screenTitle(for screen: SocialStore.Screen) -> String {
         switch screen {
-        case .list: "Friends"
-        case .person: "Profile"
+        case .list:
+            self.store.tab == "global" ? (self.store.showsApps ? "Top apps" : "Leaderboard") :
+                self.store.groups.first(where: { $0.id == self.store.tab })?.name ?? "Friends"
+        case let .person(id): self.store.profilePeople[id]?.displayName ?? "Profile"
+        case .photo: "Photo"
+        case let .app(bundle): self.appDirectory.cards[bundle]?.name ?? "App"
         }
     }
 
@@ -1996,149 +2073,113 @@ struct NativeDashboardView: View {
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
+    /// Two text lines, with the duration centred beside the whole block.
+    ///
+    /// The local clock expires live data even when the next refresh fails.
+    /// It runs every five seconds, not every second: everything it decides —
+    /// whether somebody is here, which app is in front, how many agents are
+    /// writing — is good for two minutes from the moment it was seen, so
+    /// five-second steps put the edge within five seconds of its true place
+    /// and cost a fifth of the work. Measured over six seconds on a list of
+    /// twenty-five rows: 175 row bodies on a second hand, 50 on this one.
+    /// (`.explicit`, which would strike only on the three dates a row can
+    /// change on, fires once and then stops — measured too, so the row keeps
+    /// a periodic clock.)
     private func personRow(_ person: NativePerson, place: Int?, morphSource: String) -> some View {
-        let location = self.profileText(person.location)
-        let bio = self.profileText(person.bio)
-        return HStack(spacing: Self.rowPlaceSpacing) {
-            if self.showsPlaces { self.placeColumn(place) }
-            HStack(spacing: Self.rowAvatarSpacing) {
-                // Only the tapped row shares the profile's id. A non-source view
-                // with a shared id does not stay put: it takes the source's frame,
-                // so every other avatar would pile onto the tapped one.
-                FirstlightAvatar(
-                    url: person.avatar_url,
-                    name: person.displayName,
-                    size: Self.rowAvatarSize,
-                    showsOnlineIndicator: person.id == Defaults[.currentUserID] || person.isActiveNow,
-                    morph: .init(id: self.morphID(Self.avatarMorphID, row: morphSource), namespace: self.morph)
-                )
-                HStack(alignment: .center, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
+        TimelineView(.periodic(from: .now, by: 5)) { context in
+            HStack(spacing: Self.rowPlaceSpacing) {
+                if self.showsPlaces { self.placeColumn(place) }
+                HStack(spacing: Self.rowAvatarSpacing) {
+                    FirstlightAvatar(
+                        url: person.avatar_url,
+                        name: person.displayName,
+                        size: Self.rowAvatarSize,
+                        presence: person.isActive(at: context.date) ? .online : .away,
+                        morph: .init(id: self.morphID(Self.avatarMorphID, row: morphSource), namespace: self.morph)
+                    )
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 7) {
+                            Text(person.displayName)
+                                .font(.system(size: 13, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .layoutPriority(1)
+                                .help(person.displayName)
                                 .matchedGeometryEffect(
                                     id: self.morphID(Self.nameMorphID, row: morphSource),
-                                    in: self.morph,
-                                    properties: .position
+                                    in: self.morph, properties: .position
                                 )
-                            if person
-                                .id ==
-                                Defaults[.currentUserID]
-                            {
-                                Text("You").foregroundStyle(.tertiary).font(.system(size: 13))
+                            if person.id == Defaults[.currentUserID] {
+                                Text("You")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                                    .fixedSize()
                             }
-                        }
-                        if location != nil || bio != nil {
-                            // The location is its own text so it can travel to
-                            // the profile; the bio, which the profile shows
-                            // elsewhere, is what gives way when the row is tight.
-                            HStack(spacing: 3) {
-                                if let location {
-                                    NativeLocationIcon().foregroundStyle(.secondary)
+                            if let location = self.profileText(person.location) {
+                                HStack(spacing: 3) {
+                                    NativeLocationIcon().frame(width: 9)
                                     Text(location)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
                                         .lineLimit(1)
-                                        .layoutPriority(1)
+                                        .truncationMode(.tail)
                                         .matchedGeometryEffect(
                                             id: self.morphID(Self.locationMorphID, row: morphSource),
-                                            in: self.morph,
-                                            properties: .position
+                                            in: self.morph, properties: .position
                                         )
                                 }
-                                if let bio {
-                                    Text(location == nil ? bio : "· \(bio)")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .multilineTextAlignment(.leading)
-                                }
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .frame(minWidth: 28, maxWidth: 112, alignment: .leading)
+                                .help(location)
                             }
+                            Spacer(minLength: 0)
                         }
+                        .frame(height: 17, alignment: .leading)
+                        // Room for the count's capsule, which stands a couple
+                        // of points taller than the words beside it. Still
+                        // inside the portrait's 40, so the row keeps its 60.
+                        self.personStatusLine(person, at: context.date)
+                            .frame(height: 18, alignment: .leading)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Group {
-                            // On a board by tokens the figure is a count; on
-                            // the others a duration, of the person's own time
-                            // or of their agents'.
-                            if self.store.metric == "tokens" {
-                                Text(TokenLabel.compact(person.score ?? 0))
-                                    .monospacedDigit()
-                                    .contentTransition(.numericText())
-                            } else {
-                                AnimatedDuration(
-                                    minutes: self.store.metric == "agent" ? person.score ?? 0 : person
-                                        .active_minutes ?? 0
-                                )
-                            }
-                        }
-                        .foregroundStyle(.secondary).font(.system(size: 12))
-                        .fixedSize()
-                        let activeApp = person.isActiveNow ? person.active_app : nil
-                        let agent = person.isAgentWorkingNow ? person.agent : nil
-                        if activeApp != nil || agent != nil {
-                            // The list is looked at often, so an agent at work
-                            // is only a small mark beside the running app: it
-                            // grows out of the app icon's side and fades when
-                            // the agent goes quiet. Numbers wait for the profile.
-                            // The Claude app with Claude Code inside it is one
-                            // thing, not two: then the icon stands for both and
-                            // no second mark is drawn beside it. The icon itself
-                            // is never dimmed in and out: a pulsing logo in a
-                            // list pulls the eye off whatever is being read.
-                            let sameFamily = agent != nil && activeApp
-                                .flatMap { NativeAgentToolLabel.tool(forApp: $0.bundle_identifier, name: $0.name) } ==
-                                agent?.tool
-                            HStack(spacing: 5) {
-                                if let agent, !sameFamily {
-                                    NativeAgentIndicator(tool: agent.tool, size: 11)
-                                        .matchedGeometryEffect(
-                                            id: self.morphID(Self.agentMorphID, row: morphSource),
-                                            in: self.morph,
-                                            properties: .position
-                                        )
-                                        .transition(.scale(scale: 0.4, anchor: .trailing).combined(with: .opacity))
-                                        .help("\(NativeAgentToolLabel.name(agent.tool)) is working")
-                                }
-                                if let activeApp {
-                                    NativeTrackedAppIcon(
-                                        url: activeApp.icon_url,
-                                        bundleIdentifier: activeApp.bundle_identifier,
-                                        size: 16
-                                    )
-                                    .matchedGeometryEffect(
-                                        id: sameFamily ? self
-                                            .morphID(Self.agentMorphID, row: morphSource) : "app-\(morphSource)",
-                                        in: self.morph,
-                                        properties: .position
-                                    )
-                                    .help(
-                                        sameFamily ? "\(NativeAgentToolLabel.name(agent!.tool)) is working" :
-                                            activeApp.name
-                                    )
-                                    Text(activeApp.name)
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
-                                        .help(activeApp.name)
-                                }
-                            }
-                            .frame(maxWidth: 124, alignment: .trailing)
-                            .animation(
-                                self.reduceMotion ? nil : .snappy(duration: 0.3, extraBounce: 0),
-                                value: agent?.tool
-                            )
-                        }
-                    }
+                    AnimatedDuration(
+                        minutes: !self.showingAppRanking && self.store.metric == "agent" ? person.score ?? 0 : person
+                            .active_minutes ?? 0
+                    )
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .fixedSize()
+                    .frame(minWidth: 70, alignment: .trailing)
                 }
                 .frame(height: Self.rowAvatarSize)
             }
+            .padding(.horizontal, Self.rowHorizontalPadding)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, Self.rowHorizontalPadding).padding(.vertical, 10)
-        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder private func personStatusLine(_ person: NativePerson, at now: Date) -> some View {
+        let appName = self.profileText(person.activeApp(at: now)?.name)
+        let live = person.liveAgents(at: now)
+
+        // Presence alone may have no activity to show; keep the bio in that case.
+        if appName != nil || live != nil {
+            // The same phrase the profile carries, from the same view.
+            NativePresenceLine(appName: appName, live: live)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let bio = self.profileText(person.bio) {
+            Text(bio)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(bio)
+        } else {
+            Color.clear.frame(maxWidth: .infinity)
+        }
     }
 
     /// A place every row carries, whether or not the person did anything this
@@ -2173,9 +2214,8 @@ struct NativeDashboardView: View {
         return LeaderboardPlace.summary(place: self.store.place(of: id), total: self.store.peopleList.total)
     }
 
-    // Location and bio are the only profile text the list carries. Social links
-    // stay on the person's profile. An unfilled profile gets no second line at
-    // all, and the single title stays on the avatar's centre either way.
+    // Trim optional profile text before reserving space in the shared list row.
+    // Social links stay on the person's profile.
     private func profileText(_ value: String?) -> String? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
         return value
@@ -2250,10 +2290,12 @@ struct NativeDashboardView: View {
                 FirstlightAvatar(
                     url: person.avatar_url,
                     name: person.displayName,
-                    size: 76,
-                    showsOnlineIndicator: id == Defaults[.currentUserID] || person.isActiveNow,
-                    morph: .init(id: self.morphID(Self.avatarMorphID), namespace: self.morph)
+                    size: Self.profileAvatarSize,
+                    presence: id == Defaults[.currentUserID] || person.isActiveNow ? .online : .away,
+                    morph: .init(id: self.morphID(Self.avatarMorphID), namespace: self.morph),
+                    opensPhoto: { self.store.open(.photo(id)) }
                 )
+                .bumpAvatarResponse()
                 .zIndex(1)
 
                 // The name travels from the row too. Position only: the two
@@ -2263,8 +2305,11 @@ struct NativeDashboardView: View {
                 self.profileName(person)
 
                 if let location = person.location, !location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    // Travels with the name, from the row's second line.
-                    NativeLocationLabel(text: location)
+                    // Travels with the name, from the row's second line. On
+                    // the profile it also carries their clock: the week below
+                    // is cut at their midnight, so the reader can see which
+                    // midnight that is.
+                    NativeLocationLabel(text: location, timeZone: self.store.timeZone(for: person.id))
                         .matchedGeometryEffect(
                             id: self.morphID(Self.locationMorphID),
                             in: self.morph,
@@ -2311,116 +2356,107 @@ struct NativeDashboardView: View {
 
             // What is happening this minute, in one line of words: the app in
             // front, and the agent writing, with how long it has been at it.
-            self.nowLine(person)
+            if person.public_apps_only != true { self.nowLine(person) }
 
             // One surface for the whole picture: the two numbers, the chart
             // they both read, and the shifts. Nothing here is pressed; the
             // period control in the header is the only zoom.
-            let ownTime = self.store.activity?.active_minutes ?? person.active_minutes
-            let hasAgents = self.store.agentSummary?.has_data ?? false
-            Group {
-                if let summary = store.agentSummary, summary.has_data {
-                    AgentsPanel(
-                        summary: summary,
-                        period: self.store.period,
-                        live: summary.now,
-                        ownTime: ownTime,
-                        place: self.placeSummary(for: id),
-                        hovered: self.$agentsHovered
-                    )
-                    // The card grows out of the lone time tile that stood
-                    // here a moment ago, rather than replacing it: the time
-                    // stays put and the rest of the surface opens under it.
-                    .transition(.asymmetric(
-                        insertion: .modifier(
-                            active: AgentsReveal(progress: 1),
-                            identity: AgentsReveal(progress: 0)
-                        ).combined(with: .opacity),
-                        removal: .opacity
-                    ))
-                } else {
-                    // Nobody's agents, so the person's own time stands alone.
-                    self.profileTile(title: "Active time", subtitle: self.placeSummary(for: id)) {
-                        if let minutes = ownTime {
-                            AnimatedDuration(minutes: minutes).fixedSize()
-                        } else if store.screenLoading {
-                            NativeSkeletonShape(width: 52, height: 20, radius: 5)
-                        } else {
-                            Text("—").foregroundStyle(.secondary)
-                        }
-                    }
-                    .transition(.opacity)
-                }
+            if person.public_apps_only != true {
+                let ownTime = self.store.activity?.active_minutes ?? person.active_minutes
+                AgentsPanel(
+                    summary: self.store.agentSummary,
+                    period: self.store.period,
+                    ownTime: ownTime,
+                    loadingOwnTime: self.store.screenLoading,
+                    hovered: self.$agentsHovered
+                )
+                .bumpCardResponse()
             }
-            .animation(self.reduceMotion ? nil : SocialStore.settle, value: hasAgents)
 
             if self.isLoadingProfileActivity {
                 NativeTrackedAppsSkeleton()
             }
-            if let topApps = store.activity?.top_apps, !topApps.isEmpty {
+            // Named apps, or only how much of them there was. A person at
+            // the middle level is not missing this section, so it keeps its
+            // heading and answers in one line instead of a list.
+            let apps = self.store.activity?.apps
+            if let topApps = store.activity?.top_apps, !topApps.isEmpty, apps?.isOff != true {
                 self.sectionHeading("Apps").padding(.top, 4)
                 VStack(spacing: 0) {
                     ForEach(Array(topApps.prefix(5).enumerated()), id: \.element.id) { index, app in
-                        trackedAppRow(app)
+                        Button { self.openApp(NativeAppCard(activity: app), from: person) } label: {
+                            trackedAppRow(app, morphOrigin: person.id)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                         if index < min(topApps.count, 5) - 1 { Divider().padding(.leading, 38).opacity(0.5) }
                     }
                 }
+            } else if let apps, !apps.isDetailed, !apps.isOff, apps.minutes > 0 {
+                self.sectionHeading("Apps").padding(.top, 4)
+                Text(
+                    apps.app_count.map { "\(apps.timeLabel) across \($0) app\($0 == 1 ? "" : "s")" }
+                        ?? apps.timeLabel
+                )
+                .foregroundStyle(.secondary)
+            }
+            if person.id != Defaults[.currentUserID], person.public_apps_only != true {
+                Color.clear.frame(height: 46)
             }
         }
     }
 
-    /// The line under the name that says what is happening right now. It is
-    /// words, like a status in Family, so a change reads as a change of
-    /// state rather than of layout: "In Cursor" stays while "Codex 1h 12m"
-    /// arrives beside it, and the glyph is the same one that was in the row.
+    /// The line under the name, in the words the row used: the app in front,
+    /// and the agents writing with how many of them there are. The row this
+    /// profile was opened from says exactly this, so the portrait lands over
+    /// a line the eye has already read.
+    ///
+    /// Its own clock, so the count goes at two minutes whether or not the
+    /// next refresh lands. The line's presence is settled once per render:
+    /// the last live minute to expire under the pointer leaves the profile
+    /// a gap until the next one, which is cheaper than a second ticking
+    /// through the chart and the shifts below it.
     @ViewBuilder private func nowLine(_ person: NativePerson) -> some View {
-        let appName = self.store.activity?.active_app?.name ?? (person.isActiveNow ? person.active_app?.name : nil)
-        let appIcon = self.store.activity?.active_app?.icon_url ?? person.active_app?.icon_url
-        let appBundle = self.store.activity?.active_app?.bundle_identifier ?? person.active_app?.bundle_identifier
-        let now = self.store.agentSummary?.now
-        let liveTool = now?.tool ?? (person.isAgentWorkingNow ? person.agent?.tool : nil)
-        // The Claude app with Claude Code in it, ChatGPT with Codex: one
-        // family, so the line names the agent once and lets the app go.
-        let sameFamily = liveTool != nil && NativeAgentToolLabel.tool(forApp: appBundle, name: appName) == liveTool
-        if appName != nil || liveTool != nil {
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                HStack(spacing: 6) {
-                    if let appName, !sameFamily {
-                        NativeTrackedAppIcon(url: appIcon, bundleIdentifier: appBundle, size: 14)
-                        Text("In \(appName)").lineLimit(1)
-                    }
-                    if let liveTool {
-                        if appName != nil, !sameFamily { Text("·").foregroundStyle(.tertiary) }
-                        if sameFamily {
-                            // The same icon the row showed, carried over. The
-                            // words beside it already say the agent is at work.
-                            NativeTrackedAppIcon(url: appIcon, bundleIdentifier: appBundle, size: 14)
-                                .matchedGeometryEffect(
-                                    id: self.morphID(Self.agentMorphID),
-                                    in: self.morph,
-                                    properties: .position
-                                )
-                        } else {
-                            NativeAgentIndicator(tool: liveTool, size: 12)
-                                .matchedGeometryEffect(
-                                    id: self.morphID(Self.agentMorphID),
-                                    in: self.morph,
-                                    properties: .position
-                                )
-                        }
-                        Text(NativeAgentToolLabel.name(liveTool)).lineLimit(1)
-                        if let now, let started = NativeAgentTime.date(now.started_at) {
-                            let elapsed = max(now.minutes, context.date.timeIntervalSince(started) / 60)
-                            AnimatedDuration(minutes: elapsed).fixedSize()
-                        }
-                    }
-                }
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+        let opened = Date()
+        if self.presentApp(person, at: opened) != nil || self.liveAgents(person, at: opened) != nil {
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                NativePresenceLine(
+                    appName: self.presentApp(person, at: context.date),
+                    live: self.liveAgents(person, at: context.date),
+                    size: 12
+                )
                 .frame(maxWidth: .infinity)
                 .padding(.top, 2)
             }
         }
+    }
+
+    /// The app somebody is in. The person's own record carries the moment it
+    /// was seen and expires with the rest of the line; the profile's own
+    /// request answers for a list that sends no apps at all — the global
+    /// board — and is only believed while the person is still here.
+    private func presentApp(_ person: NativePerson, at moment: Date) -> String? {
+        if let app = person.activeApp(at: moment) { return app.name }
+        guard person.isActive(at: moment) || person.id == Defaults[.currentUserID] else { return nil }
+        return self.store.activity?.active_app?.name
+    }
+
+    /// The minute's agents. The person record carries the count the list
+    /// drew; the summary answers for a profile reached without one — the
+    /// global board sends no live data — and for a minute recorded after the
+    /// list was built. Both are now cut by the same server helper from the
+    /// same rows, so whichever answers, the profile says the number the row
+    /// said. It used to build one from `now.sessions`, which counts the tool
+    /// that wrote last and not the minute: two agents in the list became one
+    /// on the profile.
+    private func liveAgents(_ person: NativePerson, at moment: Date) -> NativeAgentLive? {
+        if let live = person.liveAgents(at: moment) { return live }
+        guard let live = self.store.agentSummary?.agent_live, live.session_count > 0,
+              let stamp = NativeAgentTime.date(live.observed_at)
+        else { return nil }
+        // The same two minutes a row's own count is good for.
+        let age = moment.timeIntervalSince(stamp)
+        return age >= NativePerson.clockSlack && age <= NativePerson.freshness ? live : nil
     }
 
     /// A number with its name, in the profile's card tone. `glyph` names a
@@ -2465,7 +2501,10 @@ struct NativeDashboardView: View {
                 .background(Color.primary.opacity(0.055), in: Capsule())
                 .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            // A link is pressed the way a group tab is pressed: the fill firms
+            // up under the pointer and the pill gives a little on mouse down.
+            // The same style, so the two never drift apart.
+            .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion, shape: AnyShape(Capsule())))
             .help(label)
             .accessibilityLabel("Open \(label)")
         }
@@ -2500,11 +2539,27 @@ struct NativeDashboardView: View {
         }
     }
 
-    private func trackedAppRow(_ app: NativeAppActivity, showsActiveState: Bool = false) -> some View {
+    private func trackedAppRow(
+        _ app: NativeAppActivity,
+        morphOrigin: String,
+        showsActiveState: Bool = false
+    ) -> some View {
         HStack(spacing: 10) {
             NativeTrackedAppIcon(url: app.icon_url, bundleIdentifier: app.bundle_identifier, size: 28)
+                .matchedGeometryEffect(
+                    id: self.appMorphID(app.id, origin: morphOrigin),
+                    in: self.appMorph
+                )
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    .matchedGeometryEffect(
+                        id: self.appMorphID(
+                            app.id,
+                            element: "name",
+                            origin: morphOrigin
+                        ),
+                        in: self.appMorph, properties: .position
+                    )
                 if showsActiveState {
                     HStack(spacing: 5) {
                         Circle().fill(Color.green).frame(width: 6, height: 6)
@@ -2643,7 +2698,7 @@ struct NativeDashboardView: View {
                         loadingTitle: loadingTitle,
                         isLoading: store.isRunning(key)
                     )
-                }.buttonStyle(.borderedProminent)
+                }.buttonStyle(.borderedProminent).tint(.firstlight)
             } else {
                 Button(action: action) {
                     NativeAsyncButtonLabel(
@@ -2872,14 +2927,14 @@ private struct TrayCircleButtonStyle: ViewModifier {
         if #available(macOS 26.0, *) {
             if self.prominent {
                 content.buttonStyle(.glassProminent).buttonBorderShape(.circle).controlSize(.regular)
-                    .tint(.accentColor)
+                    .tint(.firstlight)
             } else {
                 content.buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.regular)
             }
         } else {
             if self.prominent {
                 content.buttonStyle(.borderedProminent).buttonBorderShape(.circle).controlSize(.regular)
-                    .tint(.accentColor)
+                    .tint(.firstlight)
             } else {
                 content.buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.regular)
             }
@@ -2903,9 +2958,9 @@ private struct NativeRoundGlassButton: ViewModifier {
 private struct NativeCapsuleProminentButton: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
-            content.buttonStyle(.glassProminent).buttonBorderShape(.capsule)
+            content.buttonStyle(.glassProminent).buttonBorderShape(.capsule).tint(.firstlight)
         } else {
-            content.buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+            content.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).tint(.firstlight)
         }
     }
 }
@@ -3031,97 +3086,230 @@ struct FirstlightAvatar: View {
         let namespace: Namespace.ID
     }
 
+    /// What the portrait says about the person around it: whether they are at
+    /// the Mac. Presence belongs to the whole person, so it rings the whole
+    /// portrait. What their agents are doing is said in words beside the face
+    /// — see `NativePresenceLine` — and never marked on it twice.
+    enum Presence: Equatable {
+        /// Not a presence surface at all: a form, a member list, an invite.
+        case unknown
+        case away
+        case online
+    }
+
     let url: String?
     let name: String
     var size: CGFloat = 44
-    var showsOnlineIndicator = false
+    var presence: Presence = .unknown
     var morph: Morph?
+    /// Tapping opens the photograph on its own screen, where it is set.
+    var opensPhoto: (() -> Void)?
 
     var body: some View {
-        LazyImage(url: url.flatMap(URL.init(string:))) { state in
-            // The circle decides how big the portrait is, not the photo's own
-            // proportions. scaledToFill alone hands back a frame in the photo's
-            // aspect ratio, wider or taller than the one offered, and the mask
-            // is drawn in that frame: a portrait photo then turns into an
-            // oversized ellipse hanging out of the row. Color.clear takes the
-            // offered size, the photo fills it, and the overflow is cut.
-            if let image = state.image {
-                Color.clear.overlay { image.resizable().scaledToFill() }.clipped()
-            } else {
-                ZStack {
-                    Color.primary.opacity(0.08); Text(String(name.prefix(1)).uppercased())
-                        .font(.system(size: size * 0.35, weight: .medium))
+        self.portrait
+            .mask { Circle() }
+            .overlay {
+                // A ring says "here" about the whole person, where a dot in the
+                // corner would be one more object in the row. Outside the frame,
+                // so the face keeps its diameter whether or not anyone is at the
+                // Mac.
+                if self.presence == .online {
+                    FirstlightPresenceRing(
+                        ringWidth: self.presenceRingWidth,
+                        ringGap: self.presenceRingGap
+                    )
+                    .fill(Color.green)
+                    .transition(.opacity)
                 }
             }
-        }
-        .mask {
-            FirstlightAvatarMask(
-                cutsOutOnlineIndicator: showsOnlineIndicator,
-                indicatorSize: onlineIndicatorSize,
-                indicatorInset: onlineIndicatorInset,
-                indicatorGap: onlineIndicatorGap
-            )
-            .fill()
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if showsOnlineIndicator {
-                Circle().fill(Color.green)
-                    .frame(width: onlineIndicatorSize, height: onlineIndicatorSize)
-                    .offset(x: -onlineIndicatorInset, y: -onlineIndicatorInset)
-            }
-        }
-        // Always applied so the view keeps one identity; without a morph the
-        // avatar is alone in its own namespace and matches nothing.
-        .matchedGeometryEffect(id: morph?.id ?? "avatar", in: morph?.namespace ?? unmatched)
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
+            .animation(self.reduceMotion ? nil : .easeInOut(duration: 0.24), value: self.presence)
+            // Always applied so the view keeps one identity; without a morph the
+            // avatar is alone in its own namespace and matches nothing.
+            .matchedGeometryEffect(id: morph?.id ?? "avatar", in: morph?.namespace ?? unmatched)
+            .frame(width: size, height: size)
+            // A portrait says nothing a screen reader needs, until it is a
+            // photograph that can be opened.
+            .accessibilityElement(children: .ignore)
+            .accessibilityHidden(self.opensPhoto == nil)
+            .accessibilityLabel(self.accessibilityText)
+            .opensPhoto(url: self.url, action: self.opensPhoto)
     }
 
     // MARK: Private
 
     @Namespace private var unmatched
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The indicator is a badge, not a part of the portrait: it needs a floor to stay
-    /// readable on small avatars and a ceiling so it does not turn into an object of its
-    /// own on large ones. Whole points keep the edge crisp on Retina.
-    private var onlineIndicatorSize: CGFloat {
-        min(16, max(8, (8 + (self.size - 24) * 6 / 52).rounded()))
+    /// The face, drawn from memory when it is already there and loaded when it
+    /// is not. `LazyImage` asks for its picture from `onAppear`, which is a
+    /// frame after the first one it draws: a list arriving on a tab change
+    /// builds every row anew, so every portrait in it spends that frame as a
+    /// placeholder and the rest of the change catching up — a circle filling in
+    /// while the row is already sliding. The memory cache answers inside `body`,
+    /// so a face that has been seen is on the first frame, and only a face that
+    /// has not is loaded.
+    @ViewBuilder private var portrait: some View {
+        let link = self.url.flatMap(URL.init(string:))
+        if let link, let cached = ImagePipeline.shared.cache[link]?.image {
+            self.fill(Image(nsImage: cached))
+        } else {
+            LazyImage(url: link) { state in
+                if let image = state.image { self.fill(image) } else { self.initial }
+            }
+        }
     }
 
-    private var onlineIndicatorGap: CGFloat { self.size <= 32 ? 1.5 : 2 }
+    private var initial: some View {
+        ZStack {
+            Color.primary.opacity(0.08)
+            Text(String(self.name.prefix(1)).uppercased())
+                .font(.system(size: self.size * 0.35, weight: .medium))
+        }
+    }
 
-    /// Holds the indicator centre on the diagonal at 0.315 x size from the avatar centre,
-    /// whatever the diameter, so the badge stays put when its size changes.
-    private var onlineIndicatorInset: CGFloat {
-        max(0, self.size * 0.1854 - self.onlineIndicatorSize / 2)
+    /// The portrait itself has nothing a screen reader needs, until it is a
+    /// photograph that can be opened.
+    private var accessibilityText: String {
+        self.opensPhoto == nil ? "" : "Photo of \(self.name)"
+    }
+
+    /// The ring sits outside the portrait with a hairline of room, so it reads as
+    /// something around the person rather than a border drawn on the photo.
+    private var presenceRingWidth: CGFloat { self.size <= 48 ? 1.5 : 2 }
+
+    private var presenceRingGap: CGFloat { self.size <= 48 ? 2 : 3 }
+
+    /// The circle decides how big the portrait is, not the photo's own
+    /// proportions. scaledToFill alone hands back a frame in the photo's
+    /// aspect ratio, wider or taller than the one offered, and the mask
+    /// is drawn in that frame: a portrait photo then turns into an
+    /// oversized ellipse hanging out of the row. Color.clear takes the
+    /// offered size, the photo fills it, and the overflow is cut.
+    private func fill(_ image: Image) -> some View {
+        Color.clear.overlay { image.resizable().scaledToFill() }.clipped()
     }
 }
 
-private struct FirstlightAvatarMask: Shape {
-    let cutsOutOnlineIndicator: Bool
-    let indicatorSize: CGFloat
-    let indicatorInset: CGFloat
-    let indicatorGap: CGFloat
+/// The presence ring, as one filled ring rather than a stroked circle: it is
+/// drawn outside the portrait's own rect, which a stroke on the frame cannot
+/// reach.
+private struct FirstlightPresenceRing: Shape {
+    let ringWidth: CGFloat
+    let ringGap: CGFloat
 
     func path(in rect: CGRect) -> Path {
-        let avatar = Path(ellipseIn: rect)
-        guard self.cutsOutOnlineIndicator else { return avatar }
-
-        let cutoutRadius = self.indicatorSize / 2 + self.indicatorGap
-        let indicatorCenter = CGPoint(
-            x: rect.maxX - self.indicatorInset - self.indicatorSize / 2,
-            y: rect.maxY - self.indicatorInset - self.indicatorSize / 2
-        )
-        // Subtract instead of an even-odd fill. The cutout reaches past the edge of
-        // the avatar, and even-odd turns that overhang into an opaque region: the
-        // corner of the photo would show up outside the circle, next to the badge.
-        return avatar.subtracting(Path(ellipseIn: CGRect(
-            x: indicatorCenter.x - cutoutRadius,
-            y: indicatorCenter.y - cutoutRadius,
-            width: cutoutRadius * 2,
-            height: cutoutRadius * 2
-        )))
+        // Drawn in the portrait's own rect and allowed to run outside it, so
+        // the face keeps its diameter.
+        let outer = rect.insetBy(dx: -(self.ringWidth + self.ringGap), dy: -(self.ringWidth + self.ringGap))
+        return Path(ellipseIn: outer)
+            .subtracting(Path(ellipseIn: outer.insetBy(dx: self.ringWidth, dy: self.ringWidth)))
     }
+}
+
+/// The one line that says what a person is doing this minute: the app they
+/// are in, and the agents writing. A list row and a profile draw it from
+/// here, so the row somebody taps and the profile it opens say the same
+/// thing about the same minute. With neither half the line is nothing at
+/// all — no reserved gap.
+///
+/// The agents take a capsule of their own, and it carries no colour. The
+/// panel is a HUD material over whatever window happens to be behind it, so
+/// its grey is not ours to know: over a bright window it lands mid-grey, and
+/// a coloured wash on that is the same lightness as the coloured text
+/// standing on it — blue on blue, which is what a tinted badge turned out to
+/// be. A neutral plate is the one ground that cannot clash, because it is cut
+/// from the panel's own foreground colour: it lifts whatever it sits on, and
+/// the text on it is the plain text colour, which is always readable there.
+///
+/// So the count reads as a small plaque rather than a light: the shift of
+/// tone marks it out, the weight of the figure holds it, and the colour of
+/// agents is left to the chart further down the profile. The app's name stays
+/// plain text beside it and needs no separator — the capsule's edge is the
+/// separator.
+private struct NativePresenceLine: View {
+    // MARK: Internal
+
+    /// The app in front. The caller has already decided it is recent.
+    let appName: String?
+    /// The agents in the last recorded minute, likewise already checked.
+    let live: NativeAgentLive?
+    /// The row's size. A profile draws the same line one point larger.
+    var size: CGFloat = 11
+
+    var body: some View {
+        HStack(spacing: 7) {
+            if let appName {
+                Text("In \(appName)")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(appName)
+            }
+            if let live {
+                HStack(spacing: 5) {
+                    // Two tools at most stand beside the one count; a longer
+                    // list, and a person who shares no names, get the neutral
+                    // mark instead and keep the number. The split is in `help`.
+                    HStack(spacing: 3) {
+                        if let tools = live.tools, !tools.isEmpty, tools.count <= 2 {
+                            ForEach(tools, id: \.tool) { tool in
+                                NativeAgentGlyph(tool: tool.tool, size: self.size + 1)
+                            }
+                        } else {
+                            NativeAgentGlyph(tool: NativeAgentToolLabel.unnamed, size: self.size + 1)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                    // With no colour left to mark the badge out, the weight
+                    // of the figure does it. The figure is its own text so it
+                    // can roll over like the durations elsewhere while the
+                    // word beside it holds still.
+                    HStack(spacing: 3) {
+                        Text(live.countLabel)
+                            .monospacedDigit()
+                            .contentTransition(.numericText(value: Double(live.session_count)))
+                        Text(live.nounLabel)
+                    }
+                    .fontWeight(.medium)
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.primary.opacity(0.12), in: Capsule())
+                .fixedSize()
+                // Arriving and leaving, rather than appearing and vanishing:
+                // the minute's count comes and goes on its own clock, and a
+                // badge that blinks in a list reads as a fault.
+                .transition(.scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
+                // The count is what has to survive a narrow row: an app's name
+                // can lose its tail, "128 agents now" cannot lose its digits.
+                .layoutPriority(2)
+                .help(live.detail)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(live.detail)
+            }
+        }
+        .font(.system(size: self.size))
+        .foregroundStyle(.secondary)
+        // One animation for the whole line, keyed on what it is saying: the
+        // count turning over, the badge arriving or going, the app's name
+        // changing under it. The timeline it is drawn on brings these in
+        // without an animation of its own, so this is the only thing standing
+        // between a change and a cut.
+        .animation(
+            self.reduceMotion ? nil : .snappy(duration: 0.24, extraBounce: 0),
+            value: Said(app: self.appName, count: self.live?.session_count)
+        )
+    }
+
+    // MARK: Private
+
+    /// What the line is saying, as one comparable value.
+    private struct Said: Equatable {
+        let app: String?
+        let count: Int?
+    }
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 }
 
 /// The glyph of one coding tool, drawn from a template asset so it takes the
@@ -3140,69 +3328,6 @@ private struct NativeAgentGlyph: View {
         }
         .frame(width: self.size, height: self.size)
         .accessibilityHidden(true)
-    }
-}
-
-/// "An agent is writing right now": the tool's own mark, breathing. Nothing
-/// beside it; the mark is the signal. Still under Reduce Motion.
-private struct NativeAgentIndicator: View {
-    // MARK: Internal
-
-    let tool: String
-    var size: CGFloat = 12
-
-    var body: some View {
-        NativeAgentGlyph(tool: self.tool, size: self.size)
-            .foregroundStyle(.secondary)
-            .opacity(self.reduceMotion ? 1 : (self.breathingIn ? 1 : 0.35))
-            .animation(
-                self.reduceMotion ? nil : .easeInOut(duration: 1.1).repeatForever(autoreverses: true),
-                value: self.breathingIn
-            )
-            .onAppear { self.breathingIn = true }
-            .accessibilityLabel("\(NativeAgentToolLabel.name(self.tool)) is working")
-    }
-
-    // MARK: Private
-
-    @State private var breathingIn = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-}
-
-/// The small mark on the period pill when the board ranks by agent time or
-/// tokens: a glyph with a one-word label, so the pill still reads at a glance.
-private struct NativeMetricMark: View {
-    let metric: String
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: self.metric == "tokens" ? "number" : "sparkle")
-                .font(.system(size: 9, weight: .semibold))
-            Text(self.metric == "tokens" ? "Tokens" : "Agents")
-                .font(.system(size: 13, weight: .medium))
-                .fixedSize()
-        }
-        .foregroundStyle(.secondary)
-        .accessibilityHidden(true)
-    }
-}
-
-/// Token counts as people say them: 842, 12.4K, 1.2M, 3.1B. Short so the
-/// width barely moves, and monospaced digits so what moves lines up.
-private enum TokenLabel {
-    static func compact(_ value: Double) -> String {
-        guard value.isFinite, value > 0 else { return "0" }
-        let units: [(Double, String)] = [(1e9, "B"), (1e6, "M"), (1e3, "K")]
-        for (scale, suffix) in units where value >= scale {
-            let scaled = value / scale
-            return scaled < 10 ? String(format: "%.1f%@", scaled, suffix) : String(format: "%.0f%@", scaled, suffix)
-        }
-        return String(format: "%.0f", value)
-    }
-
-    static func dollars(microUSD: Double) -> String {
-        let dollars = microUSD / 1_000_000
-        return dollars < 10 ? String(format: "$%.2f", dollars) : String(format: "$%.0f", dollars)
     }
 }
 
@@ -3263,6 +3388,12 @@ enum NativeAgentTime {
         return self.weekdayFormatter.string(from: date)
     }
 
+    /// "10 Sep", short enough to stand where one letter stood.
+    static func shortDate(_ day: String) -> String {
+        guard let date = self.dayParser.date(from: day) else { return "" }
+        return self.shortDateFormatter.string(from: date)
+    }
+
     static func isToday(_ day: String) -> Bool {
         self.dayParser.string(from: .now) == day
     }
@@ -3300,6 +3431,13 @@ enum NativeAgentTime {
         return formatter
     }()
 
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.setLocalizedDateFormatFromTemplate("d MMM")
+        return formatter
+    }()
+
     private static let weekdayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.setLocalizedDateFormatFromTemplate("EEEEE")
@@ -3327,15 +3465,17 @@ private enum NativeAgentToolColor {
         case "claude_code": Color(red: 0.92, green: 0.41, blue: 0.20)
         case "codex": Color(red: 0.16, green: 0.47, blue: 0.84)
         case "cursor": Color(red: 0.11, green: 0.69, blue: 0.48)
+        case "opencode": Color(red: 0.58, green: 0.40, blue: 0.92)
         default: Color.primary.opacity(0.6)
         }
     }
 }
 
-/// How the agents' surface arrives once the summary answers: it opens
-/// downward from the top edge, so the numbers that were already on screen
-/// stay where they are and the rest of the card unfolds beneath them.
-private struct AgentsReveal: ViewModifier, Animatable {
+/// How the agents arrive: not as a new card but as more of the one that
+/// was already there. The person's own time stays put, the surface grows
+/// under it, and everything new is uncovered once, left to right, by a
+/// soft edge. Nothing scales, bounces or staggers.
+private struct WipeReveal: ViewModifier, Animatable {
     var progress: Double
 
     var animatableData: Double {
@@ -3344,9 +3484,23 @@ private struct AgentsReveal: ViewModifier, Animatable {
     }
 
     func body(content: Content) -> some View {
-        content
-            .scaleEffect(x: 1, y: 1 - 0.06 * self.progress, anchor: .top)
-            .offset(y: -6 * self.progress)
+        content.mask {
+            GeometryReader { geometry in
+                let width = geometry.size.width
+                let soft = max(width * 0.28, 40)
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0),
+                        .init(color: .black, location: width / (width + soft)),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: width + soft, height: geometry.size.height + 24)
+                .offset(x: -(width + soft) * (1 - self.progress), y: -12)
+            }
+        }
     }
 }
 
@@ -3361,8 +3515,16 @@ struct AgentBucket: Identifiable, Equatable {
     let tick: String
     let agent: Double
     let human: Double
+    /// The bucket's agent minutes by tool, taken from the runs inside it, so
+    /// the split under the chart can narrow to whatever the pointer is on.
+    /// Empty where only totals are shared and no run names a tool.
+    let tools: [String: Double]
     /// The day this bucket is, when it is exactly one day.
     let dayIndex: Int?
+    /// Where the person placed that day, when the bucket is one day and the
+    /// day has something to place.
+    let rankHuman: Int?
+    let rankAgent: Int?
 }
 
 /// Everything the profile says about a person's agents, in one place: the
@@ -3372,150 +3534,69 @@ struct AgentBucket: Identifiable, Equatable {
 private struct AgentsPanel: View {
     // MARK: Internal
 
-    let summary: NativeAgentSummary
+    /// Nil, or without data, until the summary answers: the card then holds
+    /// only the person's own time, and grows when the agents arrive.
+    let summary: NativeAgentSummary?
     let period: String
-    let live: NativeAgentSummary.Now?
     /// The person's own minutes over the same period, so both figures sit
     /// together and answer the same pointer.
     let ownTime: Double?
-    /// Their place in the ranking, when the board has one.
-    let place: String?
+    let loadingOwnTime: Bool
     @Binding var hovered: AgentBucket?
 
     var body: some View {
-        let days = self.summary.days ?? []
-        let buckets = Self.buckets(days: days, period: self.period)
-        VStack(alignment: .leading, spacing: 12) {
-            // The two figures, side by side. The pointer on the chart below
-            // moves both to that day and takes their captions away, because
-            // a caption about the whole period would then be a lie.
-            HStack(alignment: .top, spacing: 12) {
-                self.figure(
-                    "Active time",
-                    minutes: self.hovered?.human ?? self.ownTime,
-                    note: self.hovered == nil ? self.place : nil
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                self.figure(
-                    "Agents",
-                    minutes: self.hovered?.agent ?? self.summary.agent_minutes,
-                    note: nil
-                )
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            // The day under the pointer names itself here; at rest the line
-            // carries the one fact a week of columns cannot show. It never
-            // names the period: the control in the header already does.
-            HStack {
-                Text(self.hovered?.label ?? "")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .contentTransition(.opacity)
-                Spacer(minLength: 8)
-                if let peak = self.summary.max_concurrency, peak > 1 {
-                    Text("up to \(peak) at once")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .opacity(self.hovered == nil ? 1 : 0)
-                }
-            }
-            .animation(.easeInOut(duration: 0.18), value: self.hovered)
-            .padding(.bottom, -6)
-
-            // A single day is drawn as the day itself: runs across twenty-four
-            // hours, with the person's presence under them. Longer periods
-            // are columns, one per day or per week.
-            if self.period == "24h", let today = days.last, today.runs?.isEmpty == false {
-                ProfileDayStrip(day: today, live: self.live)
-            } else {
-                AgentBucketBars(buckets: buckets, hovered: self.$hovered)
-            }
-
-            if let tools = self.summary.by_tool, !tools.isEmpty {
-                let total = tools.reduce(0) { $0 + ($1.agent_minutes ?? 0) }
-                if total > 0 {
-                    GeometryReader { geometry in
-                        let gaps = CGFloat(max(tools.count - 1, 0)) * 2
-                        HStack(spacing: 2) {
-                            ForEach(tools) { tool in
-                                Rectangle().fill(NativeAgentToolColor.color(tool.tool))
-                                    .frame(width: max(
-                                        (geometry.size.width - gaps) * (tool.agent_minutes ?? 0) / total,
-                                        0
-                                    ))
-                            }
-                        }
-                    }
-                    .frame(height: 4)
-                    .clipShape(Capsule())
-                    HStack(spacing: 12) {
-                        ForEach(tools) { tool in
-                            HStack(spacing: 4) {
-                                RoundedRectangle(cornerRadius: 2).fill(NativeAgentToolColor.color(tool.tool))
-                                    .frame(width: 8, height: 8)
-                                Text(
-                                    "\(NativeAgentToolLabel.name(tool.tool)) \(DurationLabel.minutes(tool.agent_minutes ?? 0))"
-                                )
-                            }
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-            }
-
-            // The shifts worth naming, longest first, with the month's record
-            // marked once. A run is where the person's day actually went.
-            let shifts = Self.shifts(days: days, period: self.period)
-            if !shifts.isEmpty {
-                Divider().opacity(0.5).padding(.top, 2)
-                ForEach(shifts) { shift in
-                    HStack(spacing: 10) {
-                        RoundedRectangle(cornerRadius: 3).fill(NativeAgentToolColor.color(shift.run.tool))
-                            .frame(width: 10, height: 10)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 5) {
-                                Text(
-                                    "\(NativeAgentTime.clock(shift.run.start_time)) – \(NativeAgentTime.clock(shift.run.end_time))"
-                                )
-                                .font(.system(size: 12, weight: .medium))
-                                if self.isRecord(shift.run) {
-                                    Text("Longest this month")
-                                        .font(.system(size: 10, weight: .medium))
-                                        .foregroundStyle(Color.accentColor)
-                                }
-                            }
-                            .lineLimit(1)
-                            Text(self.shiftDetail(shift))
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
+        let agents = self.summary?.has_data == true ? self.summary : nil
+        let hasAgents = agents != nil
+        // The own-time figure is drawn twice: once hidden, to hold its room
+        // inside the part that gets uncovered, and once on top, so it is the
+        // one thing here that never moves.
+        let ownFigure = self.figure(
+            "Active time",
+            minutes: self.hovered?.human ?? self.ownTime,
+            loading: self.loadingOwnTime,
+            place: self.hovered.map(\.rankHuman) ?? self.summary?.rank_active
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    ownFigure.hidden()
+                    if let agents {
+                        self.figure(
+                            "Agents",
+                            minutes: self.hovered?.agent ?? agents.agent_minutes,
+                            place: self.hovered.map(\.rankAgent) ?? agents.rank_agent
+                        )
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        // The duration keeps its own column, so a short time
-                        // on the left never drags it out of line.
-                        Text(DurationLabel.minutes(shift.run.minutes))
-                            .font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
-                            .frame(width: 62, alignment: .trailing)
                     }
-                    .padding(.vertical, 5)
+                }
+                if let agents {
+                    self.detail(agents)
                 }
             }
+            .modifier(WipeReveal(progress: self.uncovered ? 1 : 0))
+            ownFigure
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .animation(self.reduceMotion ? nil : SocialStore.settle, value: hasAgents)
+        .onAppear { self.uncovered = hasAgents }
+        .onChange(of: hasAgents) { _, now in
+            // Data that was already here when the profile opened needs no
+            // ceremony; data that arrives later is uncovered once.
+            withAnimation(self.reduceMotion || !now ? nil : .timingCurve(0.3, 0.7, 0.2, 1, duration: 0.55)) {
+                self.uncovered = now
+            }
+        }
     }
 
     // MARK: Private
 
-    /// One run with the day it belongs to, so the list can name the day when
-    /// the period spans more than one.
-    private struct Shift: Identifiable {
-        let run: NativeAgentSummary.Run
-        let day: String
-
-        var id: String { self.run.id }
-    }
+    /// Whether the part past the person's own time has been uncovered.
+    @State private var uncovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Hours for a day, days for a week, whole weeks for a month.
     private static func buckets(days: [NativeAgentSummary.Day], period: String) -> [AgentBucket] {
@@ -3527,7 +3608,10 @@ private struct AgentsPanel: View {
                     tick: NativeAgentTime.weekdayLetter(day.date),
                     agent: day.agent_minutes,
                     human: day.human_minutes,
-                    dayIndex: index
+                    tools: Self.split([day]),
+                    dayIndex: index,
+                    rankHuman: day.rank_active,
+                    rankAgent: day.rank_agent
                 )
             }
         }
@@ -3548,62 +3632,82 @@ private struct AgentsPanel: View {
                 tick: "",
                 agent: group.reduce(0) { $0 + $1.agent_minutes },
                 human: group.reduce(0) { $0 + $1.human_minutes },
-                dayIndex: group.count == 1 ? days.firstIndex { $0.date == first.date } : nil
+                tools: Self.split(group),
+                dayIndex: group.count == 1 ? days.firstIndex { $0.date == first.date } : nil,
+                // A week has no place of its own: the board is by the day.
+                rankHuman: group.count == 1 ? first.rank_active : nil,
+                rankAgent: group.count == 1 ? first.rank_agent : nil
             )
         }
     }
 
-    /// The runs a period should list: a day shows its own, a longer period
-    /// shows the longest of the whole window.
-    private static func shifts(days: [NativeAgentSummary.Day], period: String) -> [Shift] {
-        let source: [NativeAgentSummary.Day] = period == "24h" ? Array(days.suffix(1)) : days
-        let all = source.flatMap { day in (day.runs ?? []).map { Shift(run: $0, day: day.date) } }
-            .filter { $0.run.minutes >= 15 }
-        return Array(all.sorted { $0.run.minutes > $1.run.minutes }.prefix(period == "24h" ? 5 : 3))
+    /// How a stretch of days divides between the tools: every run in them
+    /// counted under the tool that ran it. A run is filed under the day it
+    /// began on, which is also where the chart's column puts it.
+    private static func split(_ days: [NativeAgentSummary.Day]) -> [String: Double] {
+        var minutes: [String: Double] = [:]
+        for run in days.flatMap({ $0.runs ?? [] }) { minutes[run.tool, default: 0] += run.minutes }
+        return minutes
     }
 
-    private func isRecord(_ run: NativeAgentSummary.Run) -> Bool {
-        guard let longest = self.summary.longest_run_minutes else { return false }
-        return abs(longest - run.minutes) < 0.5
-    }
+    /// Everything past the two numbers: the chart, the tools, the shifts.
+    @ViewBuilder private func detail(_ summary: NativeAgentSummary) -> some View {
+        let days = summary.days ?? []
+        let buckets = Self.buckets(days: days, period: self.period)
+        VStack(alignment: .leading, spacing: 12) {
+            // A single day is drawn as the day itself: runs across twenty-four
+            // hours, with the person's presence under them. Longer periods
+            // are columns, one per day or per week.
+            if self.period == "24h", let today = days.last, today.runs?.isEmpty == false {
+                ProfileDayStrip(day: today, live: summary.now)
+            } else {
+                AgentBucketBars(buckets: buckets, hovered: self.$hovered)
+            }
 
-    private func shiftDetail(_ shift: Shift) -> String {
-        var parts = [NativeAgentToolLabel.name(shift.run.tool)]
-        if self.period != "24h" { parts.append(NativeAgentTime.dayLabel(shift.day)) }
-        if let unattended = shift.run.unattended_minutes, unattended >= shift.run.minutes / 2 {
-            parts.append("unattended")
-        } else {
-            parts.append("peak \(shift.run.peak_sessions ?? 1)")
+            if let tools = summary.by_tool, !tools.isEmpty {
+                let total = tools.reduce(0) { $0 + ($1.agent_minutes ?? 0) }
+                if total > 0 {
+                    // The period's split, until the pointer names a stretch of
+                    // the chart and it becomes that stretch's.
+                    ToolSplitBar(tools: tools, scope: self.hovered?.tools)
+                }
+            }
         }
-        return parts.joined(separator: " · ")
     }
 
     /// One figure: its name, the number, and a note that only holds while
     /// the number means the whole period.
     @ViewBuilder private func figure(
         _ title: String,
-        glyph: String? = nil,
         minutes: Double?,
-        note: String?
+        loading: Bool = false,
+        place: Int?
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                if let glyph { NativeAgentGlyph(tool: glyph, size: 11).foregroundStyle(.secondary) }
-                Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 11)).foregroundStyle(Color.primary.opacity(0.65))
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                if let minutes {
+                    AnimatedDuration(minutes: minutes, animation: .snappy(duration: 0.22, extraBounce: 0))
+                        .font(.system(size: 20, weight: .medium))
+                        .fixedSize()
+                } else if loading {
+                    NativeSkeletonShape(width: 52, height: 20, radius: 5).padding(.vertical, 2)
+                } else {
+                    Text("—").font(.system(size: 20, weight: .medium)).foregroundStyle(Color.primary.opacity(0.65))
+                }
+                // The place rides beside the number and costs no height. It
+                // is the period's until the pointer names a day, and a day
+                // nobody worked simply has none.
+                if let place {
+                    Text("#\(place)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.primary.opacity(place <= 3 ? 0.9 : 0.55))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .transition(.opacity)
+                }
             }
-            if let minutes {
-                AnimatedDuration(minutes: minutes, animation: .snappy(duration: 0.22, extraBounce: 0))
-                    .font(.system(size: 20, weight: .medium))
-                    .fixedSize()
-            } else {
-                Text("—").font(.system(size: 20, weight: .medium)).foregroundStyle(.secondary)
-            }
-            // The line keeps its room either way, so nothing shifts under
-            // the pointer.
-            Text(note ?? " ")
-                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                .contentTransition(.opacity)
-                .animation(.easeInOut(duration: 0.18), value: note)
+            .animation(.snappy(duration: 0.22, extraBounce: 0), value: place)
         }
     }
 }
@@ -3623,18 +3727,18 @@ private struct AgentBucketBars: View {
         let room = self.height - 2
         return VStack(spacing: 5) {
             HStack(alignment: .bottom, spacing: self.buckets.count > 8 ? 3 : 6) {
-                ForEach(Array(self.buckets.enumerated()), id: \.element.id) { index, bucket in
+                ForEach(self.buckets) { bucket in
                     let dimmed = self.hovered.map { $0.id != bucket.id } ?? false
                     let human = bucket.human > 0 ? min(max(room * bucket.human / scale, 2), room) : 0
                     let agent = bucket.agent > 0 ? min(max(room * bucket.agent / scale, 2), room - human) : 0
                     VStack(spacing: 0) {
                         Spacer(minLength: 0)
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(Color.accentColor)
+                            .fill(Color.firstlight)
                             .frame(height: max(agent, 0))
                         if agent > 0, human > 0 { Color.clear.frame(height: 2) }
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(Color.primary.opacity(0.18))
+                            .fill(Color.primary.opacity(0.32))
                             .frame(height: max(human, 0))
                     }
                     .frame(maxWidth: 18)
@@ -3642,18 +3746,9 @@ private struct AgentBucketBars: View {
                     .frame(height: self.height, alignment: .bottom)
                     .clipped()
                     .background(alignment: .bottom) {
-                        Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+                        Rectangle().fill(Color.primary.opacity(0.14)).frame(height: 1)
                     }
                     .opacity(dimmed ? 0.4 : 1)
-                    // Each column grows from the floor, a beat after the one
-                    // before it, so the week arrives as a sweep rather than
-                    // all at once.
-                    .scaleEffect(y: self.revealed ? 1 : 0.02, anchor: .bottom)
-                    .animation(
-                        self.reduceMotion ? nil
-                            : .spring(duration: 0.5, bounce: 0.16).delay(Double(index) * 0.025),
-                        value: self.revealed
-                    )
                     .animation(self.reduceMotion ? nil : .easeOut(duration: 0.16), value: dimmed)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(
@@ -3681,24 +3776,100 @@ private struct AgentBucketBars: View {
                         }
                 }
             }
+            // The row of letters is also where the date lives: the column
+            // under the pointer says which day it is, in the place its own
+            // letter stood, and its neighbours step back. No line appears
+            // and none is held empty.
             if self.buckets.contains(where: { !$0.tick.isEmpty }) {
                 HStack(spacing: self.buckets.count > 8 ? 3 : 6) {
                     ForEach(self.buckets) { bucket in
-                        Text(bucket.tick)
+                        let named = self.hovered?.id == bucket.id
+                        Text(named ? NativeAgentTime.shortDate(bucket.id) : bucket.tick)
                             .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(Color.primary.opacity(named ? 0.9 : 0.55))
+                            .opacity(self.hovered == nil || named ? 1 : 0.45)
+                            .lineLimit(1)
+                            .fixedSize()
                             .frame(maxWidth: .infinity)
                     }
                 }
+                .animation(self.reduceMotion ? nil : .easeOut(duration: 0.16), value: self.hovered)
                 .accessibilityHidden(true)
             }
         }
-        .onAppear { self.revealed = true }
     }
 
     // MARK: Private
 
-    @State private var revealed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+}
+
+/// How agent time divides between the tools: a bar in their colours and a
+/// line naming them. It reads the whole period until the pointer is on the
+/// chart above, and then the one bucket under it. The tools keep their order
+/// and their place either way, so only widths and durations move, and a
+/// stretch where a tool did nothing leaves it at zero rather than dropping
+/// it and shuffling the rest along.
+private struct ToolSplitBar: View {
+    // MARK: Internal
+
+    let tools: [NativeAgentSummary.ToolUsage]
+    /// Minutes per tool for the bucket under the pointer, or nil while the
+    /// bar is about the whole period.
+    let scope: [String: Double]?
+
+    var body: some View {
+        let split: [(tool: String, minutes: Double)] = self.tools.map { tool in
+            if let scope = self.scope { return (tool.tool, scope[tool.tool] ?? 0) }
+            return (tool.tool, tool.agent_minutes ?? 0)
+        }
+        let total = split.reduce(0) { $0 + $1.minutes }
+        VStack(alignment: .leading, spacing: 12) {
+            GeometryReader { geometry in
+                let gaps = CGFloat(max(split.count - 1, 0)) * 2
+                HStack(spacing: 2) {
+                    ForEach(split, id: \.tool) { entry in
+                        Rectangle().fill(NativeAgentToolColor.color(entry.tool))
+                            .frame(
+                                width: total > 0
+                                    ? max((geometry.size.width - gaps) * entry.minutes / total, 0)
+                                    : 0
+                            )
+                    }
+                }
+            }
+            .frame(height: 4)
+            // The track keeps the bar's line where it is on a day nothing
+            // ran, instead of leaving a gap the height of nothing.
+            .background(Color.primary.opacity(0.12))
+            .clipShape(Capsule())
+            HStack(spacing: 12) {
+                ForEach(split, id: \.tool) { entry in
+                    HStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2).fill(NativeAgentToolColor.color(entry.tool))
+                            .frame(width: 8, height: 8)
+                        HStack(spacing: 3) {
+                            Text(NativeAgentToolLabel.name(entry.tool))
+                            AnimatedDuration(
+                                minutes: entry.minutes,
+                                animation: .snappy(duration: 0.22, extraBounce: 0)
+                            )
+                        }
+                    }
+                    .opacity(entry.minutes > 0 ? 1 : 0.45)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11)).foregroundStyle(Color.primary.opacity(0.75))
+        }
+        .animation(
+            self.reduceMotion ? nil : .snappy(duration: 0.22, extraBounce: 0),
+            value: split.map(\.minutes)
+        )
+    }
+
+    // MARK: Private
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 }
 
@@ -3719,14 +3890,14 @@ private struct ProfileDayStrip: View {
                 let width = geometry.size.width
                 ZStack(alignment: .bottomLeading) {
                     // Presence band, with the day's floor under it.
-                    Rectangle().fill(Color.primary.opacity(0.06)).frame(height: 8)
+                    Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 8)
                     ForEach(Array(presence.enumerated()), id: \.offset) { _, stretch in
                         if let a = NativeAgentTime.hour(stretch.start_time),
                            let b = NativeAgentTime.hour(stretch.end_time)
                         {
                             let end = b < a ? 24 : b
                             RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                .fill(Color.primary.opacity(0.22))
+                                .fill(Color.primary.opacity(0.34))
                                 .frame(width: max(width * (end - a) / 24, 2), height: 8)
                                 .offset(x: width * a / 24)
                         }
@@ -3788,13 +3959,14 @@ private struct ProfileDayStrip: View {
             .frame(height: 44)
             HStack {
                 ForEach(["00", "06", "12", "18", "24"], id: \.self) { mark in
-                    Text(mark).font(.system(size: 9, weight: .medium)).foregroundStyle(.tertiary)
+                    Text(mark).font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.primary.opacity(0.55))
                     if mark != "24" { Spacer(minLength: 0) }
                 }
             }
             .accessibilityHidden(true)
             Text(self.readout(runs: runs))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .font(.system(size: 11)).foregroundStyle(Color.primary.opacity(0.75))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentTransition(.opacity)
                 .animation(.easeOut(duration: 0.12), value: self.hover?.runIndex)
@@ -3817,7 +3989,7 @@ private struct ProfileDayStrip: View {
     private func readout(runs: [NativeAgentSummary.Run]) -> String {
         guard let hover = self.hover else {
             let peak = runs.map { $0.peak_sessions ?? 1 }.max() ?? 0
-            return runs.isEmpty ? "No agents this day." : "\(runs.count) runs · up to \(peak) at once"
+            return runs.isEmpty ? "No agents this day." : "\(runs.count) runs · \(peak) sessions at the peak"
         }
         let clock = String(
             format: "%02d:%02d",
@@ -3876,6 +4048,9 @@ private struct NativeTabButtonStyle: ButtonStyle {
     // MARK: Internal
 
     let reduceMotion: Bool
+    /// Handed to the fill under the label, so a control that is not a tab can
+    /// take this press for its own shape.
+    var shape: AnyShape = NativeTabHover.tabShape
 
     func makeBody(configuration: Configuration) -> some View {
         let pressed = configuration.isPressed || self.gesturePressed
@@ -3883,7 +4058,7 @@ private struct NativeTabButtonStyle: ButtonStyle {
             // Passed back down so a label can answer the press too, like the
             // period picker's chevron turning while its menu is open.
             .environment(\.tabPressed, pressed)
-            .modifier(NativeTabHover(pressed: pressed))
+            .modifier(NativeTabHover(pressed: pressed, shape: self.shape))
             .scaleEffect(pressed && !self.reduceMotion ? 0.96 : 1)
             .animation(.snappy(duration: 0.16, extraBounce: 0), value: pressed)
     }
@@ -3901,15 +4076,21 @@ private struct NativeTabButtonStyle: ButtonStyle {
 private struct NativeTabHover: ViewModifier {
     // MARK: Internal
 
+    /// The group strip's own outline, and the default everywhere.
+    static let tabShape = AnyShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
     let pressed: Bool
+    /// The outline the fill takes. A tab is a rounded rectangle; a profile
+    /// link wears the same fill as a capsule, so both answer alike.
+    var shape: AnyShape = Self.tabShape
 
     func body(content: Content) -> some View {
         content
             .background {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                self.shape
                     .fill(Color.primary.opacity(self.pressed ? 0.09 : self.hovering ? 0.05 : 0))
             }
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(self.shape)
             .onHover { self.hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: self.hovering)
             .animation(.easeOut(duration: 0.08), value: self.pressed)
@@ -4083,4 +4264,364 @@ private struct GroupTabDragModifier: ViewModifier {
 
     @State private var pressed = false
     @State private var dragging = false
+}
+
+// MARK: App discovery
+
+extension NativeDashboardView {
+    private var visibleAppBundle: String? {
+        if case let .app(bundle) = self.store.screen { return bundle }
+        return nil
+    }
+
+    private var showingAppRanking: Bool {
+        if case .app = self.store.screen { return true }
+        return self.store.screen == .list && self.store.tab == "global" && self.store.showsApps
+    }
+
+    // The scroll view and its bars stay mounted when the ranking type changes.
+    // Only actual tab changes replace the outer container and slide its rows.
+    @ViewBuilder private var directoryRows: some View {
+        if self.showingAppRanking {
+            appLeaderboardRows.transition(.identity)
+        } else {
+            peopleRows.transition(.identity)
+        }
+    }
+
+    private var appScopeTitle: String {
+        let scope = self.appDirectory.context(for: self.visibleAppBundle).scope
+        if scope == "friends" { return "Friends" }
+        if scope == "everyone" { return "Everyone" }
+        return self.store.groups.first(where: { $0.id == scope })?.name ?? "Group"
+    }
+
+    private var appScopePicker: some View {
+        Menu {
+            Picker("Audience", selection: Binding(
+                get: { self.appDirectory.context(for: self.visibleAppBundle).scope },
+                set: { self.appDirectory.setScope($0, for: self.visibleAppBundle) }
+            )) {
+                Text("Friends").tag("friends")
+                Text("Everyone").tag("everyone")
+                if !self.store.groups.isEmpty {
+                    Divider()
+                    ForEach(self.store.groups) { group in
+                        Text(group.name).tag(group.id)
+                    }
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(self.appScopeTitle).font(.system(size: 12, weight: .medium)).lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Whose app activity to show")
+        .accessibilityLabel("Ranking audience")
+        .accessibilityValue(self.appScopeTitle)
+    }
+
+    private func appMorphID(_ bundle: String, element: String = "icon", origin: String? = nil) -> String {
+        let base = "app-\(element)-\(bundle)"
+        if self.reduceMotion { return base + (origin ?? "header") }
+        if let origin, self.appMorphSources[bundle] != origin { return base + origin }
+        return base
+    }
+
+    private func openApp(_ app: NativeAppCard, from person: NativePerson? = nil) {
+        var scope = self.appDirectory.context(for: nil).scope
+        if let person {
+            if person.public_apps_only == true { scope = "everyone" }
+            else if case let .app(parent)? = self.store.previousScreen {
+                scope = self.appDirectory.context(for: parent).scope
+            } else {
+                scope = self.store.tab == "global" ? "friends" : self.store.tab
+            }
+        }
+        self.appMorphSources[app.id] = person?.id ?? "apps"
+        self.appDirectory.remember(
+            app, from: person, scope: scope,
+            returning: self.store.hasScreenInHistory(.app(app.id))
+        )
+        self.store.open(.app(app.id))
+    }
+
+    private var appLeaderboardRows: some View {
+        let key = self.appDirectory.key(nil, period: self.store.period)
+        let page = self.appDirectory.topPages[key]
+        return LazyVStack(alignment: .leading, spacing: 0) {
+            if let page {
+                if page.items.isEmpty {
+                    NativeStateMessage(
+                        title: "No shared activity yet",
+                        message: "Try a longer period or another audience.",
+                        minHeight: NativeLayout.peopleListHeight
+                    )
+                }
+                ForEach(page.items) { app in
+                    Button { self.openApp(app) } label: {
+                        HStack(spacing: 10) {
+                            self.placeColumn(app.rank)
+                            NativeTrackedAppIcon(url: app.icon_url, bundleIdentifier: app.id, size: 32)
+                                .matchedGeometryEffect(
+                                    id: self.appMorphID(app.id, origin: "apps"),
+                                    in: self.appMorph
+                                )
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(app.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                    .matchedGeometryEffect(
+                                        id: self.appMorphID(app.id, element: "name", origin: "apps"),
+                                        in: self.appMorph, properties: .position
+                                    )
+                                if let category = app.category {
+                                    Text(category).font(.system(size: 11)).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer(minLength: 6)
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("\(app.user_count ?? 0)").font(.system(size: 16, weight: .medium))
+                                    .monospacedDigit()
+                                Text(app.user_count == 1 ? "person" : "people").font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 12).frame(height: 60).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if page.next_cursor != nil {
+                    Button("More apps") {
+                        Task { await self.appDirectory.load(nil, period: self.store.period, more: true) }
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).padding(14)
+                    .disabled(self.appDirectory.loading.contains(key))
+                }
+            } else if let message = self.appDirectory.errors[key] {
+                NativeStateMessage(
+                    title: "Couldn't load apps", detail: message, actionTitle: "Try again",
+                    action: { Task { await self.appDirectory.load(nil, period: self.store.period, force: true) } },
+                    minHeight: NativeLayout.peopleListHeight
+                )
+            } else {
+                NativeAppRankingSkeleton()
+            }
+            if page != nil { appLoadError(nil, key: key) }
+        }
+        .task(id: key) { await self.appDirectory.load(nil, period: self.store.period) }
+    }
+
+    private var appEmptyState: some View {
+        VStack(spacing: 5) {
+            Text("No shared activity yet").font(.system(size: 13, weight: .medium))
+            Text("Try a longer period or another audience.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 24)
+    }
+
+    @ViewBuilder private func appLoadError(_ bundle: String?, key: String) -> some View {
+        if let message = self.appDirectory.errors[key] {
+            NativeInlineError(message: message) {
+                Task { await self.appDirectory.load(bundle, period: self.store.period, force: true) }
+            }
+        }
+    }
+
+    @ViewBuilder private func appDetail(_ bundle: String) -> some View {
+        let key = self.appDirectory.key(bundle, period: self.store.period)
+        let page = self.appDirectory.peoplePages[key]
+        if let app = page?.app ?? self.appDirectory.cards[bundle] {
+            VStack(spacing: 8) {
+                NativeTrackedAppIcon(url: app.icon_url, bundleIdentifier: bundle, size: 56)
+                    .matchedGeometryEffect(id: self.appMorphID(bundle), in: self.appMorph)
+                    .zIndex(1)
+                Text(app.name).font(.system(size: 20, weight: .semibold)).lineLimit(1)
+                    .matchedGeometryEffect(
+                        id: self.appMorphID(bundle, element: "name"),
+                        in: self.appMorph, properties: .position
+                    )
+                if let category = app.category {
+                    Text(category).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                if let description = app.description {
+                    Text(description).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                }
+                if let raw = app.website_url, let url = URL(string: raw), url.scheme == "https" {
+                    Link(destination: url) { Label("Website", systemImage: "arrow.up.right") }
+                        .font(.system(size: 11)).buttonStyle(.bordered).buttonBorderShape(.capsule)
+                }
+            }
+            .frame(maxWidth: .infinity).padding(.top, 30).padding(.bottom, 4)
+
+            if let source = page?.source {
+                HStack(spacing: 8) {
+                    FirstlightAvatar(url: source.avatar_url, name: source.displayName, size: 24)
+                    Text(source.displayName).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    Spacer(minLength: 6)
+                    AnimatedDuration(minutes: source.active_minutes ?? 0).font(.system(size: 13, weight: .medium))
+                }
+                .padding(10).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+            }
+
+            self.appScopePicker
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            if let page {
+                if page.total == 0 { self.appEmptyState }
+                else {
+                    let visible = self.appDirectory.expanded.contains(key) ? page.items : Array(page.items.prefix(3))
+                    VStack(spacing: 0) {
+                        ForEach(visible) { person in
+                            appPersonRow(person, bundle: bundle)
+                        }
+                    }.padding(.horizontal, -14)
+                    if page.total > 3 {
+                        Button(self.appDirectory.expanded.contains(key) ? "Show less" : "See all \(page.total)") {
+                            withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.22)) {
+                                if self.appDirectory.expanded.contains(key) { self.appDirectory.expanded.remove(key) }
+                                else { self.appDirectory.expanded.insert(key) }
+                            }
+                        }.buttonStyle(.plain).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    }
+                    if self.appDirectory.expanded.contains(key), page.next_cursor != nil {
+                        Button("More people") {
+                            Task { await self.appDirectory.load(bundle, period: self.store.period, more: true) }
+                        }
+                        .disabled(self.appDirectory.loading.contains(key))
+                        .buttonStyle(.plain).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    }
+                    if let me = page.me, !visible.contains(where: { $0.id == me.id }) {
+                        Divider()
+                        self.appPersonRow(me, bundle: bundle).padding(.horizontal, -14)
+                    }
+                }
+                if page.me == nil {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("You").font(.system(size: 12, weight: .medium))
+                            Text(
+                                self.appDirectory.context(for: bundle)
+                                    .scope == "everyone" ? "Not in public ranking" : "No ranked activity this period"
+                            )
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        AnimatedDuration(minutes: page.my_minutes).font(.system(size: 15, weight: .medium))
+                    }.padding(.vertical, 6)
+                }
+            } else if self.appDirectory.errors[key] == nil {
+                NativePeopleSkeleton(rows: 3, showsPlaces: true).padding(.horizontal, -14)
+            }
+            self.appLoadError(bundle, key: key)
+            Button {
+                self.store.showsApps = true
+                self.store.selectTab("global")
+                self.store.showList()
+            } label: {
+                HStack(spacing: 4) { Text("Top apps"); Image(systemName: "chevron.right") }
+                    .font(.system(size: 12)).frame(maxWidth: .infinity).padding(.vertical, 8)
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
+            Color.clear.frame(height: 1)
+                .task(id: key) { await self.appDirectory.load(bundle, period: self.store.period) }
+        }
+    }
+
+    private func appPersonRow(_ person: NativePerson, bundle: String) -> some View {
+        let source = "app-\(bundle)-\(person.id)"
+        return Button { self.openPerson(person, from: source) } label: {
+            self.personRow(person, place: person.rank, morphSource: source)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Each rendered picker owns its anchor. A departing screen must never replace
+/// the arriving screen's weak menu anchor during a navigation transition.
+private struct NativePeriodPicker: View {
+    // MARK: Internal
+
+    let period: String
+    let metric: String
+    let apps: Bool
+    let canChooseBoard: Bool
+    let appScope: String
+    let appGroups: [(id: String, name: String)]
+    let onPeriod: (String) -> Void
+    let onMetric: (String) -> Void
+    let onApps: (Bool) -> Void
+    let onAppScope: (String) -> Void
+
+    var body: some View {
+        Button { presentMenu() } label: {
+            HStack(spacing: 4) {
+                PeriodLabel(period: self.period)
+                PeriodChevron(open: self.open)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .background(Color.primary.opacity(0.11), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion))
+        .background(NativeMenuAnchor(box: self.anchor))
+        .help("Choose period and ranking")
+        .accessibilityLabel("Activity period and ranking")
+        .accessibilityValue("\(self.period), \(self.apps ? "apps" : self.metric)")
+    }
+
+    // MARK: Private
+
+    @State private var anchor = NativeViewBox()
+    @State private var target = NativeMenuTarget()
+    @State private var open = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func presentMenu() {
+        guard let view = self.anchor.view, view.window != nil else { return }
+        let menu = NSMenu()
+        func add(_ title: String, _ value: String, selected: Bool, to parent: NSMenu? = nil) {
+            let item = NSMenuItem(title: title, action: #selector(NativeMenuTarget.choose(_:)), keyEquivalent: "")
+            item.target = self.target
+            item.representedObject = value
+            item.state = selected ? .on : .off
+            (parent ?? menu).addItem(item)
+        }
+        for (title, value) in [("Day", "24h"), ("Week", "7d"), ("Month", "30d")] {
+            add(title, "period:" + value, selected: self.period == value)
+        }
+        if self.canChooseBoard {
+            menu.addItem(.separator())
+            add("People", "board:people", selected: !self.apps)
+            add("Apps", "board:apps", selected: self.apps)
+        }
+        if !self.apps {
+            menu.addItem(.separator())
+            add("Active time", "metric:active", selected: self.metric == "active")
+            add("Agent time", "metric:agent", selected: self.metric == "agent")
+        } else if self.canChooseBoard {
+            menu.addItem(.separator())
+            let audience = NSMenuItem(title: "Audience", action: nil, keyEquivalent: "")
+            let scopes = NSMenu()
+            add("Friends", "scope:friends", selected: self.appScope == "friends", to: scopes)
+            add("Everyone", "scope:everyone", selected: self.appScope == "everyone", to: scopes)
+            if !self.appGroups.isEmpty {
+                scopes.addItem(.separator())
+                for group in self.appGroups {
+                    add(group.name, "scope:" + group.id, selected: self.appScope == group.id, to: scopes)
+                }
+            }
+            audience.submenu = scopes
+            menu.addItem(audience)
+        }
+        self.target.onChoose = { value in
+            if value.hasPrefix("period:") { self.onPeriod(String(value.dropFirst(7))) }
+            else if value.hasPrefix("metric:") { self.onMetric(String(value.dropFirst(7))) }
+            else if value.hasPrefix("board:") { self.onApps(value == "board:apps") }
+            else if value.hasPrefix("scope:") { self.onAppScope(String(value.dropFirst(6))) }
+        }
+        self.open = true
+        defer { self.open = false }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.isFlipped ? view.bounds.maxY + 4 : -4), in: view)
+    }
 }

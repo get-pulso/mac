@@ -9,6 +9,7 @@ struct OnboardingContinueButton: View {
 
     var isLoading = false
     var isEnabled = true
+    var loadingTitle = "Opening Google…"
     var account: WelcomeAccount?
     var avatar: AnyView?
     var action: () -> Void
@@ -61,7 +62,8 @@ struct OnboardingContinueButton: View {
         .opacity(isEnabled ? 1 : 0.6)
         .disabled(!isEnabled || isLoading)
         .keyboardShortcut(.defaultAction)
-        .accessibilityLabel(isLoading ? "Opening Google sign-in" : account?.buttonTitle ?? "Continue with Google")
+        .animation(.easeInOut(duration: 0.2), value: isLoading)
+        .accessibilityLabel(isLoading ? loadingTitle : account?.buttonTitle ?? "Continue with Google")
         .accessibilityHint(
             account == nil ? "Press Enter to sign in with Google." :
                 "Press Enter to open Firstlight in the menu bar."
@@ -71,8 +73,9 @@ struct OnboardingContinueButton: View {
 
     // MARK: Private
 
-    /// The arrival page's #8262FF → #6644F2, as one tint for the glass.
-    private static let violet = Color(red: 0.45, green: 0.33, blue: 0.97)
+    /// The arrival page's #8262FF → #6644F2, as one tint for the glass. The
+    /// same violet every prominent control in the app is tinted with.
+    private static let violet = Color.firstlight
     private static let gradient = LinearGradient(
         colors: [Color(red: 0.51, green: 0.38, blue: 1.0), Color(red: 0.40, green: 0.27, blue: 0.95)],
         startPoint: .top, endPoint: .bottom
@@ -97,23 +100,21 @@ struct OnboardingContinueButton: View {
                 .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
                 .accessibilityHidden(true)
             }
-            Text(isLoading ? "Opening Google…" : account?.buttonTitle ?? "Continue with Google")
+            Text(isLoading ? loadingTitle : account?.buttonTitle ?? "Continue with Google")
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1).truncationMode(.tail)
-            Spacer(minLength: 12)
-            HStack(spacing: 5) {
-                Text("Enter").font(.system(size: 11, weight: .medium))
-                Image(systemName: "return").font(.system(size: 11, weight: .medium))
-            }
-            .fixedSize()
-            .foregroundStyle(.white.opacity(0.55))
-            .opacity(isLoading ? 0 : 1)
-            .accessibilityHidden(true)
+                .contentTransition(.opacity)
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 16)
-        .frame(height: 40)
-        .frame(maxWidth: .infinity)
+        // An avatar carries its own edge, so it sits closer to the rim than a
+        // first letter of text would.
+        .padding(.leading, account == nil ? 20 : 8)
+        .padding(.trailing, 20)
+        .frame(height: 36)
+        // No Enter hint and no full width: the pill is only as wide as what it
+        // says. Enter still works — it is in the tooltip and in the
+        // accessibility hint, and one default button on the page is guessable.
+        .fixedSize()
         .contentShape(Capsule())
     }
 }

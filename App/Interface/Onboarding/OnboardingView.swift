@@ -68,6 +68,7 @@ struct OnboardingView: View {
                 }
             }
         }
+        .fontDesign(.rounded)
         // The intro is always dark, whatever the system appearance: one look.
         .preferredColorScheme(.dark)
         .ignoresSafeArea()

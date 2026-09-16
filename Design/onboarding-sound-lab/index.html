@@ -4,98 +4,47 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Firstlight · звук появления</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="preloaded-audio.js" defer></script>
-  <script src="sound-lab.js" defer></script>
+  <title>Firstlight · ambient и синтезаторный бас</title>
+  <link rel="stylesheet" href="style.css?v=synth-picker-1">
+  <script src="original-audio.js?v=original-only-1" defer></script>
+  <script src="synth-bass-library.js?v=warm-analog-only-1" defer></script>
+  <script src="arrival-visual.js?v=haptic-climax-1" defer></script>
+  <script src="sound-lab.js?v=warm-analog-only-1" defer></script>
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
       <div class="brand"><img src="../firstlight-mark.svg" alt=""><span>Firstlight <span class="slash">/</span> Sound Lab</span></div>
-      <span class="eyebrow">ONBOARDING · LOCAL PROTOTYPE</span>
+      <a class="archive" href="audio/instruments/ambient-references/selected-ambient-1789585822225.mp3" download="An_8-second_sound_cu_#3-1789585822225.mp3">Скачать оригинал MP3 ↓</a>
     </header>
-
-    <div class="intro">
-      <div>
-        <p class="kicker">Звук появления</p>
-        <h1>Момент, когда свет<br>становится знаком.</h1>
-      </div>
-      <p class="intro-copy">Три варианта на одном тайминге: низкий акцент при появлении окна и короткое «ту-ду» во время подъёма логотипа. Последняя нота звучит тише.</p>
-    </div>
-
-    <section class="demo-library" aria-label="Выбор звука появления">
-      <div class="demo-library-head"><div><span class="kicker">СРАВНИТЬ ЗВУК</span><h2>Как встречает Firstlight</h2></div><p>Бас 4,25 с · «ту» 6,67 с · тихое «ду» 7,32 с</p></div>
-      <div class="demo-grid">
-        <article class="demo-card selected" data-demo-card="glass"><button class="demo-select" type="button" data-demo="glass" aria-pressed="true"><span class="demo-eyebrow">01 / РЕКОМЕНДУЮ</span><strong>Тёплое стекло</strong><span class="demo-description">Округлый бас и стеклянное «ту-ду» с тихим ответом.</span><img src="audio/generated/demo-glass-bass.svg" alt="" class="demo-wave"><span class="demo-play">▶ Слушать с анимацией</span></button><a href="audio/generated/demo-glass-bass.m4a" download="firstlight-glass-bass.m4a">Скачать M4A</a></article>
-        <article class="demo-card" data-demo-card="felt"><button class="demo-select" type="button" data-demo="felt" aria-pressed="false"><span class="demo-eyebrow">02 / ЯВНЫЙ МОМЕНТ</span><strong>Тихий аккорд</strong><span class="demo-description">Бас и мягкий фортепианный аккорд; финал из двух нот.</span><img src="audio/generated/demo-felt-bass.svg" alt="" class="demo-wave"><span class="demo-play">▶ Слушать с анимацией</span></button><a href="audio/generated/demo-felt-bass.m4a" download="firstlight-felt-bass.m4a">Скачать M4A</a></article>
-        <article class="demo-card" data-demo-card="airy"><button class="demo-select" type="button" data-demo="airy" aria-pressed="false"><span class="demo-eyebrow">03 / ПРОСТРАНСТВО</span><strong>Воздушный свет</strong><span class="demo-description">Бас под стеклянным раскрытием и самый лёгкий ответ наверху.</span><img src="audio/generated/demo-airy-bass.svg" alt="" class="demo-wave"><span class="demo-play">▶ Слушать с анимацией</span></button><a href="audio/generated/demo-airy-bass.m4a" download="firstlight-airy-bass.m4a">Скачать M4A</a></article>
-        <article class="demo-card" data-demo-card="original"><button class="demo-select" type="button" data-demo="original" aria-pressed="false"><span class="demo-eyebrow">04 / ДЛЯ СРАВНЕНИЯ</span><strong>Твой исходник</strong><span class="demo-description">Скачанный дубль без добавленного аккорда и светлой концовки.</span><img src="audio/generated/demo-original.svg" alt="" class="demo-wave"><span class="demo-play">▶ Слушать с анимацией</span></button><a href="audio/generated/demo-original.m4a" download="firstlight-original.m4a">Скачать M4A</a></article>
-      </div>
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">ТВОЙ AMBIENT / 02 WARM ANALOG</p>
+      <h1 id="page-title">Нарастание и раскрытие.</h1>
+      <p class="intro-copy">Твой звук ведёт сцену. Синтезаторный бас начинает нарастать заранее и раскрывается с окном. Короткий пик исходника немного смягчён; дальше остаётся естественное затухание.</p>
     </section>
-
-    <section class="workspace" aria-label="Предпросмотр звука и появления">
-      <div class="preview">
-        <div class="preview-top"><span>FIRSTLIGHT / ARRIVAL</span><span>УПРОЩЁННАЯ ВИЗУАЛИЗАЦИЯ</span></div>
-        <div class="stage" id="stage">
-          <canvas id="rays" aria-hidden="true"></canvas>
-          <div class="window" id="window">
-            <div class="window-bar"><i></i><i></i><i></i></div>
-            <div class="wordmark" id="wordmark">
-              <img class="mark" id="mark" src="../firstlight-mark.svg" alt="">
-              <span class="name" id="name">Firstlight</span>
-            </div>
-            <div class="welcome" id="welcome"><strong>Welcome</strong><span>See what your friends are up to.</span></div>
-            <div class="continue" id="continue">Continue with Google</div>
-          </div>
-          <span class="stage-caption" id="stage-caption">Готово к прослушиванию</span>
+    <section class="context-preview" aria-label="Выбранный звук с анимацией">
+      <div class="preview-top"><span id="current-sound">02 / WARM ANALOG</span><span>Предпросмотр анимации</span></div>
+      <div class="stage" id="stage">
+        <canvas id="rays" aria-hidden="true"></canvas>
+        <div class="arrival-window" id="arrival-window">
+          <div class="window-bar"><i></i><i></i><i></i></div>
+          <div class="wordmark" id="wordmark"><img id="mark" src="../firstlight-mark.svg" alt=""><span id="brand-name">Firstlight</span></div>
+          <div class="welcome" id="welcome"><strong>Welcome</strong><span>See what your friends are up to.</span></div>
+          <div class="continue" id="continue">Continue with Google</div>
         </div>
-        <div class="timeline">
-          <span id="time">0:00</span>
-          <div class="track" aria-label="Тайминг сцены"><div class="track-fill" id="track-fill"></div><i class="cue" id="gather-cue" title="Окно появляется: 4,25 с"></i><i class="sound-cue" id="sound-cue" title="Начало звука"></i><i class="rise-cue" id="rise-cue" title="Логотип начинает подниматься"></i><i class="rise-end-cue" id="rise-end-cue" title="Логотип завершает подъём: 7,32 с"></i></div>
-          <span>0:09</span>
-        </div>
-        <div class="transport">
-          <button class="primary" id="play-scene" type="button">▶ &nbsp; С анимацией</button>
-          <button class="secondary" id="play-sound" type="button">▶ &nbsp; Только звук</button>
-          <button class="secondary stop" id="stop" type="button">Стоп</button>
-          <span class="transport-status" id="status" role="status" aria-live="polite">Загрузите WAV или MP3</span>
-        </div>
+        <span class="stage-caption" id="stage-caption">Готово к прослушиванию</span>
       </div>
-
-      <aside class="side">
-        <div class="side-head"><span>ЗВУКОВАЯ СБОРКА</span><span>ELEVENLABS</span></div>
-        <div class="mode-switch" aria-label="Режим звука">
-          <button class="active" type="button" data-mode="demo" aria-pressed="true">Демо</button>
-          <button type="button" data-mode="full" aria-pressed="false">Полный дубль</button>
-          <button type="button" data-mode="stems" aria-pressed="false">Три слоя</button>
-        </div>
-        <div class="full-upload">
-          <label class="upload" for="file-full">＋ &nbsp; Загрузить полный звук <input id="file-full" type="file" accept="audio/*,.wav,.mp3,.m4a" hidden></label>
-          <span class="file-name" id="name-full">Можно также перетащить файл на сцену</span>
-        </div>
-        <div class="arc" aria-label="Фазы звука">
-          <div class="arc-row"><time>1,00 с</time><div><strong>Заря</strong><small>Тихое ожидание с первыми лучами.</small><label class="upload upload-small" for="file-dawn">＋ Добавить слой<input id="file-dawn" type="file" accept="audio/*,.wav,.mp3,.m4a" hidden></label><span class="file-name" id="name-dawn">Нет файла</span></div></div>
-          <div class="arc-row"><time>4,25 с</time><div><strong>Окно</strong><small>Загрузите понравившийся звук: мок совместит его самый громкий момент с появлением окна.</small><label class="upload upload-small" for="file-window">＋ Добавить слой<input id="file-window" type="file" accept="audio/*,.wav,.mp3,.m4a" hidden></label><span class="file-name" id="name-window">Нет файла</span><label class="align-label" for="window-start">Начало слоя <output id="window-start-value">3,95 с</output></label><input id="window-start" class="align-range" type="range" min="0" max="425" step="5" value="395"><small id="window-align-hint" class="align-hint">Можно подвинуть вручную после загрузки.</small></div></div>
-          <div class="arc-row"><time>6,67 с</time><div><strong>Надежда</strong><small>Высокий тон остаётся, пока логотип поднимается.</small><label class="upload upload-small" for="file-hope">＋ Добавить слой<input id="file-hope" type="file" accept="audio/*,.wav,.mp3,.m4a" hidden></label><span class="file-name" id="name-hope">Нет файла</span></div></div>
-        </div>
-        <div class="side-bottom">
-          <label class="volume-label" for="volume"><span>Громкость</span><output id="volume-value">55%</output></label>
-          <input id="volume" type="range" min="0" max="100" value="55">
-          <p>Файлы остаются на компьютере. Мок накладывает их на тайминг появления Firstlight.</p>
-        </div>
-      </aside>
+      <div class="scene-progress" aria-hidden="true"><span id="scene-fill"></span></div>
+      <div class="scene-phases"><span data-phase="dawn"><time>1,31</time> Ожидание</span><span data-phase="reveal"><time>4,91</time> Бас · последний таптик</span><span data-phase="rise"><time>8,73</time> Подъём</span><span data-phase="hope"><time>9,57</time> Затухание</span></div>
+      <div class="scene-actions"><button id="scene-play" class="scene-primary" type="button">▶ Вся сцена</button><button id="scene-climax" type="button">Нарастание и окно</button><button id="scene-original" type="button">Сравнить с оригиналом</button><button id="scene-restart" type="button">С начала</button><button id="stop" type="button" disabled>Стоп</button></div>
+      <div class="original-player"><audio id="source-audio" controls preload="metadata" src="audio/instruments/ambient-references/selected-ambient-1789585822225.mp3">Скачай оригинальный MP3 по ссылке вверху.</audio><span id="now-status" role="status">0,0 с / 16,1 с</span></div>
     </section>
-    <section class="prompt-panel" aria-label="Промпты для ElevenLabs">
-      <div class="prompt-heading"><div><span class="kicker">ELEVENLABS SOUND EFFECTS</span><h2>Сначала кульминация</h2></div><p>Длинный промпт дал хорошую фактуру, но не поставил пик на нужную секунду. Сделайте короткий центральный звук; мок поставит его на появление окна. Затем добавьте зарю и финал.</p></div>
-      <div class="prompt-grid">
-        <article class="prompt-card prompt-card-main"><div class="prompt-card-top"><span>01 / КУЛЬМИНАЦИЯ · 2,9 СЕКУНДЫ</span><button type="button" data-copy="prompt-window">Скопировать</button></div><p id="prompt-window">2.9-second app reveal cue. Warm bowed glass and felt piano. First 0.3s: a quiet unresolved fifth, like one held breath. At 0.3s: one distinct soft onset, a rising two-note gesture, and a luminous F major add9 chord with a warm low bloom. This is the single clear emotional climax, intimate and hopeful. Hold the bright upper note while lower notes recede into a smooth tail. No voice, beat, drums, bell, ping, whoosh or trailer impact.</p></article>
-        <article class="prompt-card"><div class="prompt-card-top"><span>02 / ЗАРЯ · 3,4 СЕКУНДЫ</span><button type="button" data-copy="prompt-dawn">Скопировать</button></div><p id="prompt-dawn">3.4-second opening layer for a refined app reveal. Warm bowed-glass and felt-piano harmonics in F, only an open fifth and an added ninth, no major third yet. A tiny breath of airy texture grows from near silence like sunrise, gaining warmth and width. Leave the harmony expectant at the end with a soft tail for overlap. Organic, intimate, restrained. No climax, voice, beat, chime, impact or sci-fi whoosh.</p></article>
-        <article class="prompt-card"><div class="prompt-card-top"><span>03 / НАДЕЖДА · 2,3 СЕКУНДЫ</span><button type="button" data-copy="prompt-hope">Скопировать</button></div><p id="prompt-hope">A 2.3-second hopeful ending in the same F major add9 palette. Carry the high note from the previous chord upward by a gentle step, then hold it with airy harmonics and a warm room tail. The lower notes fall away first. Delicate, quietly optimistic, increasingly spacious, fading all the way into silence. No new hit or second climax, no voice, drums, beat, ping or abrupt cutoff.</p></article>
-        <article class="prompt-card"><div class="prompt-card-top"><span>04 / ПОЛНЫЙ ДУБЛЬ · 8 СЕКУНД</span><button type="button" data-copy="prompt-full">Скопировать</button></div><p id="prompt-full">An 8-second sound cue for a quiet app reveal. Warm bowed-glass and felt-piano harmonics. 0-3s: dawn-like air and a suspended fifth slowly waking. At 3.25s: luminous major-chord resolution and a soft low bloom as the window appears; the clear emotional peak without a hard hit. From 5.7s: one high hopeful overtone lingers as the logo rises; lower harmony recedes into a smooth fade to silence. No melody, voice, beat, bells, ping or sci-fi whoosh.</p></article>
-      </div>
+    <section class="bass-library" aria-labelledby="library-title">
+      <div class="library-heading"><h2 id="library-title">02 · Warm analog</h2><a class="archive" id="mix-download" href="audio/synth-picker/synth-02.wav" download>Сцена WAV ↓</a></div>
+      <p class="library-note">Оставлен тёплый аналоговый бас. Его кульминация совпадает с последним таптиком раскрытия; исходный эмбиент звучит в своём темпе.</p>
+      <div id="bass-grid" class="bass-grid" aria-label="Warm analog"></div>
     </section>
-    <footer><span>Первые лучи 1,00 с · окно 4,25 с · знак 5,95 с · подъём 6,67–7,32 с</span><span>Звук плавно затихает к концу сцены</span></footer>
+    <footer><span>Основа: An_8-second_sound_cu_#3-1789585822225.mp3</span><span>Firstlight · Arrival</span></footer>
   </main>
 </body>
 </html>

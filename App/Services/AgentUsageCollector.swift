@@ -5,8 +5,9 @@ import Defaults
 import Foundation
 import Logging
 
-/// Watches the Claude Code, Codex and Cursor logs on this Mac, folds them into
-/// daily token aggregates and per-minute agent activity, and uploads both.
+/// Watches the Claude Code, Codex, Cursor and opencode logs on this Mac,
+/// folds them into daily token aggregates and per-minute agent activity, and
+/// uploads both.
 /// Runs only for accounts that opted in through Settings › Developer. Prompts,
 /// transcripts, working directories and file names never leave the parsers.
 @MainActor
@@ -49,7 +50,8 @@ final class AgentUsageCollector: ObservableObject {
     /// Mac rebuilds its window once and the stored history is corrected.
     /// 2: Codex archived sessions are read, and a message copied into a
     /// resumed session's transcript is counted once rather than per file.
-    nonisolated static let countingVersion = 2
+    /// 3: opencode's message store is read.
+    nonisolated static let countingVersion = 3
 
     @Published private(set) var status = Status()
 
@@ -480,6 +482,11 @@ struct AgentUsageRoots {
         self.cursorHome = home + "/.cursor"
         self.cursorGlobalStorage = home + "/Library/Application Support/Cursor/User/globalStorage"
         self.cursorDatabase = self.cursorGlobalStorage + "/state.vscdb"
+        // opencode keeps its store under the XDG data directory. The sandbox
+        // exception is home-relative, so the default location is the one that
+        // can be read; a store moved with XDG_DATA_HOME is not.
+        self.opencodeStorage = home + "/.local/share/opencode/storage"
+        self.opencodeMessages = self.opencodeStorage + "/message"
     }
 
     // MARK: Internal
@@ -491,6 +498,8 @@ struct AgentUsageRoots {
     let cursorHome: String
     let cursorGlobalStorage: String
     let cursorDatabase: String
+    let opencodeStorage: String
+    let opencodeMessages: String
 
     var watchedDirectories: [String] {
         [
@@ -499,6 +508,7 @@ struct AgentUsageRoots {
             self.codexArchivedSessions,
             self.cursorHome,
             self.cursorGlobalStorage,
+            self.opencodeMessages,
         ]
         .filter { FileManager.default.fileExists(atPath: $0) }
     }
@@ -509,6 +519,7 @@ struct AgentUsageRoots {
         case .claudeCode: [self.claudeProjects]
         case .codex: [self.codexSessions, self.codexArchivedSessions]
         case .cursor: []
+        case .opencode: [self.opencodeMessages]
         }
     }
 
@@ -517,6 +528,7 @@ struct AgentUsageRoots {
         case .claudeCode: "~/.claude"
         case .codex: "~/.codex"
         case .cursor: "~/Library/Application Support/Cursor"
+        case .opencode: "~/.local/share/opencode"
         }
     }
 
@@ -524,7 +536,8 @@ struct AgentUsageRoots {
     func isDetected(_ tool: AgentTool) -> Bool {
         switch tool {
         case .claudeCode,
-             .codex:
+             .codex,
+             .opencode:
             return self.transcriptRoots(tool)
                 .contains { (try? FileManager.default.contentsOfDirectory(atPath: $0)) != nil }
         case .cursor:
@@ -533,11 +546,14 @@ struct AgentUsageRoots {
     }
 
     func transcriptTool(for path: String) -> AgentTool? {
-        guard path.hasSuffix(".jsonl") else { return nil }
-        if path.hasPrefix(self.claudeProjects + "/") { return .claudeCode }
-        if path.hasPrefix(self.codexSessions + "/") || path.hasPrefix(self.codexArchivedSessions + "/") {
-            return .codex
+        if path.hasSuffix(".jsonl") {
+            if path.hasPrefix(self.claudeProjects + "/") { return .claudeCode }
+            if path.hasPrefix(self.codexSessions + "/") || path.hasPrefix(self.codexArchivedSessions + "/") {
+                return .codex
+            }
+            return nil
         }
+        if path.hasSuffix(".json"), path.hasPrefix(self.opencodeMessages + "/") { return .opencode }
         return nil
     }
 
@@ -575,9 +591,9 @@ actor AgentUsageScanner {
     func scanAll(userID: String, since: Date) -> Outcome {
         var outcome = Outcome(scanned: true)
         var files: [String: AgentTool] = [:]
-        for tool in [AgentTool.claudeCode, .codex] {
+        for tool in AgentTool.allCases {
             for root in self.roots.transcriptRoots(tool) {
-                for path in self.transcripts(under: root, modifiedAfter: since) { files[path] = tool }
+                for path in self.transcripts(under: root, tool: tool, modifiedAfter: since) { files[path] = tool }
             }
         }
         self.scan(files: files, userID: userID, since: since, into: &outcome)
@@ -611,9 +627,9 @@ actor AgentUsageScanner {
             return outcome
         }
         var files: [String: AgentTool] = [:]
-        for tool in [AgentTool.claudeCode, .codex] {
+        for tool in AgentTool.allCases {
             for root in self.roots.transcriptRoots(tool) {
-                for path in self.transcripts(under: root, modifiedAfter: since) { files[path] = tool }
+                for path in self.transcripts(under: root, tool: tool, modifiedAfter: since) { files[path] = tool }
             }
         }
         self.scan(files: files, userID: userID, since: since, into: &outcome)
@@ -663,7 +679,7 @@ actor AgentUsageScanner {
     /// Every `message.id|requestId` this scanner has already counted.
     private var seenMessages: Set<String> = []
 
-    private func transcripts(under root: String, modifiedAfter since: Date) -> [String] {
+    private func transcripts(under root: String, tool: AgentTool, modifiedAfter since: Date) -> [String] {
         let rootURL = URL(fileURLWithPath: root)
         guard let enumerator = FileManager.default.enumerator(
             at: rootURL,
@@ -671,7 +687,7 @@ actor AgentUsageScanner {
             options: [.skipsPackageDescendants]
         ) else { return [] }
         var paths: [String] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+        for case let url as URL in enumerator where url.pathExtension == tool.transcriptExtension {
             guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   values.isRegularFile == true,
                   let modified = values.contentModificationDate, modified >= since else { continue }
@@ -739,7 +755,9 @@ actor AgentUsageScanner {
     private func parse(path: String, state: inout AgentParseState) throws -> [AgentUsageEvent] {
         guard let handle = FileHandle(forReadingAtPath: path) else { return [] }
         defer { try? handle.close() }
-        try handle.seek(toOffset: UInt64(state.offset))
+        // opencode rewrites a message in place, so its file is read whole;
+        // the append-only transcripts resume where the last pass stopped.
+        try handle.seek(toOffset: state.tool == .opencode ? 0 : UInt64(state.offset))
         guard let data = try handle.readToEnd(), !data.isEmpty else { return [] }
         let sessionKey = state.sessionKey
         switch state.tool {
@@ -767,6 +785,15 @@ actor AgentUsageScanner {
             state.offset += result.consumedOffset
             state.codex = cumulative
             return result.events
+        case .opencode:
+            // One message per file, rewritten in place until the turn ends, so
+            // the id it was counted under is kept beside the file: a later
+            // rewrite of a message already counted adds nothing.
+            var seen = Set(state.seenIDs)
+            let events = OpencodeUsageParser.parse(data: data, seen: &seen)
+            state.offset = data.count
+            state.seenIDs = Array(seen)
+            return events
         case .cursor:
             return []
         }

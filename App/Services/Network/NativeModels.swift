@@ -10,6 +10,12 @@ struct NativeGroup: Decodable, Identifiable, Hashable {
 struct NativePerson: Decodable, Identifiable {
     // MARK: Internal
 
+    /// Everything live is good for two minutes after it was seen, the same
+    /// window the server counts a minute bucket in. A little slack backwards
+    /// for a clock that is not quite ours.
+    static let freshness: TimeInterval = 120
+    static let clockSlack: TimeInterval = -30
+
     let user_id: String
     let name: String?
     let avatar_url: String?
@@ -32,6 +38,7 @@ struct NativePerson: Decodable, Identifiable {
     /// All recorded tools in one recent minute. Older servers omit this:
     /// their single-tool presence must never be presented as a total count.
     var agent_live: NativeAgentLive? = nil
+    var public_apps_only: Bool? = nil
     /// The ranking's figure when the board is not by active time: agent
     /// minutes or tokens over the period. Absent on the default board.
     let score: Double?
@@ -44,45 +51,22 @@ struct NativePerson: Decodable, Identifiable {
         self.isActive(at: Date())
     }
 
-    /// An agent counts as working for two minutes after its last write, the
-    /// same window as a person's own presence.
-    var isAgentWorkingNow: Bool {
-        let raw = self.agent?.last_active_at ?? self.agent_active_at
-        guard let raw, let date = Self.timestamp(raw) else { return false }
-        let age = Date().timeIntervalSince(date)
-        return age >= -30 && age <= 120
-    }
-
-    /// What to draw in the portrait's corner: the tool by name, or the
-    /// unnamed mark for somebody who shares that an agent is working
-    /// without saying which. Nil when nothing is working, or when the
-    /// person shares no agent activity at all — the server sends neither
-    /// key for them, so there is nothing here to hide.
-    var agentMark: String? {
-        guard self.isAgentWorkingNow else { return nil }
-        return self.agent?.tool ?? NativeAgentToolLabel.unnamed
-    }
-
     func isActive(at now: Date) -> Bool {
-        guard let raw = last_active_at, let date = Self.timestamp(raw) else { return false }
-        let age = now.timeIntervalSince(date)
-        return age >= -30 && age <= 120
+        Self.isFresh(self.last_active_at, at: now)
     }
 
     func liveAgents(at now: Date) -> NativeAgentLive? {
         guard let live = self.agent_live, live.session_count > 0,
-              let observed = Self.timestamp(live.observed_at)
+              Self.isFresh(live.observed_at, at: now)
         else { return nil }
-        let age = now.timeIntervalSince(observed)
-        return age >= -30 && age <= 120 ? live : nil
+        return live
     }
 
     func activeApp(at now: Date) -> NativeAppPresence? {
         guard self.isActive(at: now), let app = self.active_app,
-              let observed = Self.timestamp(app.last_active_at)
+              Self.isFresh(app.last_active_at, at: now)
         else { return nil }
-        let age = now.timeIntervalSince(observed)
-        return age >= -30 && age <= 120 ? app : nil
+        return app
     }
 
     // MARK: Private
@@ -99,6 +83,14 @@ struct NativePerson: Decodable, Identifiable {
 
     private static func timestamp(_ raw: String) -> Date? {
         self.fractionalTimestamps.date(from: raw) ?? self.wholeTimestamps.date(from: raw)
+    }
+
+    /// One window for every live part of a row, so presence, the app in front
+    /// and the minute's agents all go stale on the same terms.
+    private static func isFresh(_ raw: String?, at now: Date) -> Bool {
+        guard let raw, let date = Self.timestamp(raw) else { return false }
+        let age = now.timeIntervalSince(date)
+        return age >= Self.clockSlack && age <= Self.freshness
     }
 }
 
@@ -178,6 +170,7 @@ struct NativeActivity: Decodable {
         var timeLabel: String { DurationLabel.minutes(self.total_minutes ?? 0) }
     }
 
+    var public_only: Bool? = nil
     let active_minutes: Double
     let period: String
     let last_active: String?
@@ -224,7 +217,12 @@ struct NativeAgentLive: Decodable {
     /// Omitted at the `total` sharing level.
     let tools: [Tool]?
 
-    var label: String { "\(self.session_count) \(self.session_count == 1 ? "agent" : "agents") now" }
+    /// The figure alone, so it can turn over as a number while the words
+    /// beside it stay put. One string would make "1 agent" → "2 agents" a
+    /// single change and the digit would cut instead of rolling.
+    var countLabel: String { "\(self.session_count)" }
+    var nounLabel: String { self.session_count == 1 ? "agent now" : "agents now" }
+    var label: String { "\(self.countLabel) \(self.nounLabel)" }
     var detail: String {
         guard let tools, !tools.isEmpty else { return "\(self.session_count) recorded sessions in parallel now" }
         return tools.map { "\(NativeAgentToolLabel.name($0.tool)): \($0.session_count)" }.joined(separator: " · ")
@@ -300,6 +298,10 @@ struct NativeAgentSummary: Decodable {
         var id: String { self.date }
     }
 
+    /// Whose clock the days below are cut in. The owner's, not the reader's:
+    /// a week of bars belongs to the person whose week it was.
+    let time_zone: String?
+
     let period: String
     let has_data: Bool
     let agent_minutes: Double?
@@ -316,6 +318,13 @@ struct NativeAgentSummary: Decodable {
     /// An agent is writing this minute. At `total` this is all that is said
     /// about it; at `detail` `now` says the rest.
     let agent_active_now: Bool?
+    /// The live count, in the same shape and from the same server helper as
+    /// the one on a leaderboard row: sessions observed in the last recorded
+    /// minute, summed across the tools in it. `now.sessions` counts only the
+    /// tool that wrote last, so it is not this and must not stand in for it —
+    /// a profile drawing from `now` showed a smaller number than the row it
+    /// was opened from. Absent from an older server.
+    var agent_live: NativeAgentLive? = nil
     let days: [Day]?
     let last_agent_active_at: String?
     let active_tool: String?
@@ -333,34 +342,15 @@ struct NativeAgentSummary: Decodable {
     /// every account starts at anyway.
     var isDetailed: Bool { (self.shared ?? "detail") == "detail" }
     var isOff: Bool { self.shared == "off" }
-    /// The mark for the row and the now-line: the tool when it is named,
-    /// the unnamed mark when only the fact is shared.
-    var liveMark: String? {
-        if let tool = now?.tool { return tool }
-        if let tool = active_tool { return tool }
-        return self.agent_active_now == true ? NativeAgentToolLabel.unnamed : nil
-    }
 }
 
 /// Display names and glyphs for the tools a summary can name. Unknown tools
 /// keep their raw name so a newer server never renders as nothing.
 enum NativeAgentToolLabel {
     /// Stands for "some agent" where the person shares that one is running
-    /// but not which. It is not a tool, so it has no glyph and falls back
-    /// to the generic mark, and it never matches an app's family.
+    /// but not which. It is not a tool, so it has no glyph of its own and
+    /// falls back to the generic mark.
     static let unnamed = "agent"
-
-    /// The tool an app belongs to: the Claude app is Claude Code's home,
-    /// ChatGPT is Codex's, Cursor is its own. When the app in front and the
-    /// agent writing are the same family, saying both says one thing twice.
-    static func tool(forApp bundleIdentifier: String?, name: String?) -> String? {
-        let bundle = bundleIdentifier?.lowercased() ?? ""
-        let title = name?.lowercased() ?? ""
-        if bundle.contains("anthropic") || bundle.contains("claude") || title == "claude" { return "claude_code" }
-        if bundle.contains("openai") || bundle.contains("chatgpt") || title == "chatgpt" { return "codex" }
-        if bundle.contains("cursor") || title == "cursor" { return "cursor" }
-        return nil
-    }
 
     static func name(_ tool: String) -> String {
         switch tool {
@@ -368,6 +358,7 @@ enum NativeAgentToolLabel {
         case "claude_code": "Claude Code"
         case "codex": "Codex"
         case "cursor": "Cursor"
+        case "opencode": "opencode"
         default: tool.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
@@ -378,6 +369,7 @@ enum NativeAgentToolLabel {
         case "claude_code": "ToolClaude"
         case "codex": "ToolCodex"
         case "cursor": "ToolCursor"
+        case "opencode": "ToolOpencode"
         default: nil
         }
     }
@@ -532,4 +524,12 @@ struct NativeBumpInbox: Decodable {
 struct NativeBumpSent: Decodable {
     let success: Bool?
     let next_allowed_at: String?
+}
+
+struct NativeBumpState: Codable {
+    let can_send: Bool
+    var last_sent_at: String?
+    var last_kind: String?
+    var next_allowed_at: String?
+    var daily_limited: Bool?
 }

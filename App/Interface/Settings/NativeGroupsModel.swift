@@ -28,13 +28,25 @@ struct NativeGroupsClient {
     var invite: (String, Int) async throws -> String
     var copy: (String) -> Bool
     var didChange: ([NativeGroup]) -> Void
+    /// The groups the popover already has. Settings and the popover ask the
+    /// same question of the same account, so the second one to open should not
+    /// draw a skeleton over an answer that is already in the process.
+    var knownGroups: () -> [NativeGroup] = { [] }
 }
 
 @MainActor
 final class NativeGroupsModel: ObservableObject {
     // MARK: Lifecycle
 
-    init(client: NativeGroupsClient) { self.client = client }
+    init(client: NativeGroupsClient) {
+        self.client = client
+        let known = client.knownGroups().filter { $0.id != "global" }
+        if !known.isEmpty {
+            self.groups = known
+            // Seeded, not fetched: it still revalidates on the first open.
+            self.groupsCache.insert(known, for: "groups", now: .distantPast)
+        }
+    }
 
     // MARK: Internal
 
@@ -85,6 +97,7 @@ final class NativeGroupsModel: ObservableObject {
         self.usageLimit = 1
         self.restoreCachedValue(for: destination)
         self.load(force: false)
+        self.prefetch(for: destination)
     }
 
     func discardChanges() {
@@ -226,9 +239,13 @@ final class NativeGroupsModel: ObservableObject {
     // MARK: Private
 
     private static let cacheLifetime: TimeInterval = 30
+    /// How many group rosters to fetch ahead. Enough for the groups a person
+    /// actually keeps, without a burst of requests for a long list.
+    private static let prefetchLimit = 8
 
     private let client: NativeGroupsClient
     private var loadTask: Task<Void, Never>?
+    private var prefetchTasks: [String: Task<Void, Never>] = [:]
     private var copyTask: Task<Void, Never>?
     private var inviteLink: String?
     private var groupsCache = NativeResourceCache<String, [NativeGroup]>()
@@ -255,12 +272,14 @@ final class NativeGroupsModel: ObservableObject {
                     let visibleGroups = result.filter { $0.id != "global" }
                     groups = visibleGroups
                     groupsCache.insert(visibleGroups, for: "groups")
+                    prefetch(for: .list)
                 case let .details(id):
                     let result = try await client.members(id)
                     try Task.checkCancellation()
                     members = result
                     name = result.group.name
                     membersCache.insert(result, for: id)
+                    prefetch(for: .details(id))
                 case let .addMembers(id):
                     let result = try await client.eligibleMembers(id)
                     try Task.checkCancellation()
@@ -272,6 +291,51 @@ final class NativeGroupsModel: ObservableObject {
             } catch {
                 if !Task.isCancelled { loadError = error.localizedDescription }
             }
+        }
+    }
+
+    /// Asks for what the next tap on this screen will need, while the user is
+    /// still reading this one. Each of these screens costs a round trip it
+    /// spends in front of the reader as a skeleton; fetched a screen early,
+    /// that round trip happens where nobody is waiting on it.
+    ///
+    /// Strictly optional work: it only ever fills caches, never `loading` or
+    /// `loadError`. A failure here is the business of the load that the tap
+    /// itself starts, and of nothing else. Work already in flight is left to
+    /// finish rather than restarted, so returning to a screen does not keep
+    /// cancelling the very request that would have made the next tap instant.
+    private func prefetch(for destination: NativeGroupsPage) {
+        switch destination {
+        case .list:
+            // Opening any group from the list.
+            for group in self.groups.prefix(Self.prefetchLimit)
+                where !self.membersCache.isFresh(group.id, for: Self.cacheLifetime)
+            {
+                self.prefetch(key: "members-" + group.id) { [client] in
+                    guard let snapshot = try? await client.members(group.id) else { return }
+                    self.membersCache.insert(snapshot, for: group.id)
+                }
+            }
+        case let .details(id):
+            // Add Friends, from the group that is open. Only its creator has
+            // that button, so only its creator is worth fetching for.
+            guard self.members?.group.is_user_creator == true,
+                  !self.eligibleMembersCache.isFresh(id, for: Self.cacheLifetime) else { return }
+            self.prefetch(key: "eligible-" + id) { [client] in
+                guard let people = try? await client.eligibleMembers(id) else { return }
+                self.eligibleMembersCache.insert(people, for: id)
+            }
+        case .create,
+             .addMembers:
+            break
+        }
+    }
+
+    private func prefetch(key: String, work: @escaping () async -> Void) {
+        guard self.prefetchTasks[key] == nil else { return }
+        self.prefetchTasks[key] = Task {
+            await work()
+            self.prefetchTasks[key] = nil
         }
     }
 

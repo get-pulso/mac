@@ -14,6 +14,7 @@
 		<string>/.codex/</string>
 		<string>/.cursor/</string>
 		<string>/Library/Application Support/Cursor/</string>
+		<string>/.local/share/opencode/</string>
 	</array>
     <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
     <array>

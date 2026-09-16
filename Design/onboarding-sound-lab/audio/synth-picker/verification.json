@@ -1,0 +1,26 @@
+{
+  "checks": [
+    "only 02 Warm analog scene and bass",
+    "only the 260 ms source peak changed, exactly -3 dB at its centre",
+    "original samples unchanged outside the short peak",
+    "no logo repeats: mix minus bass equals adjusted source",
+    "source reconstruction within 4e-7",
+    "original speed 1",
+    "pre-reveal bass below reveal level",
+    "100 ms bass energy crest aligned to final reveal haptic within one sample",
+    "AAC decodes and browser bundle matches",
+    "no clipping and smooth endings",
+    "native 02 asset exactly matches lab export",
+    "all page assets exist"
+  ],
+  "results": [
+    {
+      "id": "02",
+      "mix_peak": 0.18671226501464844,
+      "bass_crest_at": 4.905875,
+      "source_reconstruction_error": 1.1897425467380374e-07,
+      "pre_bass_rms": 0.010182277700565828,
+      "reveal_bass_rms": 0.06235435135914312
+    }
+  ]
+}

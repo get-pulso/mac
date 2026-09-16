@@ -89,6 +89,7 @@ extension View {
     func nativeSettingsPrimaryButton() -> some View {
         modifier(NativeSettingsButtonMetricsModifier())
             .buttonStyle(.borderedProminent)
+            .tint(.firstlight)
     }
 }
 
@@ -208,15 +209,20 @@ struct NativePersonSkeleton: View {
                     .frame(width: 20, alignment: .center)
                     .padding(.trailing, 8)
             }
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 NativeSkeletonShape(width: avatarSize, height: avatarSize, radius: avatarSize / 2)
-                VStack(alignment: .leading, spacing: 7) {
-                    NativeSkeletonShape(width: 112, height: 13)
-                    NativeSkeletonShape(width: 168, height: 10)
+                VStack(alignment: .leading, spacing: 4) {
+                    NativeSkeletonShape(height: 13).frame(maxWidth: 112)
+                        .frame(height: 17)
+                    NativeSkeletonShape(height: 10).frame(maxWidth: 168)
+                        .frame(height: 18)
                 }
-                Spacer(minLength: 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if showAction { NativeSkeletonShape(width: 54, height: 22, radius: 6) }
-                else { NativeSkeletonShape(width: 34, height: 11) }
+                else {
+                    NativeSkeletonShape(width: 55, height: 16)
+                        .frame(minWidth: 70, alignment: .trailing)
+                }
             }
         }
     }
@@ -255,6 +261,36 @@ struct NativeLabeledRowsSkeleton: View {
                         Spacer()
                         NativeSkeletonShape(width: 48, height: 12)
                     }
+                }
+            }
+        }
+    }
+}
+
+/// The app leaderboard has 60pt rows, a place, a square icon and a people
+/// count. Its loading state keeps those columns without a section heading.
+struct NativeAppRankingSkeleton: View {
+    var rows = 5
+
+    var body: some View {
+        NativeDelayedSkeleton {
+            VStack(spacing: 0) {
+                ForEach(0 ..< rows, id: \.self) { _ in
+                    HStack(spacing: 10) {
+                        NativeSkeletonShape(width: 13, height: 14).frame(width: 20)
+                        NativeSkeletonShape(width: 32, height: 32, radius: 8)
+                        VStack(alignment: .leading, spacing: 4) {
+                            NativeSkeletonShape(height: 13).frame(maxWidth: 112)
+                            NativeSkeletonShape(height: 11).frame(maxWidth: 84)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Spacer(minLength: 6)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            NativeSkeletonShape(width: 18, height: 16)
+                            NativeSkeletonShape(width: 34, height: 11)
+                        }
+                    }
+                    .padding(.horizontal, 12).frame(height: 60)
                 }
             }
         }
@@ -344,6 +380,7 @@ struct NativeStateMessage: View {
     var detail: String?
     var actionTitle: String?
     var action: (() -> Void)?
+    var actionMorph: NativeTrayMorph?
     /// The space the message is centred in. Lists pass the height their rows
     /// would take, so the message sits in the middle of it, not at the top.
     var minHeight: CGFloat = 150
@@ -381,7 +418,11 @@ struct NativeStateMessage: View {
 
     /// The same capsule the popover's other standalone buttons wear.
     @ViewBuilder private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
-        if #available(macOS 26.0, *) {
+        if let actionMorph {
+            NativeTrayMorphButton(morph: actionMorph, prominent: false, action: action) {
+                Text(title).font(.system(size: 13, weight: .medium))
+            }
+        } else if #available(macOS 26.0, *) {
             Button(title, action: action)
                 .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.regular)
         } else {
@@ -405,21 +446,35 @@ struct NativeInlineError: View {
 }
 
 struct NativeBackButton: View {
+    // MARK: Internal
+
+    var title = "Back"
     var help = "Back"
     let action: () -> Void
 
     var body: some View {
         Group {
             if #available(macOS 26.0, *) {
-                Button(action: action) { Image(systemName: "chevron.left").frame(width: 18, height: 22) }
-                    .buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.regular)
+                Button(action: action) { label }
+                    .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.regular)
             } else {
-                Button(action: action) { Image(systemName: "chevron.left").frame(width: 18, height: 22) }
-                    .buttonStyle(.bordered).controlSize(.regular)
+                Button(action: action) { label }
+                    .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.regular)
             }
         }
         .help(help).accessibilityLabel(help)
         .keyboardShortcut("[", modifiers: .command)
+    }
+
+    // MARK: Private
+
+    private var label: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "chevron.left").font(.system(size: 10, weight: .semibold))
+            Text(title).font(.system(size: 12, weight: .medium)).lineLimit(1).truncationMode(.tail)
+        }
+        .frame(maxWidth: 110, minHeight: 22)
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -429,18 +484,25 @@ struct PopoverContent<Content: View>: View {
 
     var maximumHeight = NativeLayout.peopleBodyHeight
     var reservesMaximumHeight = false
+    var scrollOffset: Binding<CGFloat> = .constant(0)
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12, content: content)
-                .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(NativeLayout.popoverContentPadding).frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .background(GeometryReader { geometry in
                     Color.clear.preference(key: ContentHeight.self, value: geometry.size.height)
                 })
         }
         .scrollBounceBehavior(.basedOnSize)
+        .scrollPosition($position)
+        .onAppear { self.position.scrollTo(y: self.scrollOffset.wrappedValue) }
+        .onScrollGeometryChange(for: CGFloat.self) { max(0, $0.contentOffset.y + $0.contentInsets.top)
+        } action: { _, value in
+            self.scrollOffset.wrappedValue = value
+        }
         .coordinateSpace(.named(NativeLayout.popoverScrollSpace))
         .frame(
             height: reservesMaximumHeight
@@ -466,6 +528,7 @@ struct PopoverContent<Content: View>: View {
     // belonging to no screen, and the window sets off towards it before the
     // measurement arrives a frame later and turns it around.
     @State private var measuredHeight: CGFloat?
+    @State private var position = ScrollPosition(y: 0)
 }
 
 struct NativeSearchField: NSViewRepresentable {
@@ -499,7 +562,9 @@ struct NativeSearchField: NSViewRepresentable {
         // The field sits at the top of the settings sidebar; "settings" is implied.
         field.placeholderString = "Search"
         field.controlSize = .regular
-        field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        field.font = font.fontDescriptor.withDesign(.rounded)
+            .flatMap { NSFont(descriptor: $0, size: font.pointSize) } ?? font
         field.delegate = context.coordinator
         field.sendsSearchStringImmediately = true
         return field
@@ -630,16 +695,68 @@ struct NativeLocationIcon: View {
     }
 }
 
+struct NativeClockIcon: View {
+    var size: CGFloat = 11
+
+    var body: some View {
+        Image("ProfileClock")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: self.size, height: self.size)
+    }
+}
+
 struct NativeLocationLabel: View {
     let text: String
     var size: CGFloat = 12
+    /// The person's own zone, when it is known. Their week of activity is cut
+    /// at their midnight, so the clock that did the cutting is worth showing:
+    /// "3:47" beside a name says more about a quiet day than any label.
+    var timeZone: TimeZone?
 
     var body: some View {
         HStack(spacing: 3) {
             NativeLocationIcon(size: self.size - 1)
             Text(self.text).font(.system(size: self.size))
+            if let timeZone = self.timeZone {
+                // A clock face rather than a separator: the reading beside it
+                // is somebody else's time, not a second half of the place.
+                NativeClockIcon(size: self.size - 1).padding(.leading, 3)
+                NativeLocalClock(timeZone: timeZone, size: self.size)
+            }
         }
         .foregroundStyle(.secondary)
         .lineLimit(1)
+    }
+}
+
+/// The time where somebody is, ticking. A minute is the smallest unit that
+/// means anything here, so it redraws on that and not on every frame.
+struct NativeLocalClock: View {
+    // MARK: Internal
+
+    let timeZone: TimeZone
+    var size: CGFloat = 12
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            Text(Self.formatter(for: self.timeZone).string(from: context.date))
+                .font(.system(size: self.size).monospacedDigit())
+        }
+    }
+
+    // MARK: Private
+
+    private static var formatters: [String: DateFormatter] = [:]
+
+    private static func formatter(for zone: TimeZone) -> DateFormatter {
+        if let cached = self.formatters[zone.identifier] { return cached }
+        let formatter = DateFormatter()
+        formatter.locale = Locale.current
+        formatter.timeZone = zone
+        formatter.setLocalizedDateFormatFromTemplate("j:mm")
+        self.formatters[zone.identifier] = formatter
+        return formatter
     }
 }

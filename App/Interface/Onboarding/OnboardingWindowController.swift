@@ -112,13 +112,17 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         // Activation and the first Metal drawable settle before the clock starts.
         DispatchQueue.main.asyncAfter(deadline: .now() + (animated ? 0.2 : 0)) { [weak self] in
             guard let self, self.isPresented, self.generation == ticket, !self.handingOff else { return }
-            self.playback.start(animated: animated)
+            self.playback.start(animated: animated, sound: OnboardingSoundVariant.selected())
         }
     }
 
     func finishAnimation() {
-        guard self.isPresented, !self.playback.finished else { return }
-        self.playback.finish()
+        guard self.isPresented else { return }
+        if self.playback.finished {
+            self.playback.stop()
+        } else {
+            self.playback.finish()
+        }
     }
 
     /// Used by successful authentication and app termination, never signs out.

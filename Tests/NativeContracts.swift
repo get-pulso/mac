@@ -14,6 +14,17 @@ struct NativeContracts {
         expect(try InviteInput.parse("firstlight://invite?token=test_token") == .token("test_token"))
         expect(try InviteInput.parse("https://firstlight.sh/invite?token=abc") == .token("abc"))
         expect(try InviteInput.parse("http://localhost:3001/invite?token=abc") == .token("abc"))
+        // The arrival page appends its handoff nonce to whatever it hands over;
+        // the invitation itself has to read the same either way.
+        expect(
+            try InviteInput
+                .parse("firstlight://join/abc123?h=11111111-2222-3333-4444-555555555555") == .friendCode("ABC123")
+        )
+        expect(
+            try InviteInput
+                .parse("firstlight://invite?token=test_token&h=11111111-2222-3333-4444-555555555555") ==
+                .token("test_token")
+        )
         for input in ["", "   ", "https://evil.example/join/ABC", "javascript:alert(1)", "firstlight://invite", "has spaces", "file:///join/abc", "firstlight://join", "https://firstlight.sh/join/", "firstlight://callback?token=x"] {
             do { _ = try InviteInput.parse(input); preconditionFailure("Accepted invalid invite") }
             catch { checks += 1 }

@@ -1,7 +1,10 @@
 import AppKit
 
 enum NativeLayout {
+    static let popoverWidth: CGFloat = 350
     static let popoverHeaderHeight: CGFloat = 50
+    /// The margin a detail screen keeps inside the popover.
+    static let popoverContentPadding: CGFloat = 14
     static let peopleListHeight: CGFloat = 310
     static let peopleFooterHeight: CGFloat = 45
     static let peopleBodyHeight = peopleListHeight + peopleFooterHeight

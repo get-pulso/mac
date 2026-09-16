@@ -13,7 +13,7 @@ struct DashboardInviteButon: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 16)
-            .background(Color.accentColor)
+            .background(Color.firstlight)
             .foregroundColor(.white)
             .cornerRadius(18)
             .shadow(radius: 4, y: 1)

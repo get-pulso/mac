@@ -2,6 +2,7 @@ import Alamofire
 import Combine
 import Defaults
 import Dependencies
+import Nuke
 import SwiftUI
 
 @MainActor
@@ -39,9 +40,10 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    /// What the popover shows under the tray: the list, or one profile.
-    /// Adding friends and the sent requests are trays, not screens.
-    enum Screen: Hashable { case list, person(String) }
+    /// What the popover shows under the tray: the list, one profile, or that
+    /// person's photograph. Adding friends and the sent requests are trays,
+    /// not screens.
+    enum Screen: Hashable { case list, person(String), photo(String), app(String) }
 
     /// Which way the last screen change went. Forward pushes deeper (a tap on
     /// a row, on Invite, on Sent requests); back returns (Back, Escape, a
@@ -56,6 +58,19 @@ final class SocialStore: ObservableObject {
         var from: Screen = .list
         var to: Screen = .list
         var direction: Direction = .forward
+
+        /// A photograph is not another screen arriving beside this one: it is
+        /// this screen's own portrait opening out of the avatar, and back into
+        /// it. Nothing slides in either direction while that happens.
+        var isPhoto: Bool {
+            if case .photo = self.from { return true }
+            if case .photo = self.to { return true }
+            return false
+        }
+
+        /// Opening, as opposed to going back. The two are not the same move:
+        /// one has to be followed, the other only has to be believed.
+        var isOpening: Bool { self.direction == .forward }
     }
 
     /// The invite flow, one tray at a time. A tray is a surface that grows out
@@ -115,8 +130,9 @@ final class SocialStore: ObservableObject {
         var direction: Direction = .forward
     }
 
-    /// One motion for every screen change, so a tap, Back and Escape all read
-    /// the same way. No overshoot, on purpose: this spring does not just carry
+    /// One motion for a tab change and for the tray. Screens themselves moved
+    /// to `navigationTransition`; this is what is left that resizes the panel
+    /// without anything flying across it. No overshoot, on purpose: this spring does not just carry
     /// the flying avatar, it drifts both screens and resizes the panel around
     /// them. A container that springs past its mark and comes back reads as a
     /// stutter rather than as weight, and the further a thing travels the wider
@@ -164,8 +180,11 @@ final class SocialStore: ObservableObject {
 
     @Published var screen: Screen = .list
     @Published var tab = "friends"
+    @Published var showsApps = false
+    var profilePeople: [String: NativePerson] = [:]
+    var detailScrollOffsets: [Screen: CGFloat] = [:]
     @Published private(set) var period = SocialStore.storedPeriod
-    /// `active`, `agent` or `tokens`; see `setMetric`.
+    /// `active` or `agent`; see `setMetric`.
     @Published private(set) var metric = SocialStore.storedMetric
     @Published var groups: [NativeGroup] = []
     /// The visible tab and period, as far as it has been scrolled. Rows beyond
@@ -234,15 +253,59 @@ final class SocialStore: ObservableObject {
     var incomingRequestCount: Int { self.requests.incoming.count }
 
     var previousScreen: Screen? { self.navigationHistory.previous }
+
+    var previousTray: Tray? { self.trayHistory.previous }
     var hasLoadedCurrentList: Bool { self.listCache.contains(self.listKey) }
 
     /// One cached list per tab, period and metric.
     var listKey: String { self.tab + self.period + (self.metric == "active" ? "" : "|" + self.metric) }
 
+    /// How one screen becomes another: the profile opening out of a row, the
+    /// portrait out of the profile, and both of them folding back. This is the
+    /// curve iOS opens a picture out of its thumbnail with — most of the
+    /// distance covered in the first third, then a long flat landing with no
+    /// bounce at the end. Every one of these changes has something flying
+    /// across the panel, and a spring that settles in its own time leaves the
+    /// flight arriving after the screen has stopped.
+    ///
+    /// Opening and closing take different lengths on purpose, the way every
+    /// presentation on iOS does. Opening is the move the eye has to follow —
+    /// a face growing to twenty times its area, into a screen that was not
+    /// there a moment ago — and rushing it reads as a flicker rather than as
+    /// a picture. Closing goes somewhere already known and already looked at,
+    /// so it only has to be believed, and the shorter it is the more decisive
+    /// it reads.
+    static func navigationTransition(opening: Bool) -> Animation {
+        .timingCurve(0.32, 0.72, 0, 1, duration: opening ? 0.32 : 0.26)
+    }
+
+    /// Pulls the faces of a list into the image cache, so the rows that are
+    /// built when the tab is chosen have their portraits on the first frame
+    /// they draw rather than a frame or two later.
+    static func warmPortraits(of people: [NativePerson]) {
+        let links = people.compactMap { $0.avatar_url.flatMap(URL.init(string:)) }
+        guard !links.isEmpty else { return }
+        Self.portraitPrefetcher.startPrefetching(with: links)
+    }
+
+    func hasScreenInHistory(_ screen: Screen) -> Bool {
+        self.navigationHistory.routes.contains(screen)
+    }
+
     /// Where a person stands in the ranking on screen. A loaded row knows its
     /// own place; the caller's pinned row answers for itself when it sits
     /// below everything that has been scrolled in. A profile reached from
     /// anywhere but the ranking has no place to show.
+    /// The zone somebody's own days are cut in, once their profile has been
+    /// read. Nil until then, and for people who have never reported one.
+    func timeZone(for id: String) -> TimeZone? {
+        // Read from the cache by id, never from the open profile: this is
+        // asked for a person, and the open one may be somebody else.
+        guard let name = agentSummaryCache.value(for: id + self.period)?.time_zone
+        else { return nil }
+        return TimeZone(identifier: name)
+    }
+
     func place(of id: String) -> Int? {
         if let index = peopleList.items.firstIndex(where: { $0.id == id }) {
             return LeaderboardPlace.place(rank: self.peopleList.items[index].rank, loadedIndex: index)
@@ -257,9 +320,9 @@ final class SocialStore: ObservableObject {
         UserDefaults.standard.set(period, forKey: Self.periodDefaultsKey)
     }
 
-    /// What the ranking is by: a person's own active time, the time their
-    /// coding agents worked, or the tokens those agents used. The rows
-    /// re-sort in place; the reorder is the whole story of the change.
+    /// What the ranking is by: a person's own active time, or the time their
+    /// coding agents worked. The rows re-sort in place; the reorder is the
+    /// whole story of the change.
     func setMetric(_ metric: String) {
         guard Self.supportedMetrics.contains(metric), self.metric != metric else { return }
         self.metric = metric
@@ -296,6 +359,92 @@ final class SocialStore: ObservableObject {
         let next = index + step
         guard order.indices.contains(next) else { return }
         self.selectTab(order[next])
+    }
+
+    /// Loads what the popover will open on, before it is opened.
+    ///
+    /// Nothing here is free at the moment of the click: every tab, every
+    /// profile and the groups behind them are round trips, and a popover
+    /// opened cold spends them in front of the user as a skeleton. A list
+    /// only draws a skeleton while its cache has no entry at all, so one
+    /// warm early in the session is what stands between every later tap and
+    /// a spinner — afterwards a stale list is drawn at once and revalidated
+    /// behind it.
+    ///
+    /// Safe to call as often as a signed-in user reaches for the menu bar: a
+    /// fresh cache returns immediately, and identical requests already in
+    /// flight are coalesced by the network layer.
+    func warm() {
+        guard Defaults[.currentUserID] != nil else { return }
+        if !self.refreshingList,
+           !self.listCache.isFresh(self.listKey, for: Self.cacheLifetime)
+           || !self.groupsCache.isFresh("groups", for: Self.cacheLifetime)
+        {
+            Task {
+                await self.refresh()
+                self.warmOtherTabs()
+            }
+        } else {
+            self.warmOtherTabs()
+        }
+    }
+
+    /// The tabs beside the one that is showing. Switching tab changes the
+    /// list's cache key, so a tab nobody has opened yet is as cold as the
+    /// whole popover was: the group Serafim taps is a skeleton even though
+    /// Friends came up instantly. These arrive quietly, one at a time, so a
+    /// person with many groups does not open a burst of requests.
+    func warmOtherTabs() {
+        guard Defaults[.currentUserID] != nil, self.tabWarmTask == nil else { return }
+        let period = self.period
+        let metric = self.metric
+        let pending = (["friends"] + self.groups.map(\.id) + ["global"])
+            .map { ($0, $0 + period + (metric == "active" ? "" : "|" + metric)) }
+            .filter { $0.0 != self.tab && !self.listCache.contains($0.1) }
+        guard !pending.isEmpty else { return }
+        self.tabWarmTask = Task {
+            defer { tabWarmTask = nil }
+            for (tab, key) in pending {
+                guard Defaults[.currentUserID] != nil, !Task.isCancelled else { return }
+                guard let page: NativeLeaderboardPage = try? await self.network.request(
+                    path: "/api/friends/leaderboard", method: .get,
+                    query: Self.leaderboardQuery(
+                        tab: tab, period: period, metric: metric,
+                        limit: NativePeopleList.pageSize, offset: 0
+                    )
+                ) else { continue }
+                guard !self.listCache.contains(key) else { continue }
+                self.listCache.insert(NativePeopleList.empty.refreshed(with: page), for: key)
+                // The rows of a warmed tab are ready before it is asked for;
+                // the faces in them were not, and a tab change builds every row
+                // anew. Without this the portraits arrive over the slide
+                // instead of before it.
+                Self.warmPortraits(of: page.items)
+            }
+        }
+    }
+
+    /// The profile behind one row, before it is tapped. Hovering a row is a
+    /// few hundred milliseconds of warning, which is most of what the profile
+    /// costs; by the time the click lands the answer is usually already here.
+    func warmPerson(_ id: String) {
+        guard Defaults[.currentUserID] != nil,
+              !self.activityCache.isFresh(id + self.period, for: Self.cacheLifetime),
+              self.personWarmTasks[id] == nil else { return }
+        let period = self.period
+        self.personWarmTasks[id] = Task {
+            defer { personWarmTasks[id] = nil }
+            async let details: NativeActivity? = try? self.network.request(
+                path: "/api/user/activity", method: .get,
+                query: ["user_id": id, "period": period]
+            )
+            async let agents: NativeAgentSummary? = try? self.network.request(
+                path: "/api/users/\(id)/agent-summary", method: .get,
+                query: ["period": period, "tz": TimeZone.current.identifier]
+            )
+            if let details = await details { self.activityCache.insert(details, for: id + period) }
+            if let summary = await agents { self.agentSummaryCache.insert(summary, for: id + period) }
+        }
     }
 
     func refresh(force: Bool = false) async {
@@ -352,6 +501,12 @@ final class SocialStore: ObservableObject {
         // when its own cache goes stale.
         async let loadedInvite: NativePersonalInvite? = self.personalInviteCache.contains("invite") ? nil :
             try? self.network.request(path: "/api/user/invite-link", method: .get)
+        // Who you are directly connected to is one answer for the whole
+        // account, not one per profile. Fetched here, opening a person costs
+        // the two requests that are actually about that person.
+        async let loadedDirect: NativeDirectFriends? = self.directFriendsCache
+            .isFresh("friends", for: Self.cacheLifetime) ? nil :
+            try? self.network.request(path: "/api/user/direct-friends", method: .get)
 
         var newGroups: [NativeGroup]?
         var newPeople: NativeLeaderboardPage?
@@ -362,6 +517,7 @@ final class SocialStore: ObservableObject {
         catch { if !(error is CancellationError) { failures.append(error) } }
         let newRequests = await loadedRequests
         let newInvite = await loadedInvite
+        let newDirect = await loadedDirect
 
         guard self.refreshID == id, Defaults[.currentUserID] != nil else { return }
         if let newRequests {
@@ -371,6 +527,11 @@ final class SocialStore: ObservableObject {
         if let newInvite {
             self.personalInvite = newInvite
             self.personalInviteCache.insert(newInvite, for: "invite")
+        }
+        if let newDirect {
+            let ids = Set(newDirect.directFriendIds)
+            self.directFriendIDs = ids
+            self.directFriendsCache.insert(ids, for: "friends")
         }
         if let newGroups {
             self.groups = newGroups.filter { $0.id != "global" }
@@ -397,6 +558,16 @@ final class SocialStore: ObservableObject {
         // moment the request failed, not for whenever the list is next drawn.
         self.listFailure = failures.first.map {
             NativeLoadFailure($0.asAFError?.underlyingError ?? $0, online: NativeReachability.shared.isOnline)
+        }
+        if failures.isEmpty {
+            // The tabs beside this one, and the profiles at the top of it:
+            // whatever the next tap is likely to be, asked for now rather
+            // than then. Bounded on purpose — a warm must not turn into a
+            // burst of requests for rows nobody will open.
+            self.warmOtherTabs()
+            for person in self.peopleList.items.prefix(Self.warmedProfiles) {
+                self.warmPerson(person.id)
+            }
         }
     }
 
@@ -435,8 +606,13 @@ final class SocialStore: ObservableObject {
             self.showList()
             return
         }
-        self.navigationHistory.record(self.screen, before: next)
-        self.navigate(to: next)
+        if let person = self.selectedPerson { self.profilePeople[person.id] = person }
+        if self.navigationHistory.returnTo(next) {
+            self.navigate(to: next, direction: .back)
+        } else {
+            self.navigationHistory.record(self.screen, before: next)
+            self.navigate(to: next)
+        }
     }
 
     // MARK: Tray
@@ -836,10 +1012,14 @@ final class SocialStore: ObservableObject {
 
     func reset() {
         self.refreshID = UUID()
+        self.tabWarmTask?.cancel(); self.tabWarmTask = nil
+        for task in self.personWarmTasks.values { task.cancel() }
+        self.personWarmTasks.removeAll()
         self.screenTask?.cancel(); self.screenLoading = false; self.activityCache.removeAll(); self.listFailure = nil
         self.listCache.removeAll(); self.groupsCache.removeAll(); self.displayedListKey = ""; self.navigationHistory
             .removeAll()
         self.screen = .list; self.tab = "friends"; self.groups = []; self.peopleList = .empty
+        self.showsApps = false; self.profilePeople.removeAll(); self.detailScrollOffsets.removeAll()
         self.navigation = Navigation(); self.tabDirection = 1; self.acceptedRequestIDs = []; self
             .inviteDeparting = false
         self.trayTask?.cancel(); self.cardTask?.cancel(); self.tray = nil; self.trayLoading = false
@@ -867,10 +1047,20 @@ final class SocialStore: ObservableObject {
     // MARK: Private
 
     private static let cacheLifetime: TimeInterval = 30
+    /// How many profiles at the top of a list to fetch ahead.
+    private static let warmedProfiles = 3
     private static let periodDefaultsKey = "firstlight.activityPeriod"
     private static let supportedPeriods = Set(["24h", "7d", "30d"])
     private static let metricDefaultsKey = "firstlight.leaderboardMetric"
-    private static let supportedMetrics = Set(["active", "agent", "tokens"])
+    private static let supportedMetrics = Set(["active", "agent"])
+
+    /// Portraits only, off the visible list's own loading: `.low` so a face
+    /// for a tab nobody has opened never delays one that is on screen.
+    private static let portraitPrefetcher: ImagePrefetcher = {
+        let prefetcher = ImagePrefetcher()
+        prefetcher.priority = .low
+        return prefetcher
+    }()
 
     private static var storedPeriod: String {
         let stored = UserDefaults.standard.string(forKey: self.periodDefaultsKey) ?? "24h"
@@ -884,6 +1074,8 @@ final class SocialStore: ObservableObject {
 
     private var reachabilityWatch: AnyCancellable?
     private var screenTask: Task<Void, Never>?
+    private var tabWarmTask: Task<Void, Never>?
+    private var personWarmTasks: [String: Task<Void, Never>] = [:]
     private var trayTask: Task<Void, Never>?
     private var cardTask: Task<Void, Never>?
     private var navigationHistory = NativeNavigationHistory<Screen>()
@@ -924,7 +1116,7 @@ final class SocialStore: ObservableObject {
             "offset": String(offset),
             // The server names the metrics after its tables; the app after
             // what a person sees. Active time is the default and sends nothing.
-            "metric": metric == "agent" ? "agent_minutes" : metric == "tokens" ? "tokens" : nil,
+            "metric": metric == "agent" ? "agent_minutes" : nil,
         ]
     }
 
@@ -1016,8 +1208,9 @@ final class SocialStore: ObservableObject {
         // leaving and the arriving screen read it as they run.
         if next != self.screen { self.navigation = Navigation(from: self.screen, to: next, direction: direction) }
         // Screens cross-fade and the tapped avatar flies between the list row
-        // and the profile, so the switch itself has to carry an animation.
-        withAnimation(Self.screenTransition) { self.screen = next }
+        // and the profile, so the switch itself has to carry an animation. A
+        // portrait opening carries its own, quicker one.
+        withAnimation(Self.navigationTransition(opening: self.navigation.isOpening)) { self.screen = next }
         self.error = nil
         self.notice = nil
         self.feedbackToast = nil
@@ -1031,35 +1224,47 @@ final class SocialStore: ObservableObject {
             // Both requests are optional enhancements to data the list already
             // supplied, so nothing here throws; a miss just leaves the cache.
             if case let .person(id) = next {
-                // The leaderboard already supplies the visible total. Treat
-                // this fresher detail request as an optional enhancement so
-                // an empty/transient response never replaces known data with
-                // a low-level serialization error.
+                let period = self.period
+                let key = self.profileCacheKey(id, period: period)
+                if self.selectedPerson?.public_apps_only == true {
+                    self.agentSummary = nil
+                    do {
+                        let details: NativeActivity = try await self.network.request(
+                            path: "/api/apps/profile/\(id)", method: .get, query: ["period": period]
+                        )
+                        guard !Task.isCancelled, self.screen == next, self.period == period else { return }
+                        self.activity = details
+                        self.activityCache.insert(details, for: key)
+                    } catch {
+                        guard !Task.isCancelled, self.screen == next, self.period == period else { return }
+                        self.activity = nil
+                        self.activityCache.invalidate(key)
+                        self.error = "Public app activity is unavailable."
+                    }
+                    return
+                }
                 async let details: NativeActivity? = try? self.network.request(
-                    path: "/api/user/activity",
-                    method: .get,
-                    query: ["user_id": id, "period": self.period]
+                    path: "/api/user/activity", method: .get, query: ["user_id": id, "period": period]
                 )
                 async let direct: NativeDirectFriends? = try? self.network.request(
                     path: "/api/user/direct-friends",
                     method: .get
                 )
-                // Days are cut at the viewer's midnight, so the week's bars
-                // line up with the day the viewer is looking at.
                 async let agents: NativeAgentSummary? = try? self.network.request(
-                    path: "/api/users/\(id)/agent-summary",
-                    method: .get,
-                    query: ["period": self.period, "tz": TimeZone.current.identifier]
+                    path: "/api/users/\(id)/agent-summary", method: .get,
+                    query: ["period": period, "tz": TimeZone.current.identifier]
                 )
-                if let details = await details {
-                    self.activity = details
-                    self.activityCache.insert(details, for: id + self.period)
+                let (loadedActivity, loadedAgents, connections) = await (details, agents, direct)
+                guard !Task.isCancelled, self.screen == next, self.period == period else { return }
+                if let loadedActivity {
+                    self.activity = loadedActivity
+                    self.activityCache.insert(loadedActivity, for: key)
                 }
-                if let summary = await agents {
-                    self.agentSummary = summary
-                    self.agentSummaryCache.insert(summary, for: id + self.period)
+                if let loadedAgents {
+                    self.agentSummary = loadedAgents
+                    self.agentSummaryCache.insert(loadedAgents, for: id + period)
                 }
-                if let connections = await direct {
+                if let connections {
                     let ids = Set(connections.directFriendIds)
                     self.directFriendIDs = ids
                     self.directFriendsCache.insert(ids, for: "friends")
@@ -1119,13 +1324,21 @@ final class SocialStore: ObservableObject {
         withAnimation(Self.screenTransition) { self.tray = next }
     }
 
+    private func profileCacheKey(_ id: String, period: String) -> String {
+        id + period + (self.profilePeople[id]?.public_apps_only == true ? "|public-apps" : "")
+    }
+
     private func restoreCachedValue(for screen: Screen) {
         switch screen {
         case let .person(id):
-            self.activity = self.activityCache.value(for: id + self.period)
+            if let person = self.profilePeople[id] { self.selectedPerson = person }
+            self.activity = self.activityCache.value(for: self.profileCacheKey(id, period: self.period))
             self.agentSummary = self.agentSummaryCache.value(for: id + self.period)
             if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
-        case .list: break
+        // The picture is the one the profile it was opened from already has.
+        case .list,
+             .app,
+             .photo: break
         }
     }
 
@@ -1138,9 +1351,14 @@ final class SocialStore: ObservableObject {
 
     private func isFresh(_ screen: Screen) -> Bool {
         switch screen {
-        case .list: true
+        case .list,
+             .app,
+             .photo: true
         case let .person(id):
-            self.activityCache.isFresh(id + self.period, for: Self.cacheLifetime) &&
+            self.selectedPerson?.public_apps_only != true && self.activityCache.isFresh(
+                self.profileCacheKey(id, period: self.period),
+                for: Self.cacheLifetime
+            ) &&
                 self.directFriendsCache.isFresh("friends", for: Self.cacheLifetime)
         }
     }

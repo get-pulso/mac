@@ -196,3 +196,82 @@ enum CodexUsageParser {
     private static let turnMarker = Data("\"turn_context\"".utf8)
     private static let countMarker = Data("\"token_count\"".utf8)
 }
+
+/// opencode keeps one small JSON object per message under
+/// `storage/message/<session>/<message>.json` rather than a growing
+/// transcript, and rewrites it while the turn runs. A message is counted only
+/// once it carries `time.completed`: until then the file is read again on
+/// every change, and the final write is the one that holds the whole turn.
+enum OpencodeUsageParser {
+    // MARK: Internal
+
+    /// How many minutes past its first one a single message may still mark as
+    /// worked. A turn left open and finished much later would otherwise paint
+    /// an evening nobody spent.
+    static let spanLimit = 60
+
+    /// `seen` holds the message ids already counted for this file, which is
+    /// one id: the caller keeps it beside the file so a rewrite of an already
+    /// counted message adds nothing.
+    static func parse(data: Data, seen: inout Set<String>) -> [AgentUsageEvent] {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              object["role"] as? String == "assistant",
+              let id = object["id"] as? String, !id.isEmpty,
+              let session = object["sessionID"] as? String, !session.isEmpty,
+              let time = object["time"] as? [String: Any],
+              let created = Self.date(time["created"]),
+              // No end yet: the turn is still running and its counters are not
+              // final. Nothing is remembered, so the next pass reads it again.
+              let completed = Self.date(time["completed"]),
+              !seen.contains(id)
+        else { return [] }
+        seen.insert(id)
+        let counts = object["tokens"] as? [String: Any]
+        let cache = counts?["cache"] as? [String: Any]
+        let tokens = AgentUsageTokens(
+            input: AgentUsageLines.int64(counts?["input"]),
+            cacheWrite: AgentUsageLines.int64(cache?["write"]),
+            cacheRead: AgentUsageLines.int64(cache?["read"]),
+            output: AgentUsageLines.int64(counts?["output"]),
+            reasoning: AgentUsageLines.int64(counts?["reasoning"])
+        )
+        let sessionKey = AgentUsageHash.key(for: session)
+        let model = (object["modelID"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "unknown"
+        var events = [AgentUsageEvent(
+            tool: .opencode,
+            sessionKey: sessionKey,
+            timestamp: created,
+            model: model,
+            tokens: tokens,
+            isRequest: true
+        )]
+        // One message is a whole turn here, tool calls included, where Claude
+        // and Codex write a line per step. The minutes it worked are the ones
+        // its span covers; the counters ride on the first of them, so the rest
+        // mark the time without being counted again.
+        let first = AgentUsageDates.minuteStart(of: created)
+        let last = AgentUsageDates.minuteStart(of: max(completed, created))
+        let span = min(Int(last.timeIntervalSince(first) / 60), Self.spanLimit)
+        for step in stride(from: 1, through: span, by: 1) {
+            events.append(AgentUsageEvent(
+                tool: .opencode,
+                sessionKey: sessionKey,
+                timestamp: first.addingTimeInterval(Double(step) * 60),
+                model: model,
+                tokens: AgentUsageTokens(),
+                isRequest: false
+            ))
+        }
+        return events
+    }
+
+    // MARK: Private
+
+    /// Milliseconds since the epoch, which is how opencode writes every time.
+    private static func date(_ value: Any?) -> Date? {
+        guard let number = value as? NSNumber else { return nil }
+        let milliseconds = number.doubleValue
+        guard milliseconds > 0, milliseconds.isFinite else { return nil }
+        return Date(timeIntervalSince1970: milliseconds / 1000)
+    }
+}

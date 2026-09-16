@@ -14,7 +14,8 @@ final class StatusItemMenu: NSObject {
         canOpenSettings: @escaping () -> Bool,
         replayOnboarding: @escaping () -> Void,
         canReplayOnboarding: @escaping () -> Bool,
-        quit: @escaping () -> Void
+        quit: @escaping () -> Void,
+        prefetch: @escaping () -> Void = {}
     ) {
         self.toggle = toggle
         self.open = open
@@ -25,6 +26,7 @@ final class StatusItemMenu: NSObject {
         self.replayOnboarding = replayOnboarding
         self.canReplayOnboarding = canReplayOnboarding
         self.quit = quit
+        self.prefetch = prefetch
     }
 
     // MARK: Internal
@@ -40,6 +42,7 @@ final class StatusItemMenu: NSObject {
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         item.button?.setAccessibilityLabel("Firstlight")
         item.button?.toolTip = "Firstlight · Right-click for options"
+        self.trackHover(on: item.button)
     }
 
     func makeMenu() -> NSMenu {
@@ -71,6 +74,9 @@ final class StatusItemMenu: NSObject {
         return menu
     }
 
+    /// The pointer arriving over the icon, whether or not it is clicked.
+    @objc(mouseEntered:) func mouseEntered(with _: NSEvent) { self.prefetch() }
+
     // MARK: Private
 
     private weak var statusItem: NSStatusItem?
@@ -83,6 +89,11 @@ final class StatusItemMenu: NSObject {
     private let replayOnboarding: () -> Void
     private let canReplayOnboarding: () -> Bool
     private let quit: () -> Void
+    /// Asks for what the popover will need. The pointer reaches the menu bar
+    /// before the click does, and that head start is roughly what one request
+    /// costs, so the list is often already in hand by the time it opens.
+    private let prefetch: () -> Void
+    private var hoverArea: NSTrackingArea?
 
     @objc private func clicked() {
         let event = NSApp.currentEvent
@@ -103,6 +114,18 @@ final class StatusItemMenu: NSObject {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         return item
+    }
+
+    private func trackHover(on button: NSStatusBarButton?) {
+        guard let button else { return }
+        if let hoverArea { button.removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        button.addTrackingArea(area)
+        self.hoverArea = area
     }
 
     @objc private func openFirstlight() { self.open() }

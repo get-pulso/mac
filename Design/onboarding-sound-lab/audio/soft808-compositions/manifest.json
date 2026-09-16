@@ -1,0 +1,972 @@
+{
+  "duration": 10.0,
+  "sample_rate": 48000,
+  "timing": {
+    "window": 4.25,
+    "logo_start": 6.671,
+    "logo_end": 7.319
+  },
+  "provenance": "Locally arranged: user-selected An_8-second_sound_cu_#3-1789585822225.mp3, VSCO 2 CE piano (CC0), synthesized soft 808 and pad, Spotify Pedalboard effects.",
+  "presets": [
+    {
+      "id": "01",
+      "title": "Тёплый вдох",
+      "description": "Воздушная фактура постепенно открывается в светлый аккорд. Округлый 808 поддерживает раскрытие и отпускает.",
+      "tag": "Сбалансированный",
+      "waveform": "audio/soft808-compositions/soft808-01.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-01.wav",
+        "m4a": "audio/soft808-compositions/soft808-01.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-01-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-01-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.052
+          },
+          {
+            "at": 6.671,
+            "midi": 67,
+            "role": "motif",
+            "rms": 0.03
+          },
+          {
+            "at": 7.319,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.022
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.021
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.021
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.021
+          },
+          {
+            "at": 4.286,
+            "midi": 67,
+            "role": "chord",
+            "rms": 0.021
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.217,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.06,
+          "hold": 0.3,
+          "decay": 1.35,
+          "glide_hz": 24,
+          "glide_decay": 0.11,
+          "drive": 1.65,
+          "second_harmonic": 0.18
+        },
+        "master_gain": 1.0189924090043465,
+        "peak": 0.5341664723618123,
+        "crest_rms": 0.16499999999999998,
+        "room": 0.53,
+        "wet": 0.19
+      }
+    },
+    {
+      "id": "02",
+      "title": "Бархат",
+      "description": "Тёплое тягучее вступление и широкий мягкий вход баса. Аккорд остаётся близко, 808 дышит дольше.",
+      "tag": "Медленнее и мягче",
+      "waveform": "audio/soft808-compositions/soft808-02.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-02.wav",
+        "m4a": "audio/soft808-compositions/soft808-02.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-02-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-02-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.045759999999999995
+          },
+          {
+            "at": 6.671,
+            "midi": 67,
+            "role": "motif",
+            "rms": 0.0264
+          },
+          {
+            "at": 7.319,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.01936
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.01848
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.01848
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.01848
+          },
+          {
+            "at": 4.286,
+            "midi": 65,
+            "role": "chord",
+            "rms": 0.01848
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.1785,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.13,
+          "hold": 0.46,
+          "decay": 1.65,
+          "glide_hz": 11,
+          "glide_decay": 0.16,
+          "drive": 1.3,
+          "second_harmonic": 0.16
+        },
+        "master_gain": 1.053228819445107,
+        "peak": 0.512556431184659,
+        "crest_rms": 0.16499999999999998,
+        "room": 0.5,
+        "wet": 0.17
+      }
+    },
+    {
+      "id": "03",
+      "title": "Первый свет",
+      "description": "Прозрачное атмосферное начало раскрывается вверх. Чётче очерченный 808 и более открытый аккорд.",
+      "tag": "Яснее кульминация",
+      "waveform": "audio/soft808-compositions/soft808-03.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-03.wav",
+        "m4a": "audio/soft808-compositions/soft808-03.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-03-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-03-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.05512
+          },
+          {
+            "at": 6.671,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.0318
+          },
+          {
+            "at": 7.319,
+            "midi": 72,
+            "role": "motif",
+            "rms": 0.02332
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.022260000000000002
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.022260000000000002
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.022260000000000002
+          },
+          {
+            "at": 4.286,
+            "midi": 67,
+            "role": "chord",
+            "rms": 0.022260000000000002
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.22525,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.045,
+          "hold": 0.27,
+          "decay": 1.15,
+          "glide_hz": 29,
+          "glide_decay": 0.085,
+          "drive": 1.85,
+          "second_harmonic": 0.2
+        },
+        "master_gain": 1.00930090903191,
+        "peak": 0.526180105205523,
+        "crest_rms": 0.16500000000000004,
+        "room": 0.56,
+        "wet": 0.21
+      }
+    },
+    {
+      "id": "04",
+      "title": "Медленная волна",
+      "description": "808 разворачивается широкой волной под протяжённым аккордом. Финальная фраза звучит выше и легче.",
+      "tag": "Плавнее раскрытие",
+      "waveform": "audio/soft808-compositions/soft808-04.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-04.wav",
+        "m4a": "audio/soft808-compositions/soft808-04.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-04-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-04-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.04368
+          },
+          {
+            "at": 6.671,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.025199999999999997
+          },
+          {
+            "at": 7.319,
+            "midi": 72,
+            "role": "motif",
+            "rms": 0.01848
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.01764
+          },
+          {
+            "at": 4.262,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.01764
+          },
+          {
+            "at": 4.274,
+            "midi": 65,
+            "role": "chord",
+            "rms": 0.01764
+          },
+          {
+            "at": 4.286,
+            "midi": 69,
+            "role": "chord",
+            "rms": 0.01764
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.151,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.18,
+          "hold": 0.53,
+          "decay": 1.8,
+          "glide_hz": 9,
+          "glide_decay": 0.2,
+          "drive": 1.4,
+          "second_harmonic": 0.13
+        },
+        "master_gain": 1.0509499897293224,
+        "peak": 0.47855741905635,
+        "crest_rms": 0.165,
+        "room": 0.62,
+        "wet": 0.23
+      }
+    },
+    {
+      "id": "05",
+      "title": "Тихая уверенность",
+      "description": "Мягкий 808 ближе к исходному №05. Небольшой аккорд и тихий восходящий ответ без длинного басового хвоста.",
+      "tag": "Короче и собраннее",
+      "waveform": "audio/soft808-compositions/soft808-05.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-05.wav",
+        "m4a": "audio/soft808-compositions/soft808-05.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-05-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-05-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.0468
+          },
+          {
+            "at": 6.671,
+            "midi": 67,
+            "role": "motif",
+            "rms": 0.027
+          },
+          {
+            "at": 7.319,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.019799999999999998
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.021823840175367856
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.021823840175367856
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.021823840175367856
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.23075,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.035,
+          "hold": 0.22,
+          "decay": 1.05,
+          "glide_hz": 35,
+          "glide_decay": 0.09,
+          "drive": 1.9,
+          "second_harmonic": 0.2
+        },
+        "master_gain": 1.0483050205727986,
+        "peak": 0.5626510586841574,
+        "crest_rms": 0.16500000000000004,
+        "room": 0.46,
+        "wet": 0.16
+      }
+    },
+    {
+      "id": "06",
+      "title": "Воздух",
+      "description": "Плотный мягкий низ в центре, прозрачный аккорд по краям. Мотив раскрывается выше и растворяется в общем пространстве.",
+      "tag": "Больше пространства",
+      "waveform": "audio/soft808-compositions/soft808-06.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-06.wav",
+        "m4a": "audio/soft808-compositions/soft808-06.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-06-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-06-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 72,
+            "role": "motif",
+            "rms": 0.0416
+          },
+          {
+            "at": 6.671,
+            "midi": 74,
+            "role": "motif",
+            "rms": 0.024
+          },
+          {
+            "at": 7.319,
+            "midi": 77,
+            "role": "motif",
+            "rms": 0.0176
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.016800000000000002
+          },
+          {
+            "at": 4.262,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.016800000000000002
+          },
+          {
+            "at": 4.274,
+            "midi": 65,
+            "role": "chord",
+            "rms": 0.016800000000000002
+          },
+          {
+            "at": 4.286,
+            "midi": 69,
+            "role": "chord",
+            "rms": 0.016800000000000002
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.20325,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.085,
+          "hold": 0.38,
+          "decay": 1.42,
+          "glide_hz": 16,
+          "glide_decay": 0.12,
+          "drive": 1.4,
+          "second_harmonic": 0.12
+        },
+        "master_gain": 1.0395374906554429,
+        "peak": 0.43180869147309264,
+        "crest_rms": 0.16500000000000004,
+        "room": 0.67,
+        "wet": 0.27
+      }
+    },
+    {
+      "id": "07",
+      "title": "Навстречу",
+      "description": "Тёплая атмосфера собирается в аккорд с ощутимыми обертонами мягкого 808. Тихий восходящий ответ в финале.",
+      "tag": "Теплее и плотнее",
+      "waveform": "audio/soft808-compositions/soft808-07.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-07.wav",
+        "m4a": "audio/soft808-compositions/soft808-07.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-07-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-07-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.04939999999999999
+          },
+          {
+            "at": 6.671,
+            "midi": 67,
+            "role": "motif",
+            "rms": 0.028499999999999998
+          },
+          {
+            "at": 7.319,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.0209
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.01995
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.01995
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.01995
+          },
+          {
+            "at": 4.286,
+            "midi": 69,
+            "role": "chord",
+            "rms": 0.01995
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.21425,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.065,
+          "hold": 0.36,
+          "decay": 1.4,
+          "glide_hz": 22,
+          "glide_decay": 0.13,
+          "drive": 1.8,
+          "second_harmonic": 0.27
+        },
+        "master_gain": 1.031133911967225,
+        "peak": 0.5337844858753488,
+        "crest_rms": 0.165,
+        "room": 0.52,
+        "wet": 0.19
+      }
+    },
+    {
+      "id": "08",
+      "title": "Близко",
+      "description": "Мягкая атмосферная подводка и близкий аккорд. Низ раскрывается вместе с окном и уступает место двум последним нотам.",
+      "tag": "Камерный",
+      "waveform": "audio/soft808-compositions/soft808-08.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-08.wav",
+        "m4a": "audio/soft808-compositions/soft808-08.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-08-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-08-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.05616
+          },
+          {
+            "at": 6.671,
+            "midi": 67,
+            "role": "motif",
+            "rms": 0.0324
+          },
+          {
+            "at": 7.319,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.02376
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.022680000000000002
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.022680000000000002
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.022680000000000002
+          },
+          {
+            "at": 4.286,
+            "midi": 65,
+            "role": "chord",
+            "rms": 0.022680000000000002
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.2225,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.05,
+          "hold": 0.24,
+          "decay": 1.18,
+          "glide_hz": 12,
+          "glide_decay": 0.1,
+          "drive": 1.5,
+          "second_harmonic": 0.18
+        },
+        "master_gain": 1.0325904623178235,
+        "peak": 0.5434244929329837,
+        "crest_rms": 0.165,
+        "room": 0.35,
+        "wet": 0.12
+      }
+    },
+    {
+      "id": "09",
+      "title": "Послесвечение",
+      "description": "Протяжённое вступление, плавно оседающий бас и остающаяся гармония. Тихий ответ держит свет после подъёма логотипа.",
+      "tag": "Дольше светлый хвост",
+      "waveform": "audio/soft808-compositions/soft808-09.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-09.wav",
+        "m4a": "audio/soft808-compositions/soft808-09.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-09-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-09-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.045239999999999995
+          },
+          {
+            "at": 6.671,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.026099999999999998
+          },
+          {
+            "at": 7.319,
+            "midi": 72,
+            "role": "motif",
+            "rms": 0.019139999999999997
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.01827
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.01827
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.01827
+          },
+          {
+            "at": 4.286,
+            "midi": 67,
+            "role": "chord",
+            "rms": 0.01827
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.1895,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.11,
+          "hold": 0.42,
+          "decay": 1.6,
+          "glide_hz": 18,
+          "glide_decay": 0.16,
+          "drive": 1.35,
+          "second_harmonic": 0.15
+        },
+        "master_gain": 1.0301178093312238,
+        "peak": 0.4750612903763979,
+        "crest_rms": 0.16499999999999998,
+        "room": 0.64,
+        "wet": 0.25
+      }
+    },
+    {
+      "id": "10",
+      "title": "Открытый горизонт",
+      "description": "Воздушное вступление раскрывается в глубокий округлый 808 и мажорный аккорд с секстой. Тихое движение вверх в финале.",
+      "tag": "Самое широкое раскрытие",
+      "waveform": "audio/soft808-compositions/soft808-10.svg",
+      "scene": {
+        "wav": "audio/soft808-compositions/soft808-10.wav",
+        "m4a": "audio/soft808-compositions/soft808-10.m4a",
+        "duration": 10.0
+      },
+      "bass": {
+        "wav": "audio/soft808-compositions/soft808-10-bass.wav",
+        "m4a": "audio/soft808-compositions/soft808-10-bass.m4a",
+        "duration": 4.35
+      },
+      "score": {
+        "motif": [
+          {
+            "at": 4.25,
+            "midi": 65,
+            "role": "motif",
+            "rms": 0.05304
+          },
+          {
+            "at": 6.671,
+            "midi": 69,
+            "role": "motif",
+            "rms": 0.0306
+          },
+          {
+            "at": 7.319,
+            "midi": 74,
+            "role": "motif",
+            "rms": 0.022439999999999998
+          },
+          {
+            "at": 4.25,
+            "midi": 53,
+            "role": "chord",
+            "rms": 0.019158630431218196
+          },
+          {
+            "at": 4.262,
+            "midi": 57,
+            "role": "chord",
+            "rms": 0.019158630431218196
+          },
+          {
+            "at": 4.274,
+            "midi": 60,
+            "role": "chord",
+            "rms": 0.019158630431218196
+          },
+          {
+            "at": 4.286,
+            "midi": 62,
+            "role": "chord",
+            "rms": 0.019158630431218196
+          },
+          {
+            "at": 4.298,
+            "midi": 67,
+            "role": "chord",
+            "rms": 0.019158630431218196
+          }
+        ],
+        "opening": {
+          "type": "selected_mp3_full_arc",
+          "start": 0.88,
+          "sources": [
+            "selected-ambient-1789585822225.mp3"
+          ],
+          "body_transpose_semitones": 0,
+          "source_trim": 0.35,
+          "source_crest": 5.56,
+          "body_tempo": 1.545994065281899,
+          "rendered_alignment_trim": 0.14,
+          "mapped_crest": 4.25,
+          "fade_out": [
+            8.4,
+            9.95
+          ]
+        },
+        "bass_start": 4.2005,
+        "root_hz": 43.653528929,
+        "bass_parameters": {
+          "attack": 0.09,
+          "hold": 0.5,
+          "decay": 1.62,
+          "glide_hz": 20,
+          "glide_decay": 0.14,
+          "drive": 1.6,
+          "second_harmonic": 0.21
+        },
+        "master_gain": 1.0215867509227772,
+        "peak": 0.5857044899881069,
+        "crest_rms": 0.165,
+        "room": 0.6,
+        "wet": 0.22
+      }
+    }
+  ]
+}

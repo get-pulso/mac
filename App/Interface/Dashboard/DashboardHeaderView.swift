@@ -72,7 +72,7 @@ private struct GroupPickerButton: View {
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 8)
-            .background(self.isSelected ? Color.accentColor : Color.clear)
+            .background(self.isSelected ? Color.firstlight : Color.clear)
             .cornerRadius(8)
         }
         .buttonStyle(PlainButtonStyle())
@@ -96,11 +96,11 @@ private struct TimeFilterPicker: View {
         }) {
             ZStack {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.13))
+                    .fill(Color.firstlight.opacity(0.13))
                     .frame(width: 44, height: 22)
                 Text(self.selection.rawValue)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(.firstlight)
                     .id(self.selection)
                     .transition(.asymmetric(
                         insertion: .move(edge: self.transitionEdge).combined(with: .opacity),

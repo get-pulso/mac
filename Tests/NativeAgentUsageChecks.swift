@@ -71,6 +71,49 @@ struct NativeAgentUsageChecks {
         precondition(codexAgain.events.isEmpty)
         precondition(state.input == 3000 && state.cached == 1400)
 
+        // MARK: opencode: one file per message, counted once the turn ended.
+
+        let opencodeData = try Data(contentsOf: fixtures.appending(path: "opencode-message.json"))
+        var opencodeSeen = Set<String>()
+        let opencode = OpencodeUsageParser.parse(data: opencodeData, seen: &opencodeSeen)
+        precondition(opencode.count == 3, "the counted message plus the minutes it ran: \(opencode.count)")
+        precondition(opencode[0].tokens == AgentUsageTokens(input: 12, cacheWrite: 2200, cacheRead: 50000, output: 340, reasoning: 8))
+        precondition(opencode[0].isRequest && opencode[0].model == "claude-sonnet-4-5")
+        precondition(opencode.allSatisfy { $0.tool == .opencode })
+        precondition(Set(opencode.map(\.sessionKey)).count == 1)
+        precondition(!opencode[0].sessionKey.contains("ses_fixtureOpencode"), "the session id is hashed")
+        // The rest of the span marks time without being counted again.
+        precondition(opencode.dropFirst().allSatisfy { !$0.isRequest && $0.tokens == AgentUsageTokens() })
+        precondition(opencode[1].timestamp == opencode[0].timestamp.addingTimeInterval(60))
+        precondition(opencode[2].timestamp == opencode[0].timestamp.addingTimeInterval(120))
+        // The same file again: the id kept beside it holds the count steady.
+        precondition(OpencodeUsageParser.parse(data: opencodeData, seen: &opencodeSeen).isEmpty)
+        precondition(opencodeSeen == ["msg_fixtureOpencodeA"])
+
+        // A turn still running has no end and no final counters: nothing is
+        // counted and nothing is remembered, so the next pass reads it again.
+        var runningSeen = Set<String>()
+        let running = Data(#"{"id":"msg_running","sessionID":"ses_fixtureOpencode","role":"assistant","time":{"created":1789421400000},"modelID":"claude-sonnet-4-5","tokens":{"input":1,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}"#.utf8)
+        precondition(OpencodeUsageParser.parse(data: running, seen: &runningSeen).isEmpty && runningSeen.isEmpty)
+        let settled = Data(#"{"id":"msg_running","sessionID":"ses_fixtureOpencode","role":"assistant","time":{"created":1789421400000,"completed":1789421430000},"modelID":"claude-sonnet-4-5","tokens":{"input":1,"output":7,"reasoning":0,"cache":{"read":0,"write":0}}}"#.utf8)
+        let landed = OpencodeUsageParser.parse(data: settled, seen: &runningSeen)
+        precondition(landed.count == 1 && landed[0].tokens.output == 7 && runningSeen == ["msg_running"])
+        // What the person wrote is not work the agent did.
+        let prompt = Data(#"{"id":"msg_prompt","sessionID":"ses_fixtureOpencode","role":"user","time":{"created":1789421400000}}"#.utf8)
+        precondition(OpencodeUsageParser.parse(data: prompt, seen: &runningSeen).isEmpty)
+        // A turn left open for hours marks the cap, not the evening.
+        var longSeen = Set<String>()
+        let abandoned = Data(#"{"id":"msg_long","sessionID":"ses_fixtureOpencode","role":"assistant","time":{"created":1789421400000,"completed":1789439400000},"modelID":"claude-sonnet-4-5","tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}}}"#.utf8)
+        precondition(OpencodeUsageParser.parse(data: abandoned, seen: &longSeen).count == OpencodeUsageParser.spanLimit + 1)
+
+        var opencodeDays = AgentUsageAggregator(calendar: tbilisi)
+        opencodeDays.add(contentsOf: opencode)
+        let opencodeKey = AgentUsageDayKey(date: "2026-09-15", tool: .opencode, model: "claude-sonnet-4-5")
+        precondition(opencodeDays.days[opencodeKey]?.requests == 1, "the span is one request, not three")
+        precondition(opencodeDays.days[opencodeKey]?.sessions == 1)
+        precondition(opencodeDays.days[opencodeKey]?.totalTokens == 12 + 2200 + 50000 + 340)
+        precondition(opencodeDays.minutes.count == 3 && opencodeDays.minutes.allSatisfy { $0.sessionCount == 1 })
+
         // MARK: Local-date attribution across midnight.
 
         var local = AgentUsageAggregator(calendar: tbilisi)
@@ -136,7 +179,8 @@ struct NativeAgentUsageChecks {
 
         precondition(AgentUsageHash.key(for: "/a/b") == AgentUsageHash.key(for: "/a/b"))
         precondition(AgentUsageHash.key(for: "/a/b") != AgentUsageHash.key(for: "/a/c"))
-        precondition(AgentTool.allCases.map(\.rawValue) == ["claude_code", "codex", "cursor"])
+        precondition(AgentTool.allCases.map(\.rawValue) == ["claude_code", "codex", "cursor", "opencode"])
+        precondition(AgentTool.opencode.transcriptExtension == "json" && AgentTool.codex.transcriptExtension == "jsonl")
 
         print("Native agent usage checks passed")
     }

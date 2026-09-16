@@ -23,6 +23,8 @@ final class LoginViewModel: ObservableObject {
     @Published var error: String?
     @Published var resendAt = Date.distantPast
     @Published var backupCode = false
+    /// A press taken before the session was ready, waiting to be spent.
+    @Published private(set) var awaitingConnection = false
 
     var providers: [Clerk.Environment.UserSettings.SocialConfig] {
         guard NativeSession.shared.ready else { return [] }
@@ -128,6 +130,26 @@ final class LoginViewModel: ObservableObject {
             }
         }
     }
+
+    /// The welcome page's one action. If the session has not finished
+    /// connecting, the press is not lost and not refused: it is held, and
+    /// Google opens by itself the moment the session is ready.
+    func continueWithGoogle() {
+        guard !self.busy, !self.awaitingConnection else { return }
+        self.error = nil
+        if let provider = self.providers.first { self.oauth(provider.strategy) }
+        else if !NativeSession.shared.ready { self.awaitingConnection = true }
+    }
+
+    /// The session connected: spend a press taken while it was still in flight.
+    func connectionReady() {
+        guard self.awaitingConnection else { return }
+        self.awaitingConnection = false
+        if let provider = self.providers.first { self.oauth(provider.strategy) }
+    }
+
+    /// The session failed instead of connecting; the held press has nowhere to go.
+    func cancelAwaitingConnection() { self.awaitingConnection = false }
 
     func oauth(_ provider: String) {
         self.run {

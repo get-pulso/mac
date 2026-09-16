@@ -1,0 +1,77 @@
+{
+  "revision": "selected-mp3-3",
+  "ambient_source": "selected-ambient-1789585822225.mp3",
+  "source_tempo": 1.545994065281899,
+  "pitch_shift_semitones": 0,
+  "ambient_measured_crest_seconds": 4.25,
+  "checks": [
+    "20 WAV and AAC tracks decode",
+    "no clipping or ending cut",
+    "ten unchanged bass solos",
+    "only selected MP3 supplies ambience",
+    "rendered ambient crest aligned to 4.25 s within 15 ms",
+    "piano and bass at reveal"
+  ],
+  "results": [
+    {
+      "id": "01",
+      "peak": 0.5342,
+      "peak_at": 4.3381,
+      "bass_unchanged": true
+    },
+    {
+      "id": "02",
+      "peak": 0.5126,
+      "peak_at": 4.3382,
+      "bass_unchanged": true
+    },
+    {
+      "id": "03",
+      "peak": 0.5262,
+      "peak_at": 4.407,
+      "bass_unchanged": true
+    },
+    {
+      "id": "04",
+      "peak": 0.4786,
+      "peak_at": 4.3554,
+      "bass_unchanged": true
+    },
+    {
+      "id": "05",
+      "peak": 0.5627,
+      "peak_at": 4.3609,
+      "bass_unchanged": true
+    },
+    {
+      "id": "06",
+      "peak": 0.4318,
+      "peak_at": 4.4862,
+      "bass_unchanged": true
+    },
+    {
+      "id": "07",
+      "peak": 0.5338,
+      "peak_at": 4.3554,
+      "bass_unchanged": true
+    },
+    {
+      "id": "08",
+      "peak": 0.5434,
+      "peak_at": 4.407,
+      "bass_unchanged": true
+    },
+    {
+      "id": "09",
+      "peak": 0.4751,
+      "peak_at": 4.3554,
+      "bass_unchanged": true
+    },
+    {
+      "id": "10",
+      "peak": 0.5857,
+      "peak_at": 4.3839,
+      "bass_unchanged": true
+    }
+  ]
+}

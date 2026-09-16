@@ -1,0 +1,21 @@
+[
+  {
+    "file": "ambient-cue-original.wav",
+    "original_file": "/Users/serafimcloud/Downloads/An_8-second_sound_cu_#3-1789574354758.wav",
+    "sha256": "d228182d9b62e4b66aa1de5b8b9426d7a4421afc204c08f3454461fa6445bd38",
+    "origin": "User-downloaded ElevenLabs reference"
+  },
+  {
+    "file": "opening-air-original.wav",
+    "original_file": "/Users/serafimcloud/Downloads/3.4-second_opening_l_#3-1789574661158.wav",
+    "sha256": "06e68fc570c37b95f7437a7f913c553cd6a19e221fd0c0bf6a4d6a4095a81727",
+    "origin": "User-downloaded ElevenLabs reference"
+  },
+  {
+    "file": "selected-ambient-1789585822225.mp3",
+    "original_file": "/Users/serafimcloud/Downloads/An_8-second_sound_cu_#3-1789585822225.mp3",
+    "sha256": "ff62a09f1b4baecfa25f658efefdf9a4083e6afc34dd2d5ffabb5bee5403967e",
+    "origin": "User-selected replacement for the complete ambient foundation",
+    "decoded_duration_seconds": 16.08
+  }
+]

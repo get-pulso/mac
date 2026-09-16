@@ -80,7 +80,9 @@ enum WelcomeLayout {
     /// Measured once with the same font the view draws, so the pair is
     /// centred on the very first frame instead of after a layout pass.
     private static let nameWidth: CGFloat = {
-        let font = NSFont.systemFont(ofSize: nameFontSize, weight: nameWeight)
+        let systemFont = NSFont.systemFont(ofSize: nameFontSize, weight: nameWeight)
+        let font = systemFont.fontDescriptor.withDesign(.rounded)
+            .flatMap { NSFont(descriptor: $0, size: nameFontSize) } ?? systemFont
         let text = NSAttributedString(string: "Firstlight", attributes: [.font: font, .kern: nameTracking])
         return ceil(text.size().width)
     }()

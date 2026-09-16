@@ -34,10 +34,7 @@ struct NativeSettingsView: View {
     }()
 
     @AppStorage("firstlight.appearance") private var appearance = "system"
-    @AppStorage(OnboardingSoundVariant.preferenceKey) private var onboardingSound = OnboardingSoundVariant.warmAnalog
-        .rawValue
     @AppStorage("firstlight.trackingPaused") private var trackingPaused = false
-    @AppStorage(OnboardingAudioFocus.preferenceKey) private var muteOtherAudio = true
     @State private var confirming = false
     @State private var confirmTitle = ""
     @State private var confirmAction: (() -> Void)?
@@ -166,24 +163,6 @@ struct NativeSettingsView: View {
                 }
             }
             panel {
-                Picker("Onboarding sound", selection: $onboardingSound) {
-                    ForEach(OnboardingSoundVariant.allCases) { sound in
-                        Text(sound.title).tag(sound.rawValue)
-                    }
-                }
-                Toggle("Mute other audio during intro", isOn: $muteOtherAudio)
-                    .toggleStyle(.switch).controlSize(.small)
-                    .onChange(of: muteOtherAudio) { _, enabled in
-                        if !enabled { OnboardingAudioFocus.shared.end() }
-                    }
-                Button("Preview intro") {
-                    @Dependency(\.windowManager) var windowManager
-                    windowManager.replayOnboarding()
-                }
-                .nativeSettingsActionButton()
-                .disabled(LoginViewModel.shared.busy || session.loading || session.isCompletingSignIn)
-            }
-            panel {
                 Toggle("Pause activity tracking", isOn: $trackingPaused)
                     .toggleStyle(.switch).controlSize(.small)
                 Text(
@@ -220,7 +199,7 @@ struct NativeSettingsView: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
-                Text("What friends see of this is in Sharing.")
+                Text("What friends see of this is in Privacy.")
                     .font(.callout).foregroundStyle(.secondary)
                 if let error = agentUsage.status.lastError { NativeInlineError(message: error) }
             }
@@ -339,9 +318,9 @@ struct NativeSettingsView: View {
                 sharingRow(
                     .apps,
                     title: "Apps",
-                    detail: "Friends see your top apps and the one you are in right now.",
-                    total: "Friends see how long you spent in apps and how many, never which.",
-                    off: "Friends see none of it. Your own history is untouched.",
+                    detail: "Others see your apps and time in app rankings. Friends also see the app you're using now.",
+                    total: "Friends see total app time and count, without names. You don't appear in app rankings.",
+                    off: "Your apps are hidden from others and app rankings. Your own history is untouched.",
                     loading: loading
                 )
             }
@@ -357,7 +336,7 @@ struct NativeSettingsView: View {
             }
             panel {
                 Text(
-                    "Everything here starts on. Turning something down hides the history behind it too, not only what comes next — friends who already have your profile open see it until they reload. This changes what leaves your Mac to others, not what is recorded: you keep seeing all of your own."
+                    "Sharing starts on. Turning sharing down hides the history behind it too; people with your profile open see the change when it reloads. You keep seeing all of your own activity."
                 )
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -195,6 +195,7 @@ struct NativeSettingsStatusView: View {
         // nothing to say, so the inset belongs to the text, not to the view.
         .padding(.trailing, self.status == nil ? 0 : 14)
         .frame(height: 22)
+        .fontDesign(.rounded)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: status)
         .accessibilityElement(children: .combine)
     }
@@ -251,10 +252,10 @@ private struct NativeFormSubmitButtonStyle: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
             content.buttonStyle(.glassProminent).buttonBorderShape(.capsule).controlSize(.large)
-                .tint(.accentColor)
+                .tint(.firstlight)
         } else {
             content.buttonStyle(.borderedProminent).buttonBorderShape(.capsule).controlSize(.large)
-                .tint(.accentColor)
+                .tint(.firstlight)
         }
     }
 }

@@ -1,0 +1,12 @@
+{
+  "library": "VSCO 2 Community Edition",
+  "author": "Versilian Studios",
+  "repository": "https://github.com/sgossner/VSCO-2-CE",
+  "license": "CC0-1.0",
+  "samples": {
+    "Player_dyn1_rr1_016.wav": 53,
+    "Player_dyn1_rr1_020.wav": 61,
+    "Player_dyn1_rr1_024.wav": 69,
+    "Player_dyn1_rr1_028.wav": 77
+  }
+}

@@ -18,3 +18,7 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Python caches from design tooling
+__pycache__/
+*.py[cod]

@@ -15,6 +15,7 @@ struct SignInCompletionView: View {
                     Spacer()
                     Button("Retry") { model.run { try await session.finishSignIn() } }
                         .buttonStyle(.borderedProminent)
+                        .tint(.firstlight)
                         .keyboardShortcut(.defaultAction)
                 }
             } else {

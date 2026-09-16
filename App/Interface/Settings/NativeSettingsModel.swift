@@ -19,7 +19,7 @@ final class NativeSettingsModel: ObservableObject {
     // MARK: Internal
 
     enum Section: String, CaseIterable {
-        case account = "Account", general = "General", sharing = "Sharing", groups = "Groups",
+        case account = "Account", general = "General", sharing = "Privacy", groups = "Groups",
              security = "Security", about = "About"
 
         // MARK: Internal
@@ -34,7 +34,7 @@ final class NativeSettingsModel: ObservableObject {
         var keywords: String {
             switch self {
             case .account: "profile name username photo avatar bio location friend code website links sign out"
-            case .general: "appearance theme dark light system startup launch login activity period tracking pause history clear quit agents claude codex cursor tokens sound audio onboarding intro preview bass"
+            case .general: "appearance theme dark light system startup launch login activity period tracking pause history clear quit agents claude codex cursor tokens"
             case .sharing: "sharing privacy visible friends apps agents hide private detail total off leaderboard anonymous"
             case .groups: "friends members invite link create rename leaderboard"
             case .security: "sign-in google password email mfa two factor authenticator recovery backup codes delete account sessions devices mac active sign out revoke"
@@ -431,6 +431,7 @@ final class NativeSettingsModel: ObservableObject {
                     method: .patch,
                     body: NativeSharingSettings().setting(channel, to: level)
                 )
+                NotificationCenter.default.post(name: .init("FirstlightSharingChanged"), object: nil)
             } catch {
                 self.sharing = previous
                 throw error

@@ -29,11 +29,22 @@ for _ in {1..30}; do
     sleep 0.1
 done
 
-if (( $# > 0 )); then
-    open -n "$canonical_app" --args "$@"
-else
-    open -n "$canonical_app"
-fi
+# LaunchServices may briefly retain the terminated process and return -600.
+# Retry the same signed bundle, never another build or an unsigned executable.
+launch_local_copy() {
+    if (( $# > 0 )); then
+        open -n "$canonical_app" --args "$@"
+    else
+        open -n "$canonical_app"
+    fi
+}
+for launch_attempt in {1..3}; do
+    if launch_local_copy "$@"; then break; fi
+    sleep 1
+    if pgrep -f '^/private/tmp/firstlight-derived-local/Build/Products/Debug/Firstlight\.app/Contents/MacOS/Firstlight($| )' >/dev/null; then
+        break
+    fi
+done
 
 for _ in {1..30}; do
     if pgrep -f '^/private/tmp/firstlight-derived-local/Build/Products/Debug/Firstlight\.app/Contents/MacOS/Firstlight($| )' >/dev/null; then

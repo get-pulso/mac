@@ -21,6 +21,15 @@ enum NativeNavigationChecks {
         history.removeAll()
         expect(history.previous == nil)
 
+        history.record(.friends, before: .connect)
+        history.record(.connect, before: .requests)
+        history.record(.requests, before: .group)
+        expect(history.returnTo(.connect))
+        expect(history.previous == .friends)
+        expect(history.pop() == .friends)
+        expect(!history.returnTo(.group))
+        expect(history.previous == nil)
+
         print("Native navigation checks passed: \(checks)")
     }
 

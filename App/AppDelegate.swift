@@ -27,6 +27,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             self.appRouter.move(to: .login)
             await NativeSession.shared.start(presentDashboardOnRestore: false)
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--show-dashboard") { self.windowManager.show() }
+            await BumpLocalTestSmoke.runIfRequested()
+            #endif
 
             // observing logout
             for await _ in await self.auth.invalidationPublisher.values {
@@ -41,6 +45,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         self.windowManager.configure()
+        // Started after the popover exists, since opening it is one of the
+        // things that pulls the inbox.
+        self.bumps.activate(popoverVisible: self.windowManager.isVisiblePublisher)
         if !UserDefaults.standard.bool(forKey: OnboardingWindowController.introSeenKey) {
             self.windowManager.showWelcome()
         }
@@ -69,6 +76,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @Dependency(\.storage) private var storage
     @Dependency(\.tracker) private var tracker
     @Dependency(\.agentUsage) private var agentUsage
+    @Dependency(\.bumps) private var bumps
     @Dependency(\.appRouter) private var appRouter
     @Dependency(\.updater) private var updater
     @Dependency(\.windowManager) private var windowManager

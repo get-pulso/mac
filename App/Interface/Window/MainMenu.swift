@@ -39,6 +39,13 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         SettingsWindowController.shared.show()
     }
 
+    #if DEBUG
+    @objc private func openBumpTestWindow() {
+        if WindowManager.liveValue.isVisible { WindowManager.liveValue.hide() }
+        else { WindowManager.liveValue.show() }
+    }
+    #endif
+
     private func makeMenu() -> NSMenu {
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Firstlight"
         let bar = NSMenu()
@@ -86,6 +93,18 @@ final class MainMenu: NSObject, NSMenuItemValidation {
         bar.addItem(self.submenu(edit, titled: "Edit"))
 
         let windows = NSMenu(title: "Window")
+        #if DEBUG
+        if CommandLine.arguments.contains("--bump-diagnostics") {
+            let testWindow = NSMenuItem(
+                title: "Open Firstlight for delivery check",
+                action: #selector(self.openBumpTestWindow),
+                keyEquivalent: "b"
+            )
+            testWindow.keyEquivalentModifierMask = [.command, .shift]
+            testWindow.target = self
+            windows.addItem(testWindow)
+        }
+        #endif
         windows.addItem(
             withTitle: "Minimize",
             action: #selector(NSWindow.performMiniaturize(_:)),

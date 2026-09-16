@@ -35,7 +35,8 @@ final class WindowManager {
             canOpenSettings: { Defaults[.currentUserID] != nil },
             replayOnboarding: { [weak self] in self?.replayOnboarding() },
             canReplayOnboarding: { Self.canReplayOnboarding },
-            quit: { NSApp.terminate(nil) }
+            quit: { NSApp.terminate(nil) },
+            prefetch: { SocialStore.shared.warm() }
         ))
         self.startMouseMonitor()
     }

@@ -35,31 +35,41 @@ struct LoginView: View {
 
     private var isWelcomeEntry: Bool { self.model.step == .email || self.model.step == .signup }
 
+    /// The page holds one object, and it is armed from the first frame. The
+    /// session coming up is not a thing to look at: it is only a reason a press
+    /// might have to wait a moment, and the button says that itself, on press.
     private var welcomeEntry: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        // The pill is no wider than its own words now, so the column centres it
+        // under the title instead of hanging it off the left edge.
+        VStack(spacing: 14) {
             if !session.ready, let error = session.error {
                 NativeInlineError(message: error) { Task { await session.start() } }
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else if let error = model.error ?? session.error {
-                NativeInlineError(message: error)
+                NativeInlineError(message: error).frame(maxWidth: .infinity, alignment: .leading)
             }
             OnboardingContinueButton(
-                isLoading: model.busy,
-                isEnabled: session.ready && !model.providers.isEmpty && !model.busy
-            ) {
-                guard session.ready, !model.busy, let provider = model.providers.first else { return }
-                model.oauth(provider.strategy)
-            }
-            if !session.ready, session.error == nil {
-                HStack(spacing: 6) {
-                    NativeProgress(label: "Connecting")
-                    Text("Connecting…").font(.caption).foregroundStyle(.secondary)
-                }
-            } else if session.ready, model.providers.isEmpty {
-                Text("Google sign-in is currently unavailable.").font(.callout).foregroundStyle(.secondary)
+                isLoading: model.busy || model.awaitingConnection,
+                isEnabled: canContinue,
+                loadingTitle: model.awaitingConnection ? "Connecting…" : "Opening Google…",
+                action: model.continueWithGoogle
+            )
+            if session.ready, model.providers.isEmpty {
+                Text("Google sign-in is currently unavailable.")
+                    .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
         }
-        .multilineTextAlignment(.leading)
         .padding(16)
+        .onChange(of: session.ready) { _, ready in if ready { model.connectionReady() } }
+        .onChange(of: session.error) { _, error in if error != nil { model.cancelAwaitingConnection() } }
+    }
+
+    /// Armed while connecting: the press is held rather than refused. Only a
+    /// failed session or a missing provider takes the button away.
+    private var canContinue: Bool {
+        if self.model.busy || self.model.awaitingConnection { return false }
+        if self.session.ready { return !self.model.providers.isEmpty }
+        return self.session.error == nil
     }
 
     private var form: some View {
@@ -90,7 +100,7 @@ struct LoginView: View {
                     HStack {
                         Button("Sign out") { model.run { try await session.signOut() } }
                         Spacer()
-                        Button("Retry", action: model.submit).buttonStyle(.borderedProminent)
+                        Button("Retry", action: model.submit).buttonStyle(.borderedProminent).tint(.firstlight)
                     }
                 } else { NativeAuthSkeleton() }
             } else {
@@ -106,6 +116,7 @@ struct LoginView: View {
                             )
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(.firstlight)
                         .disabled(model.busy || !model.canSubmit)
                         .keyboardShortcut(.defaultAction)
                     }
@@ -162,7 +173,7 @@ struct LoginView: View {
                     ).frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(onboarding ? .white : .accentColor)
+                .tint(onboarding ? .white : .firstlight)
                 .foregroundStyle(onboarding ? Color(red: 0.15, green: 0.17, blue: 0.36) : .white)
                 .disabled(model.busy)
                 .keyboardShortcut(.defaultAction)

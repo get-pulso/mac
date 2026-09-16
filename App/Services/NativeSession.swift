@@ -112,6 +112,10 @@ final class NativeSession: ObservableObject {
             )
             self.revision += 1
             router.move(to: .dashboard)
+            // The list the popover opens on is fetched now, while nobody is
+            // waiting, instead of on the first click. Both a fresh sign-in and
+            // a session restored at launch arrive here.
+            SocialStore.shared.warm()
             // The panel is already open. If the user dismissed it while loading,
             // respect that instead of reopening it when the response arrives.
         } catch {
@@ -165,6 +169,7 @@ final class NativeSession: ObservableObject {
 
     func handle(_ url: URL) async {
         if url.scheme == "firstlight", url.host == "invite" || url.host == "join" {
+            self.reportHandoff(in: url)
             self.pendingInviteSource = .link
             self.pendingInvite = url.absoluteString
             @Dependency(\.windowManager) var window
@@ -180,6 +185,26 @@ final class NativeSession: ObservableObject {
     // MARK: Private
 
     private var events: Task<Void, Never>?
+
+    /// The page that sent this link is still open and has no way of its own
+    /// to tell whether anything opened: a browser is not told that another
+    /// application took the link, and the focus it can watch lies in both
+    /// directions. The `h` the page put in the link is a nonce it is asking
+    /// the server about; one POST turns its guess into an answer. Nothing
+    /// here waits for it, and a failure costs the invitation nothing.
+    private func reportHandoff(in url: URL) {
+        guard let handoff = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+            .first(where: { $0.name == "h" })?.value,
+            handoff.count == 36,
+            handoff.allSatisfy({ $0.isHexDigit || $0 == "-" })
+        else { return }
+        Task.detached {
+            var request = URLRequest(url: AppEnvironment.baseURL.appending(path: "/api/handoff/\(handoff)"))
+            request.httpMethod = "POST"
+            request.timeoutInterval = 5
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
 
     private func observeEvents() {
         guard self.events == nil else { return }

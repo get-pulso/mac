@@ -1,0 +1,70 @@
+{
+  "source": "audio/instruments/ambient-references/selected-ambient-1789585822225.mp3",
+  "source_sha256": "ff62a09f1b4baecfa25f658efefdf9a4083e6afc34dd2d5ffabb5bee5403967e",
+  "original_speed": 1,
+  "original_gain": 1,
+  "duration": 16.08,
+  "timing": {
+    "window": 5.56,
+    "bass_climax": 4.905882352941176,
+    "visual_scale": 0.7643884892086331,
+    "logo_start": 8.727237647058823,
+    "logo_end": 9.57497411764706
+  },
+  "peak_reduction": {
+    "at": 8.0564375,
+    "reduction_db": 3,
+    "affected_interval": [
+      7.9564375,
+      8.2164375
+    ],
+    "original_peak": 0.13838247954845428,
+    "adjusted_peak_at_cue": 0.09796729302895239
+  },
+  "logo_accents": [],
+  "variants": [
+    {
+      "id": "02",
+      "title": "Тёплый аналог",
+      "tag": "Густой · плавный",
+      "description": "Тёплый синт медленно открывает фильтр. На окне появляется глубокое основание и мягкие обертоны.",
+      "waveform": "audio/synth-picker/synth-02.svg",
+      "bassPreviewOffset": 2.0,
+      "scene": {
+        "wav": "audio/synth-picker/synth-02.wav",
+        "path": "audio/synth-picker/synth-02.m4a",
+        "mime": "audio/mp4",
+        "duration": 16.08
+      },
+      "bass": {
+        "wav": "audio/synth-picker/synth-02-bass.wav",
+        "path": "audio/synth-picker/synth-02-bass.m4a",
+        "mime": "audio/mp4",
+        "duration": 6.6
+      },
+      "synthesis": {
+        "id": "02",
+        "title": "Тёплый аналог",
+        "tag": "Густой · плавный",
+        "kind": "analog",
+        "description": "Тёплый синт медленно открывает фильтр. На окне появляется глубокое основание и мягкие обертоны.",
+        "lead": 2.0,
+        "attack": 0.27,
+        "decay": 1.45,
+        "drive": 1.4,
+        "h2": 0.3,
+        "width": 0.3,
+        "room": 0.27
+      },
+      "alignment": {
+        "previous_crest": 5.613125,
+        "advance_seconds": 0.70725,
+        "crest": 4.905875,
+        "target": 4.905882352941176
+      },
+      "source_reconstruction_error": 1.3877787807814457e-17,
+      "peak": 0.18671236670746635,
+      "bass_crest_rms": 0.0632708387470731
+    }
+  ]
+}

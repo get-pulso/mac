@@ -15,6 +15,10 @@ extension AgentUsageCollector: DependencyKey {
     )
 }
 
+extension BumpCenter: DependencyKey {
+    nonisolated static let liveValue = BumpCenter(network: .liveValue)
+}
+
 extension Storage: DependencyKey {
     static let liveValue = Storage()
 }
@@ -48,6 +52,11 @@ extension DependencyValues {
     var agentUsage: AgentUsageCollector {
         get { self[AgentUsageCollector.self] }
         set { self[AgentUsageCollector.self] = newValue }
+    }
+
+    var bumps: BumpCenter {
+        get { self[BumpCenter.self] }
+        set { self[BumpCenter.self] = newValue }
     }
 
     var storage: Storage {

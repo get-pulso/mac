@@ -1,4 +1,4 @@
-"""Render local Firstlight sound studies from the two downloaded ElevenLabs clips.
+"""Render local Firstlight sound studies from the downloaded ElevenLabs clips.
 
 The generated tones add a genuine harmonic change at the window cue and a
 separate upward answer at the logo rise. This script keeps the studies
@@ -123,47 +123,6 @@ def add_tone(output, frequency, at, duration, gain, style="glass", attack=0.04,
         output[target + 1] += sample * right
 
 
-def add_bass(output, gain):
-    """A rounded E-flat bass note with enough harmonics for laptop speakers."""
-    start = round(WINDOW * RATE)
-    count = round(1.8 * RATE)
-    for index in range(count):
-        t = index / RATE
-        envelope = (1 - math.exp(-t / 0.026)) * math.exp(-t / 0.73)
-        phase = TWO_PI * 77.78 * t
-        sample = gain * envelope * (0.62 * math.sin(phase) +
-                                    0.32 * math.sin(2 * phase) +
-                                    0.16 * math.sin(3 * phase))
-        target = 2 * (start + index)
-        output[target] += sample * 0.71
-        output[target + 1] += sample * 0.71
-
-
-def add_ambient_808(output, gain):
-    """Soft E-flat sub with a slow 808 pitch settle and audible laptop harmonics."""
-    start = round(WINDOW * RATE)
-    duration = 2.65
-    count = round(duration * RATE)
-    phase = 0.0
-    for index in range(count):
-        t = index / RATE
-        frequency = 38.89 * (1 + 0.16 * math.exp(-t / 0.17))
-        phase += TWO_PI * frequency / RATE
-        fade_in = 1 - math.exp(-t / 0.055)
-        fade_out = min(1, (duration - t) / 0.45)
-        body = 0.67 * math.exp(-t / 1.25) + 0.33 * math.exp(-t / 2.2)
-        envelope = fade_in * max(0, fade_out) * body
-        # The 39 Hz fundamental gives headphone weight; the 78/117/156 Hz
-        # overtones preserve the bass on built-in computer speakers.
-        sample = gain * envelope * (0.85 * math.sin(phase) +
-                                    0.58 * math.sin(2 * phase) +
-                                    0.24 * math.sin(3 * phase) +
-                                    0.10 * math.sin(4 * phase))
-        target = 2 * (start + index)
-        output[target] += sample * 0.71
-        output[target + 1] += sample * 0.71
-
-
 def add_logo_motif(output, first, second, style, gain):
     """A distinct note at lift-off, then a quieter answer at the settled logo."""
     add_tone(output, first, RISE, 0.9, gain, style,
@@ -199,7 +158,7 @@ def finish(output, target_rms=0.045):
 
 
 def write_waveform(output, name):
-    colors = {"glass": "#d9b8f0", "felt": "#efd2bb", "airy": "#b9dbe5", "original": "#a29aaa"}
+    colors = {"felt": "#efd2bb"}
     width, height, bars = 600, 76, 150
     power = []
     for index in range(bars):
@@ -222,42 +181,29 @@ def write_waveform(output, name):
         x = cue / LENGTH * width
         lines.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="4" y2="72" stroke="{color}" stroke-width="1.3" opacity="0.9"/>')
     lines.append('</svg>')
-    suffix = "-ambient808" if name == "felt" else "-bass" if name != "original" else ""
-    (ROOT / "audio" / "generated" / f"demo-{name}{suffix}.svg").write_text("\n".join(lines) + "\n")
+    (ROOT / "audio" / "generated" / demo_filename(name, ".svg")).write_text("\n".join(lines) + "\n")
 
 
-def render(name, dawn, reveal):
+def demo_filename(name, extension):
+    return f"demo-{name.replace('_', '-')}-reference-bass{extension}"
+
+
+def render(name, dawn, reveal, bass_reference):
     output = array("f", [0]) * (2 * FRAMES)
-    if name == "original":
-        add_clip(output, reveal, 1.0, 1.0, duration=7.95, fade_in=0.05, fade_out=0.55)
-    else:
-        # The downloaded dawn has an F-sharp line against the reveal's E-flat
-        # harmony. Only its upper airy texture is used behind the first rays.
-        add_clip(output, dawn, 1.0, 1.3, duration=3.25,
-                 fade_in=0.4, fade_out=0.7)
-        add_clip(output, reveal, 1.15, 1.12 if name == "glass" else 0.95,
-                 duration=7.8, fade_in=0.25, fade_out=0.7)
-
-        if name == "glass":
-            add_tone(output, 392.0, WINDOW, 2.4, 0.092, "glass", 0.055, 1.15, -0.12)  # G4
-            add_tone(output, 784.0, WINDOW + 0.06, 2.0, 0.033, "glass", 0.11, 0.9, 0.18)
-            add_bass(output, 0.17)
-            add_logo_motif(output, 698.46, 783.99, "glass", 0.052)  # F5 -> G5
-        elif name == "felt":
-            for frequency, gain, delay in [(311.13, 0.075, 0), (392.0, 0.085, 0.04),
-                                           (466.16, 0.063, 0.08)]:  # Eb4, G4, Bb4
-                add_tone(output, frequency, WINDOW + delay, 2.4, gain,
-                         "felt", 0.013, 0.88, (delay - 0.04) * 3)
-            add_ambient_808(output, 0.23)
-            add_logo_motif(output, 587.33, 622.25, "felt", 0.07)  # D5 -> Eb5
-        elif name == "airy":
-            add_tone(output, 155.56, WINDOW, 2.5, 0.045, "glass", 0.1, 1.4, 0)  # Eb3
-            add_tone(output, 392.0, WINDOW + 0.02, 2.5, 0.065,
-                     "glass", 0.13, 1.25, -0.2)
-            add_tone(output, 783.99, WINDOW + 0.1, 2.1, 0.055,
-                     "glass", 0.12, 1.0, 0.24)
-            add_bass(output, 0.15)
-            add_logo_motif(output, 466.16, 622.25, "glass", 0.048)  # Bb4 -> Eb5
+    # Airy texture behind the first rays, then the existing reveal bed.
+    add_clip(output, dawn, 1.0, 1.3, duration=3.25,
+             fade_in=0.4, fade_out=0.7)
+    add_clip(output, reveal, 1.15, 0.95,
+             duration=7.8, fade_in=0.25, fade_out=0.7)
+    for frequency, gain, delay in [(311.13, 0.075, 0), (392.0, 0.085, 0.04),
+                                   (466.16, 0.063, 0.08)]:  # Eb4, G4, Bb4
+        add_tone(output, frequency, WINDOW + delay, 2.4, gain,
+                 "felt", 0.013, 0.88, (delay - 0.04) * 3)
+    # The first reference file's bass swell peaks at 3.54 s. Starting at
+    # 0.71 s places that crest on the native window cue at 4.25 s.
+    add_clip(output, bass_reference, 0.71, 0.16,
+             fade_in=0.3, fade_out=0.8)
+    add_logo_motif(output, 587.33, 622.25, "felt", 0.07)  # D5 -> Eb5
     rms, peak, scale = finish(output)
     write_waveform(output, name)
     with tempfile.TemporaryDirectory(prefix="firstlight-sound-") as folder:
@@ -270,8 +216,7 @@ def render(name, dawn, reveal):
             wav.setsampwidth(2)
             wav.setframerate(RATE)
             wav.writeframes(pcm.tobytes())
-        suffix = "-ambient808" if name == "felt" else "-bass" if name != "original" else ""
-        destination = ROOT / "audio" / "generated" / f"demo-{name}{suffix}.m4a"
+        destination = ROOT / "audio" / "generated" / demo_filename(name, ".m4a")
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav_path),
                         "-c:a", "aac", "-b:a", "256k", str(destination)], check=True)
     print(f"{name}: source RMS {rms:.4f}, peak {peak:.3f}, gain {scale:.2f}, {destination.stat().st_size} bytes")
@@ -280,11 +225,13 @@ def render(name, dawn, reveal):
 def main():
     reveal = read_audio(ROOT / "audio" / "reveal-elevenlabs.m4a")
     dawn = read_audio(ROOT / "audio" / "dawn-elevenlabs.m4a")
+    bass_reference = read_audio(ROOT / "audio" / "bass-reference-elevenlabs.mp3")
+    for _ in range(2):
+        bass_reference = lowpass(bass_reference, 250)
     for _ in range(3):
         dawn = highpass(dawn, 1800)
     dawn = notch(notch(dawn, 740), 1480)
-    for name in ("glass", "felt", "airy", "original"):
-        render(name, dawn, reveal)
+    render("felt", dawn, reveal, bass_reference)
 
 
 if __name__ == "__main__":

@@ -57,6 +57,10 @@ struct Network {
             let endTime: Date
             let clientIntervalId: String
             let app: TrackedApp?
+            /// Where this Mac thinks it is. A person's days are cut in their
+            /// own zone, so it rides along with the activity that fills them
+            /// and follows them when they move.
+            let timeZone: String
         }
         let app: TrackedApp? = if let bundleIdentifier = activity.appBundleIdentifier,
                                   let name = activity.appName
@@ -77,10 +81,40 @@ struct Network {
                 startTime: activity.startedAt,
                 endTime: activity.endedAt,
                 clientIntervalId: activity.id,
-                app: app
+                app: app,
+                timeZone: TimeZone.current.identifier
             ),
             expectedUserID: userID
         )
+    }
+
+    /// Bumps waiting for this Mac, with the phrases it may send back. Reading
+    /// the inbox marks nothing: the banners are acknowledged once they are on
+    /// screen, so a crash in between leaves the bump to arrive next time.
+    func bumpInbox() async throws -> NativeBumpInbox {
+        try await self.request(path: "/api/bumps", method: .get)
+    }
+
+    func acknowledgeBumps(_ ids: [String]) async throws {
+        struct Payload: Encodable { let ids: [String] }
+        let _: NativeAck = try await self.request(
+            path: "/api/bumps/ack",
+            method: .post,
+            body: Payload(ids: ids)
+        )
+    }
+
+    func sendBump(to friendID: String, kind: String) async throws -> NativeBumpSent {
+        struct Payload: Encodable { let kind: String }
+        return try await self.request(
+            path: "/api/friends/\(friendID)/bump",
+            method: .post,
+            body: Payload(kind: kind)
+        )
+    }
+
+    func bumpState(for personID: String) async throws -> NativeBumpState {
+        try await self.request(path: "/api/friends/\(personID)/bump", method: .get)
     }
 
     func leaderboard(filter: TimeFilter) async throws -> [FriendResponse] {
@@ -206,7 +240,15 @@ struct Network {
         }
 
         guard let status = response.statusCode, (200 ..< 300).contains(status) else {
-            let message = (try? self.jsonDecoder.decode(APIError.self, from: response.data))?.error
+            let detail = try? self.jsonDecoder.decode(APIError.self, from: response.data)
+            let message = detail?.error
+            if response.statusCode == 429, let seconds = detail?.retry_after_seconds {
+                throw NativeError.rateLimited(
+                    message ?? "Try again later.",
+                    seconds: seconds,
+                    daily: detail?.reason == "daily_limit"
+                )
+            }
             throw NativeError.message(message ?? "The server could not complete this request.")
         }
         if method != .get { await Self.requestEpochs.advance(for: requestScope) }
@@ -215,7 +257,11 @@ struct Network {
 
     // MARK: Private
 
-    private struct APIError: Decodable { let error: String? }
+    private struct APIError: Decodable {
+        let error: String?
+        let retry_after_seconds: Int?
+        let reason: String?
+    }
 
     private static let baseURL = AppEnvironment.baseURL
     private static let getCoalescer = NativeRequestCoalescer<String, NetworkTransportResponse>()

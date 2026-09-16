@@ -29,15 +29,12 @@ extension NativeGroupsClient {
                     path: "/api/groups/\(id)/members", method: .post, body: ["userIds": people]
                 )
             },
+            // Who can still be added is one question. It used to be asked as
+            // three — the whole friends leaderboard, the caller's connections
+            // and the group's roster — and answered by throwing nearly all of
+            // it away. The server now answers it directly.
             eligibleMembers: { id in
-                async let friends: [NativePerson] = network.request(
-                    path: "/api/friends/leaderboard", method: .get, query: ["period": "24h"]
-                )
-                async let direct: NativeDirectFriends = network.request(path: "/api/user/direct-friends", method: .get)
-                async let members: NativeMembers = network.request(path: "/api/groups/\(id)/members", method: .get)
-                let (people, connections, existing) = try await (friends, direct, members)
-                let memberIDs = Set(existing.members.map(\.id))
-                return people.filter { connections.directFriendIds.contains($0.id) && !memberIDs.contains($0.id) }
+                try await network.request(path: "/api/groups/\(id)/addable-members", method: .get)
             },
             invite: { id, limit in
                 let result: NativeInviteLink = try await network.request(
@@ -54,7 +51,8 @@ extension NativeGroupsClient {
                 Task {
                     await SocialStore.shared.refresh(force: true)
                 }
-            }
+            },
+            knownGroups: { SocialStore.shared.groups }
         )
     }
 }

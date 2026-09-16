@@ -150,7 +150,9 @@ final class NeutralSettingsCell: NSTableCellView {
     let titleField = NSTextField(labelWithString: "")
 
     func setSelected(_ selected: Bool) {
-        self.titleField.font = .systemFont(ofSize: NSFont.systemFontSize, weight: selected ? .semibold : .regular)
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: selected ? .semibold : .regular)
+        self.titleField.font = font.fontDescriptor.withDesign(.rounded)
+            .flatMap { NSFont(descriptor: $0, size: font.pointSize) } ?? font
     }
 }
 

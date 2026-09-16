@@ -15,6 +15,16 @@ enum NativeLoadingLayoutChecks {
         expect(peopleSize.width == 350)
         expect(peopleSize.height >= 300 && peopleSize.height <= 380)
 
+        let rankedPeople = NSHostingController(rootView: NativePeopleSkeleton(rows: 3, showsPlaces: true))
+        let rankedPeopleSize = rankedPeople.sizeThatFits(in: NSSize(width: 350, height: 500))
+        expect(rankedPeopleSize.width <= 350)
+        expect(abs(rankedPeopleSize.height - 180) < 0.5)
+
+        let appRanking = NSHostingController(rootView: NativeAppRankingSkeleton())
+        let appRankingSize = appRanking.sizeThatFits(in: NSSize(width: 350, height: 500))
+        expect(appRankingSize.width <= 350)
+        expect(abs(appRankingSize.height - 300) < 0.5)
+
         let rows = NSHostingController(rootView: NativeLabeledRowsSkeleton(rows: 2).frame(width: 430))
         let rowsSize = rows.sizeThatFits(in: NSSize(width: 430, height: 300))
         expect(rowsSize.width == 430)

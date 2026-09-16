@@ -24,7 +24,8 @@ struct AppView: View {
                 EmptyView()
             }
         }
-        .frame(width: 350)
+        .fontDesign(.rounded)
+        .frame(width: NativeLayout.popoverWidth)
         .modifier(
             WindowAnimationModifier(
                 speed: WindowMotion.speed,

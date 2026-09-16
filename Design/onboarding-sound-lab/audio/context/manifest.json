@@ -1,0 +1,16 @@
+{
+  "id": "scene",
+  "title": "Мягкий 808 · полная сцена",
+  "duration": 10.0,
+  "audio": "audio/context/firstlight-hope-808.m4a",
+  "wav": "audio/context/firstlight-hope-808.wav",
+  "bassId": "05",
+  "window": 4.25,
+  "rise": 6.671,
+  "riseEnd": 7.319,
+  "bassStart": 4.175,
+  "bassCrest": 4.27,
+  "peak": 0.36033,
+  "mixCrest": 4.395,
+  "harmony": "F open fifth and ninth -> F major add9 -> C5/D5 answer"
+}

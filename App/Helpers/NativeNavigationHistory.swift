@@ -11,4 +11,11 @@ struct NativeNavigationHistory<Route: Equatable> {
     mutating func pop() -> Route? { self.routes.popLast() }
 
     mutating func removeAll() { self.routes.removeAll() }
+
+    /// A repeated destination is a return to that screen, not another copy.
+    mutating func returnTo(_ route: Route) -> Bool {
+        guard let index = self.routes.lastIndex(of: route) else { return false }
+        self.routes.removeSubrange(index...)
+        return true
+    }
 }

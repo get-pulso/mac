@@ -87,10 +87,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
             itemIdentifier: id,
             images: [
                 NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")!,
-                NSImage(
-                    systemSymbolName: "chevron.right",
-                    accessibilityDescription: "Forward"
-                )!,
+                NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")!,
             ],
             selectionMode: .momentary,
             labels: ["Back", "Forward"],

@@ -140,7 +140,8 @@ final class IntroPlayback: ObservableObject {
 
     /// Shader seconds, mapped through `IntroTiming.pacing`.
     @Published private(set) var elapsed = 0.0
-    /// Real seconds since the clock started; the desktop dimmers follow these.
+    /// Seconds in the authored pacing map. With sound, the audio clock is
+    /// scaled into this map. The bass crest lands on the final reveal haptic.
     @Published private(set) var realElapsed = 0.0
     /// One seed per presentation, never per frame; both hosts share it.
     @Published private(set) var variant = 2
@@ -167,13 +168,15 @@ final class IntroPlayback: ObservableObject {
         self.variant = Int.random(in: 3 ... 60000)
     }
 
-    func start(animated: Bool) {
+    func start(animated: Bool, sound: OnboardingSoundVariant? = nil) {
         self.stop()
         guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, self.shaderFailure == nil else {
             self.finish()
             return
         }
         self.startedAt = ProcessInfo.processInfo.systemUptime
+        let hasSound = sound.map { self.soundPlayer.start($0) } ?? false
+        let clockScale = hasSound ? IntroTiming.realHandoff / OnboardingSoundVariant.windowCue : 1
         self.elapsed = 0
         self.realElapsed = 0
         self.nextRayHapticAt = 0
@@ -182,11 +185,14 @@ final class IntroPlayback: ObservableObject {
             guard let self else { return }
             let previousRealElapsed = self.realElapsed
             let previousElapsed = self.elapsed
-            self.realElapsed = min(IntroTiming.realDuration, ProcessInfo.processInfo.systemUptime - self.startedAt)
+            let wallTime = ProcessInfo.processInfo.systemUptime - self.startedAt
+            let clockTime = hasSound ? (self.soundPlayer.currentTime ?? wallTime) : wallTime
+            self.realElapsed = min(IntroTiming.realDuration, max(previousRealElapsed, clockTime * clockScale))
             self.elapsed = IntroTiming.shaderTime(atReal: self.realElapsed)
             self.playHaptics(afterReal: previousRealElapsed, shader: previousElapsed)
             self.onFrame?(self.elapsed, self.finished)
-            if self.finished { self.stop() }
+            // The visual scene finishes before the recording's natural tail.
+            if self.finished { self.stopTimer() }
         }
         timer.tolerance = 0.002
         RunLoop.main.add(timer, forMode: .common)
@@ -210,8 +216,8 @@ final class IntroPlayback: ObservableObject {
     }
 
     func stop() {
-        self.timer?.invalidate()
-        self.timer = nil
+        self.stopTimer()
+        self.soundPlayer.stop()
     }
 
     // MARK: Private
@@ -226,8 +232,14 @@ final class IntroPlayback: ObservableObject {
     private static let rayHapticFastInterval = 0.09
 
     private var timer: Timer?
+    private let soundPlayer = OnboardingSoundPlayer()
     private var startedAt = 0.0
     private var nextRayHapticAt = 0.0
+
+    private func stopTimer() {
+        self.timer?.invalidate()
+        self.timer = nil
+    }
 
     private func playHaptics(afterReal previousRealElapsed: Double, shader previousElapsed: Double) {
         // A stalled frame must never dump delayed taps into the trackpad.

@@ -7,6 +7,7 @@ enum AgentTool: String, CaseIterable, Codable {
     case claudeCode = "claude_code"
     case codex
     case cursor
+    case opencode
 
     // MARK: Internal
 
@@ -15,6 +16,9 @@ enum AgentTool: String, CaseIterable, Codable {
         case .claudeCode: "Claude Code"
         case .codex: "Codex"
         case .cursor: "Cursor"
+        // Lower case is the name, not a slip: the project writes it that way
+        // everywhere, including its own prompt.
+        case .opencode: "opencode"
         }
     }
 
@@ -23,6 +27,18 @@ enum AgentTool: String, CaseIterable, Codable {
         case .claudeCode: "ToolClaude"
         case .codex: "ToolCodex"
         case .cursor: "ToolCursor"
+        case .opencode: "ToolOpencode"
+        }
+    }
+
+    /// What a transcript of this tool is called on disk. Claude and Codex
+    /// append lines to one file per session; opencode keeps a small object
+    /// per message. Cursor has no transcript at all, so its extension is
+    /// never asked for.
+    var transcriptExtension: String {
+        switch self {
+        case .opencode: "json"
+        default: "jsonl"
         }
     }
 }
