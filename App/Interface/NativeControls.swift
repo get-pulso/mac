@@ -155,13 +155,17 @@ struct NativeSkeletonShape: View {
 struct NativeDelayedSkeleton<Content: View>: View {
     // MARK: Internal
 
+    /// The threshold that keeps fast requests from flashing. A skeleton that
+    /// fills space the layout already reserved has nothing to flash against,
+    /// so those pass `.zero` and appear with the screen.
+    var delay: Duration = .milliseconds(180)
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         content()
             .opacity(visible ? (pulsing ? 1 : 0.62) : 0)
             .task {
-                do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
+                do { try await Task.sleep(for: delay) } catch { return }
                 withAnimation(.easeOut(duration: 0.12)) { visible = true }
                 startPulse()
             }
@@ -267,6 +271,55 @@ struct NativeLabeledRowsSkeleton: View {
             }
         }
     }
+}
+
+/// One placeholder row shaped like a tracked app: icon, name, duration. The
+/// 28pt icon and 10pt gap keep the row dividers on the same 38pt inset the
+/// loaded list uses, so nothing shifts when the breakdown arrives.
+struct NativeTrackedAppRowSkeleton: View {
+    var nameWidth: CGFloat = 104
+
+    var body: some View {
+        HStack(spacing: 10) {
+            NativeSkeletonShape(width: 28, height: 28, radius: 7)
+            NativeSkeletonShape(width: nameWidth, height: 12)
+            Spacer(minLength: 8)
+            NativeSkeletonShape(width: 34, height: 11)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+/// The profile's app breakdown loads after the rest of the profile, into a
+/// height the popover has already reserved. Standing rows describe what is
+/// coming; a spinner in the same space describes nothing.
+struct NativeTrackedAppsSkeleton: View {
+    // MARK: Internal
+
+    var rows = 4
+
+    var body: some View {
+        NativeDelayedSkeleton(delay: .zero) {
+            VStack(spacing: 8) {
+                Divider()
+                NativeSkeletonShape(width: 58, height: 12)
+                VStack(spacing: 0) {
+                    ForEach(0 ..< rows, id: \.self) { index in
+                        NativeTrackedAppRowSkeleton(
+                            nameWidth: Self.nameWidths[index % Self.nameWidths.count]
+                        )
+                        if index < rows - 1 { Divider().padding(.leading, 38).opacity(0.5) }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Private
+
+    /// App names are not all one length, so the rows do not read as a stack of
+    /// identical bars while they wait.
+    private static let nameWidths: [CGFloat] = [118, 84, 134, 96, 110]
 }
 
 struct NativeAuthSkeleton: View {

@@ -20,6 +20,16 @@ enum NativeLoadingLayoutChecks {
         expect(rowsSize.width == 430)
         expect(rowsSize.height >= 50 && rowsSize.height <= 120)
 
+        // The app breakdown drops into height the popover already reserved, so
+        // its rows have to match the loaded ones: 38pt divider inset, 38pt row.
+        let apps = NSHostingController(rootView: NativeTrackedAppsSkeleton(rows: 4).frame(width: 350))
+        let appsSize = apps.sizeThatFits(in: NSSize(width: 350, height: 500))
+        expect(appsSize.width == 350)
+        expect(appsSize.height >= 180 && appsSize.height <= 240)
+
+        let appRow = NSHostingController(rootView: NativeTrackedAppRowSkeleton().frame(width: 350))
+        expect(appRow.sizeThatFits(in: NSSize(width: 350, height: 100)).height == 38)
+
         let idle = NSHostingController(rootView: NativeAsyncButtonLabel(
             title: "Save changes",
             loadingTitle: "Saving…",

@@ -47,8 +47,12 @@ enum NativeWindowMotionChecks {
             "A profile with known activity must not resize again while its breakdown loads"
         )
         expect(
-            dashboard.contains("label: \"Loading app activity\", delay: .zero"),
-            "The delayed activity breakdown needs an immediate native loading indicator"
+            dashboard.contains("NativeTrackedAppsSkeleton()"),
+            "The delayed activity breakdown must stand in as app rows, not a spinner"
+        )
+        expect(
+            controls.contains("NativeDelayedSkeleton(delay: .zero)"),
+            "A skeleton filling reserved height must appear immediately, without the flash threshold"
         )
 
         let layout = try read("App/Helpers/NativeLayout.swift")

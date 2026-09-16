@@ -888,9 +888,7 @@ struct NativeDashboardView: View {
                     .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
             }
             if self.isLoadingProfileActivity {
-                NativeProgress(active: true, label: "Loading app activity", delay: .zero)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
+                NativeTrackedAppsSkeleton()
             }
             if let activeApp = store.activity?.active_app {
                 self.trackedAppRow(activeApp, showsActiveState: true)
