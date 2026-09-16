@@ -34,6 +34,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         self.window?.close()
         self.window = nil; self.model = nil; self.split = nil
         self.navigation = nil; self.newGroupItem = nil; self.observation = nil
+        self.statusHost = nil
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -52,7 +53,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [self.separatorID, self.navigationID, .flexibleSpace, self.statusID, self.newGroupID]
+        [self.separatorID, self.navigationID, .flexibleSpace, self.newGroupID]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -66,16 +67,6 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     ) -> NSToolbarItem? {
         if id == self.separatorID, let split {
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split.splitView, dividerIndex: 0)
-        }
-        if id == self.statusID, let model {
-            let item = NSToolbarItem(itemIdentifier: id)
-            item.label = "Status"
-            item.paletteLabel = "Status"
-            let host = NSHostingView(rootView: NativeSettingsStatusView(model: model))
-            host.sizingOptions = [.intrinsicContentSize]
-            item.view = host
-            item.autovalidates = false
-            return item
         }
         if id == self.newGroupID {
             let item = NSToolbarItem(itemIdentifier: id)
@@ -120,10 +111,10 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     private var split: NSSplitViewController?
     private var navigation: NSToolbarItemGroup?
     private var newGroupItem: NSToolbarItem?
+    private var statusHost: NSHostingView<NativeSettingsStatusView>?
     private var observation: AnyCancellable?
     private let navigationID = NSToolbarItem.Identifier("FirstlightSettingsNavigation")
     private let newGroupID = NSToolbarItem.Identifier("FirstlightSettingsNewGroup")
-    private let statusID = NSToolbarItem.Identifier("FirstlightSettingsStatus")
     private let separatorID = NSToolbarItem.Identifier("FirstlightSettingsSeparator")
 
     private func makeWindow() {
@@ -165,6 +156,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         toolbar.sizeMode = .regular
         toolbar.allowsUserCustomization = false
         window.toolbar = toolbar
+        self.addStatus(to: window, model: model)
         // Assigning a contentViewController replaces the content view with its
         // initial frame. Apply the desired size after controller + toolbar.
         NativeLayout.sizeSettingsWindow(window)
@@ -174,6 +166,32 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         self.observation = model.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.updateNavigation() }
         }
+    }
+
+    /// The edit state rides in the titlebar rather than the toolbar: a toolbar
+    /// item carries a glass capsule of its own, which would put a pill behind
+    /// the text and, sitting next to the plus, stretch that button into the
+    /// same capsule instead of leaving it round.
+    private func addStatus(to window: NSWindow, model: NativeSettingsModel) {
+        let host = NSHostingView(rootView: NativeSettingsStatusView(model: model))
+        host.sizingOptions = [.intrinsicContentSize]
+        host.frame = NSRect(x: 0, y: 0, width: host.fittingSize.width, height: 28)
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = host
+        accessory.layoutAttribute = .trailing
+        window.addTitlebarAccessoryViewController(accessory)
+        self.statusHost = host
+    }
+
+    /// The titlebar lays the accessory out at the width of its frame, so the
+    /// status has to be measured by hand every time its text changes; with
+    /// nothing to say it collapses and the toolbar keeps the whole corner.
+    private func resizeStatus() {
+        guard let host = statusHost else { return }
+        host.layoutSubtreeIfNeeded()
+        let width = host.fittingSize.width
+        guard abs(host.frame.width - width) > 0.5 else { return }
+        host.frame.size.width = width
     }
 
     @objc private func navigate(_ sender: NSToolbarItemGroup) {
@@ -196,5 +214,6 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         let showsNewGroup = model.route.section == .groups && model.route.groupsPage == .list
         self.newGroupItem?.isHidden = !showsNewGroup
         self.newGroupItem?.isEnabled = showsNewGroup && !model.groupSettings.busy
+        self.resizeStatus()
     }
 }

@@ -104,18 +104,20 @@ struct NativeGroupsChecks {
         expect(createdNames == ["Studio"] && createdID == "one", "Create then open its detail page")
         expect(memberRequests == 1 && !model.loading, "Created group details are prefetched before navigation")
         expect(!model.hasChanges && model.title == "Studio", "Loaded name is the saved baseline")
-        model.save()
+        model.save { preconditionFailure("Unchanged name must not leave the form") }
         expect(!model.busy && renames.isEmpty, "Unchanged name must not save")
         model.name = "  Design team  "
         failRename = true
-        model.save()
+        model.save { preconditionFailure("A failed save must not leave the form") }
         try await settle { !model.busy }
         expect(model.hasChanges && model.error != nil, "Save failure retains the draft")
         failRename = false
-        model.save()
+        var savedAndLeft = false
+        model.save { savedAndLeft = true }
         try await settle { !model.busy }
         expect(renames == ["Design team"] && !model.hasChanges, "Save normalizes and updates the baseline")
         expect(model.title == "Design team", "Title follows saved group name")
+        expect(savedAndLeft, "A finished save hands the screen back")
 
         model.copyInvite()
         try await settle { !model.busy }
@@ -161,7 +163,7 @@ struct NativeGroupsChecks {
         model.reload()
         try await settle { model.loaded && !model.loading }
         model.name = "Unauthorized rename"
-        model.save()
+        model.save { preconditionFailure("Members cannot rename a group") }
         model.removeMember(friend)
         expect(!model.busy && renames.count == 1 && removedMembers.count == 1, "Members cannot edit owner-only controls")
         model.remove { model.open(.list) }

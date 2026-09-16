@@ -191,8 +191,10 @@ struct NativeGroupsSettingsView: View {
                             .nativeFormCancelButton()
                             .keyboardShortcut(.cancelAction)
                         Spacer(minLength: 12)
-                        submitButton("Save", loading: "Saving…", key: "save", action: model.save)
-                            .disabled(!model.validName || !model.hasChanges)
+                        submitButton("Save", loading: "Saving…", key: "save") {
+                            model.save { navigate(.list) }
+                        }
+                        .disabled(!model.validName || !model.hasChanges)
                     }
                 } else if let error = footerError {
                     NativeFormFooter(error: error) { EmptyView() }

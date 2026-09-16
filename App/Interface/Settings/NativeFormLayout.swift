@@ -166,8 +166,10 @@ struct NativeFormSubmitLabel: View {
     }
 }
 
-/// The edit state shown in the window's top-right corner: unsaved changes,
-/// the running save, or the result of the last one.
+/// The edit state shown in the window's top-right corner: unsaved changes, or
+/// the result of the last save. A running operation is not reported here — the
+/// button that started it carries its own spinner, and saying it twice made the
+/// corner flash a word for the length of a request.
 struct NativeSettingsStatusView: View {
     // MARK: Lifecycle
 
@@ -181,45 +183,37 @@ struct NativeSettingsStatusView: View {
     @ObservedObject var model: NativeSettingsModel
 
     var body: some View {
-        HStack(spacing: 7) {
+        Group {
             if let status {
-                if status.busy { ProgressView().controlSize(.small) }
-                Text(status.text)
+                Text(status)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
+        // The titlebar hands the corner back to the toolbar when there is
+        // nothing to say, so the inset belongs to the text, not to the view.
+        .padding(.trailing, self.status == nil ? 0 : 14)
         .frame(height: 22)
-        .padding(.trailing, 4)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: status)
         .accessibilityElement(children: .combine)
     }
 
     // MARK: Private
 
-    private struct Status: Equatable { let text: String; let busy: Bool }
-
-    private static let groupOperations = [
-        "save": "Saving…", "create": "Creating…", "add-members": "Adding…",
-    ]
-
     @ObservedObject private var groups: NativeGroupsModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var status: Status? {
+    private var status: String? {
+        // While the operation runs the corner says nothing at all: the changes
+        // are on their way out, so calling them unsaved is both wrong and a
+        // second voice over the button that is already reporting the work.
         if self.model.route.section == .groups {
-            if let operation = groups.operation, let text = Self.groupOperations[operation] {
-                return Status(text: text, busy: true)
-            }
-            return self.groups.hasChanges ? Status(text: "Unsaved changes", busy: false) : nil
+            return self.groups.hasChanges && !self.groups.busy ? "Unsaved changes" : nil
         }
-        guard self.model.route.page == "edit" else { return nil }
-        if self.model.isRunning("save-profile") { return Status(text: "Saving…", busy: true) }
-        if self.model.isRunning("upload-photo") { return Status(text: "Uploading photo…", busy: true) }
-        if self.model.hasProfileChanges { return Status(text: "Unsaved changes", busy: false) }
-        if let notice = model.notice { return Status(text: notice, busy: false) }
-        return nil
+        guard self.model.route.page == "edit", !self.model.busy else { return nil }
+        if self.model.hasProfileChanges { return "Unsaved changes" }
+        return self.model.notice
     }
 }
 

@@ -121,7 +121,10 @@ final class NativeGroupsModel: ObservableObject {
         }
     }
 
-    func save() {
+    /// Saving leaves the form the way creating one does: the list is where the
+    /// name that was just changed can be read back, and staying put left the
+    /// person on a screen with nothing left to do on it.
+    func save(completion: @escaping () -> Void) {
         guard self.validName, self.hasChanges, let members, members.group.is_user_creator else { return }
         let submittedName = self.normalizedName
         self.run("save") {
@@ -139,6 +142,8 @@ final class NativeGroupsModel: ObservableObject {
             }
             if self.groupsCache.contains("groups") { self.groupsCache.insert(self.groups, for: "groups") }
             self.client.didChange(self.groups)
+            self.operation = nil
+            completion()
         }
     }
 
