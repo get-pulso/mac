@@ -119,12 +119,6 @@ private struct ScreenDrift: ViewModifier, Animatable {
             return (sign * store.tabDirection * ScreenMotion.tabDrift, 0)
         case .navigating:
             let navigation = store.navigation
-            let screen = self.phase == .appearing ? navigation.to : navigation.from
-            let neighbour = self.phase == .appearing ? navigation.from : navigation.to
-            // Add friends is opened from the Invite button in the bottom right
-            // corner, so it grows out of that corner and shrinks back into it,
-            // the way a tray comes out of the button that asked for it.
-            if screen == .connect, neighbour == .list { return (0, 0.08) }
             let onTop = (self.phase == .appearing) == (navigation.direction == .forward)
             return onTop ? (ScreenMotion.topDrift, 0) : (-ScreenMotion.behindDrift, 0)
         }
@@ -145,21 +139,13 @@ struct NativeDashboardView: View {
                     .transition(ScreenMotion.list(reduceMotion: self.reduceMotion))
             } else {
                 VStack(spacing: 0) {
-                    if isPersonScreen { profileHeader }
-                    else { subheader }
-                    if !isPersonScreen { Divider().opacity(0.5) }
+                    profileHeader
                     PopoverContent(reservesMaximumHeight: self.isLoadingProfileActivity) {
-                        if needsInitialLoad { detailSkeleton }
-                        else if store.screen != .connect, store.error != nil, !store.hasLoaded(store.screen) {
-                            NativeStateMessage(
-                                title: "Couldn't load \(screenTitle.lowercased())",
-                                message: "Check your connection and try again.",
-                                actionTitle: "Retry",
-                                action: store.retry
-                            )
-                        } else {
-                            content.disabled(store.busy)
-                            if let error = store.error { NativeInlineError(message: error, retry: store.retry) }
+                        content.disabled(store.busy)
+                        // The tray shows its own errors; only with it closed
+                        // does a failure belong to the profile underneath.
+                        if let error = store.error, store.tray == nil {
+                            NativeInlineError(message: error, retry: store.retry)
                         }
                     }
                 }
@@ -192,7 +178,7 @@ struct NativeDashboardView: View {
         .animation(.snappy(duration: 0.16), value: store.feedbackToast)
         .animation(.snappy(duration: 0.16), value: store.notice)
         .task { resumeInvite() }
-        .task(id: store.tab + store.period) { await store.refresh() }
+        .task(id: store.listKey) { await store.refresh() }
         .task(id: store.feedbackToast) {
             guard case let .success(message) = store.feedbackToast else { return }
             let expected = SocialStore.FeedbackToast.success(message)
@@ -250,6 +236,9 @@ struct NativeDashboardView: View {
     /// already on screen and stays should travel, not vanish and reappear.
     private static let locationMorphID = "location"
     private static let timeMorphID = "time"
+    /// The "agent working" mark. It travels from the row into the Agents
+    /// card, the way a pending spinner moves to where the result will live.
+    private static let agentMorphID = "agent"
     private static let rowDividerInset = rowHorizontalPadding + rowAvatarSize + rowAvatarSpacing
     private static let rankedRowDividerInset = rowDividerInset + rowPlaceWidth + rowPlaceSpacing
 
@@ -273,6 +262,11 @@ struct NativeDashboardView: View {
     /// Where each group tab sits in the strip while nothing is dragged; the
     /// drag reads these to tell which neighbours the pointer has crossed.
     @State private var groupTabFrames: [String: CGRect] = [:]
+    /// The AppKit view the period menu pops up from, and the object its
+    /// items call back into. Both live as long as the view does.
+    @State private var periodMenuAnchor = NativeViewBox()
+    @State private var periodMenuTarget = NativeMenuTarget()
+    @State private var periodMenuOpen = false
     @State private var profileTitleBottom = CGFloat.greatestFiniteMagnitude
     /// The row whose avatar flies into the profile. A person can sit in the
     /// list and in the pinned row at once, so the origin is part of the key:
@@ -287,6 +281,25 @@ struct NativeDashboardView: View {
     /// without a click. It keeps focus across Home ↔ Send request because the
     /// field is the same view on both.
     @FocusState private var inviteFieldFocused: Bool
+    /// The height the tray's step area is showing, moved on the tray spring
+    /// towards the arriving step's natural height. Nil until the first step
+    /// has laid itself out; the frame is then whatever it needs.
+    @State private var trayStepHeight: CGFloat?
+    /// The whole height of the tray that just left, for the 24 pt rule.
+    @State private var trayPreviousTotal: CGFloat?
+    /// Natural heights as the steps reported them, one per tray.
+    @State private var trayStepNatural: [SocialStore.Tray: CGFloat] = [:]
+    /// The Sent tray's mark: it lands with a bounce, then, a beat later,
+    /// flies into the Sent pill in the header, where the count turns over.
+    @State private var sentCheckShown = false
+    @State private var sentCheckLanded = false
+    /// How many requests were out before this one, so the pill holds that
+    /// number until the mark has arrived, however fast the reply came back.
+    @State private var sentBaseline: Int?
+    /// The Joined tray's mark: lands, waits for the new group's tab to be
+    /// there, then flies up into it while the list moves to the group.
+    @State private var joinedCheckShown = false
+    @State private var joinedCheckLanded = false
     private let timer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     /// The header stays empty until the profile's own name has scrolled out of
@@ -303,17 +316,6 @@ struct NativeDashboardView: View {
               let minutes = self.store.selectedPerson?.active_minutes
         else { return false }
         return minutes > 0
-    }
-
-    private var needsInitialLoad: Bool {
-        // The add-friends screen is usable while its invitation data loads.
-        if self.store.screen == .connect { return false }
-        return self.store.screenLoading && !self.store.hasLoaded(self.store.screen)
-    }
-
-    private var isPersonScreen: Bool {
-        if case .person = self.store.screen { return true }
-        return false
     }
 
     private var header: some View {
@@ -362,6 +364,9 @@ struct NativeDashboardView: View {
                     // curve of their own: a tab change is frequent, so it gets
                     // the small touch, not the navigation spring.
                     .animation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0), value: store.tab)
+                    // A tab arriving or leaving (a group joined, left or
+                    // deleted) moves its neighbours on the settling spring.
+                    .animation(self.reduceMotion ? nil : SocialStore.settle, value: store.groups.map(\.id))
                 }
                 .scrollIndicators(.hidden)
                 // ⌘⇧[ and ⌘⇧], the Mac's previous and next tab. Invisible
@@ -401,33 +406,35 @@ struct NativeDashboardView: View {
         .frame(height: NativeLayout.popoverHeaderHeight)
     }
 
+    /// A button, not a SwiftUI Menu. A Menu opens on mouse down, and a label
+    /// that shrinks on that same mouse down breaks its tracking, so every
+    /// other click did nothing. Here the press is the button's own, like a
+    /// tab's, and the choices come up as a native menu on release.
     private var periodPicker: some View {
-        Menu {
-            periodMenuButton("Day", value: "24h")
-            periodMenuButton("Week", value: "7d")
-            periodMenuButton("Month", value: "30d")
-        } label: {
+        Button { self.presentPeriodMenu() } label: {
             HStack(spacing: 4) {
-                Text(periodLabel)
-                    .font(.system(size: 13, weight: .medium))
-                    .fixedSize(horizontal: true, vertical: false)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+                PeriodLabel(period: self.store.period)
+                if self.store.metric != "active" {
+                    // A board by something other than active time says so on
+                    // the pill, with the metric's glyph, and the label width
+                    // animates the same way the period does.
+                    NativeMetricMark(metric: self.store.metric)
+                        .transition(.scale(scale: 0.5, anchor: .leading).combined(with: .opacity))
+                }
+                PeriodChevron(open: self.periodMenuOpen)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .contentShape(Rectangle())
             .background(Color.primary.opacity(0.11), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .animation(.snappy(duration: 0.22, extraBounce: 0), value: self.store.period)
+            .animation(.snappy(duration: 0.22, extraBounce: 0), value: self.store.metric)
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .help("Choose activity period")
-        .accessibilityLabel("Activity period")
-        .accessibilityValue(periodLabel)
+        .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion))
+        .background(NativeMenuAnchor(box: self.periodMenuAnchor))
+        .help("Choose activity period and ranking")
+        .accessibilityLabel("Activity period and ranking")
+        .accessibilityValue("\(periodLabel), by \(self.metricLabel)")
     }
 
     private var periodLabel: String {
@@ -438,12 +445,12 @@ struct NativeDashboardView: View {
         }
     }
 
-    private var subheader: some View {
-        HStack(spacing: 10) {
-            NativeBackButton(help: "Back to \(backDestinationTitle)") { store.goBack() }
-            Text(screenTitle).font(.system(size: 13, weight: .medium))
-            Spacer()
-        }.padding(.horizontal, 12).frame(height: NativeLayout.popoverHeaderHeight)
+    private var metricLabel: String {
+        switch self.store.metric {
+        case "agent": "agent time"
+        case "tokens": "tokens"
+        default: "active time"
+        }
     }
 
     private var profileHeader: some View {
@@ -620,20 +627,9 @@ struct NativeDashboardView: View {
             case .initial:
                 NativePeopleSkeleton(rows: 5, showsPlaces: showsPlaces)
             case .failedEmpty:
-                NativeStateMessage(
-                    title: "Couldn't load activity",
-                    message: "Check your connection and try again.",
-                    actionTitle: "Retry",
-                    action: { Task { await store.refresh(force: true) } }
-                )
+                listFailureMessage
             case .empty:
-                NativeStateMessage(
-                    title: "No activity yet",
-                    message: store.tab == "global" ? "No activity for this period." :
-                        "Invite a friend or join a group to get started.",
-                    actionTitle: store.tab == "global" ? nil : "Invite a friend",
-                    action: store.tab == "global" ? nil : { store.openTray(.home, from: .emptyState) }
-                )
+                emptyListMessage
             case .content,
                  .refreshing,
                  .failedWithContent:
@@ -654,11 +650,61 @@ struct NativeDashboardView: View {
                 }
                 if store.peopleList.hasMore { loadMoreRow }
                 if listPhase == .failedWithContent {
-                    NativeInlineError(message: store.listError ?? "Couldn't refresh activity") {
+                    NativeInlineError(message: store.listFailure?.message ?? "Couldn't refresh activity") {
                         Task { await store.refresh(force: true) }
                     }.padding(12)
                 }
             }
+        }
+    }
+
+    /// The list could not be loaded and there is nothing older to show. One
+    /// line: being offline is named, since the list comes back on its own
+    /// once the connection does; anything else is "try again". The error's
+    /// own words wait under the pointer for whoever wants them.
+    private var listFailureMessage: some View {
+        let failure = self.store.listFailure
+        let offline = failure?.isOffline ?? false
+        return NativeStateMessage(
+            symbol: offline ? "wifi.slash" : "exclamationmark.triangle",
+            title: offline ? "You're offline" : "Couldn't load activity",
+            detail: offline ? nil : failure?.message,
+            actionTitle: "Try again",
+            action: { Task { await self.store.refresh(force: true) } },
+            minHeight: NativeLayout.peopleListHeight
+        )
+    }
+
+    /// The list loaded and is empty. One line and the way out of it: for
+    /// Friends and a group that is people, so the button invites one; for
+    /// the Leaderboard it is time, so the button widens the period.
+    private var emptyListMessage: some View {
+        let longestPeriod = "30d"
+        return switch self.store.tab {
+        case "global":
+            NativeStateMessage(
+                symbol: "clock",
+                title: "Nothing to rank yet",
+                actionTitle: self.store.period == longestPeriod ? nil : "Show the month",
+                action: self.store.period == longestPeriod ? nil : { self.store.setPeriod(longestPeriod) },
+                minHeight: NativeLayout.peopleListHeight
+            )
+        case "friends":
+            NativeStateMessage(
+                symbol: "person.2",
+                title: "No friends yet",
+                actionTitle: "Invite a friend",
+                action: { self.store.openTray(.home, from: .emptyState) },
+                minHeight: NativeLayout.peopleListHeight
+            )
+        default:
+            NativeStateMessage(
+                symbol: "person.3",
+                title: "Nobody's active yet",
+                actionTitle: "Invite someone",
+                action: { self.store.openTray(.home, from: .emptyState) },
+                minHeight: NativeLayout.peopleListHeight
+            )
         }
     }
 
@@ -739,33 +785,78 @@ struct NativeDashboardView: View {
         )
     }
 
-    private var sentRequestsPill: some View {
-        Button { store.pushTray(.sentRequests) } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "paperplane").font(.system(size: 10, weight: .medium))
-                Text("Sent").font(.system(size: 11))
-                Text("\(store.requests.outgoing.count)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .contentTransition(.numericText(value: Double(store.requests.outgoing.count)))
+    /// The step a sent request ends on. The mark lands with the one big
+    /// overshoot in the whole flow, waits a beat, then travels up into the
+    /// Sent pill, which turns its count over as the mark arrives.
+    private var traySent: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                if !self.sentCheckLanded {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .frame(width: 36, height: 36)
+                        .background(Color.green.opacity(0.14), in: Circle())
+                        .matchedGeometryEffect(
+                            id: Self.sentCheckMorphID(reduceMotion: self.reduceMotion),
+                            in: self.morph
+                        )
+                        .scaleEffect(self.sentCheckShown ? 1 : 0.3)
+                        .opacity(self.sentCheckShown ? 1 : 0)
+                }
             }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .background(Color.primary.opacity(0.06), in: Capsule())
-            .contentShape(Capsule())
+            .frame(height: 36)
+            .padding(.bottom, 4)
+            Text("Request sent").font(.system(size: 13, weight: .medium))
+            Text("They show up here once they accept.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button("Add another") { self.store.pushTray(.home) }
+                .buttonStyle(.link).font(.system(size: 12))
         }
-        .buttonStyle(.plain)
-        .help("Sent requests")
-        .transition(.opacity)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .task {
+            if self.sentBaseline == nil { self.sentBaseline = self.store.requests.outgoing.count }
+            withAnimation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.45, bounce: 0.4)) {
+                self.sentCheckShown = true
+            }
+            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+            withAnimation(self.reduceMotion ? .easeOut(duration: 0.2) : .easeInOut(duration: 0.5)) {
+                self.sentCheckLanded = true
+            }
+        }
     }
 
+    /// The one field of the flow, sized for a code you read across a room:
+    /// taller than a form control, with the text at the card's size.
     private var inviteField: some View {
-        TextField("Paste a link or enter a friend code", text: self.$store.query)
-            .labelsHidden()
-            .focused(self.$inviteFieldFocused)
-            .onChange(of: self.store.query) { _, _ in self.store.queryChanged() }
-            .onSubmit { self.store.addFromQuery() }
-            .disabled(self.store.isRunning("accept-invite"))
+        HStack(spacing: 8) {
+            Image(systemName: "link")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField("Paste a link or enter a friend code", text: self.$store.query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .labelsHidden()
+                .focused(self.$inviteFieldFocused)
+                .onChange(of: self.store.query) { _, _ in self.store.queryChanged() }
+                .onSubmit { self.store.addFromQuery() }
+                .disabled(self.store.isRunning("accept-invite"))
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 40)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    self.inviteFieldFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.09),
+                    lineWidth: self.inviteFieldFocused ? 1.5 : 0.5
+                )
+                .animation(.easeOut(duration: 0.15), value: self.inviteFieldFocused)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { self.inviteFieldFocused = true }
     }
 
     @ViewBuilder private var incomingRequestRows: some View {
@@ -789,60 +880,6 @@ struct NativeDashboardView: View {
         }
     }
 
-    /// Everything the screen is for, in the order it gets used: who is waiting
-    /// on you, a field for someone else's invitation, then your own.
-    private var connectScreen: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if !self.store.requests.incoming.isEmpty {
-                self.sectionHeading("Wants to be friends")
-                ForEach(self.store.requests.incoming) { request in
-                    if let person = request.requester {
-                        self.requestRow(person, detail: "Sent you a friend request") {
-                            self.operationButton(
-                                "Accept",
-                                loadingTitle: "Accepting…",
-                                key: "accept-request-\(request.id)",
-                                prominent: true
-                            ) { self.store.respond(request.id, action: "accept") }
-                            self.operationButton(
-                                "Decline",
-                                loadingTitle: "Declining…",
-                                key: "decline-request-\(request.id)"
-                            ) { self.store.respond(request.id, action: "decline") }
-                        }
-                        // An accepted request leaves towards the list, where
-                        // the new friend now is; a declined one simply goes.
-                        .transition(self.store.acceptedRequestIDs.contains(request.id) ? .acceptedRequest : .opacity)
-                    }
-                }
-                Divider()
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Their invitation").font(.system(size: 11)).foregroundStyle(.secondary)
-                TextField("Paste a link or enter a friend code", text: self.$store.query)
-                    .labelsHidden()
-                    .onChange(of: self.store.query) { _, _ in self.store.queryChanged() }
-                    .onSubmit { self.store.addFromQuery() }
-            }
-            self.inviteBanner
-            Divider()
-            self.yourInviteBlock
-            if !self.store.requests.outgoing.isEmpty {
-                Divider()
-                self.navigationRow(
-                    "Sent requests",
-                    detail: self.store.requests.outgoing.count == 1 ? "1 waiting for a reply" :
-                        "\(self.store.requests.outgoing.count) waiting for a reply"
-                ) { self.store.pushTray(.sentRequests) }
-            }
-        }
-        // Rare moments get the room to move: a request leaving, the field
-        // moving up into its place, the sent count arriving underneath.
-        .animation(self.reduceMotion ? nil : SocialStore.settle, value: self.store.requests.incoming.map(\.id))
-        .animation(self.reduceMotion ? nil : SocialStore.settle, value: self.store.requests.outgoing.count)
-        .animation(self.reduceMotion ? nil : SocialStore.settle, value: self.store.inviteCandidate == nil)
-    }
-
     @ViewBuilder private var yourInviteBlock: some View {
         if let invite = store.personalInvite {
             VStack(alignment: .leading, spacing: 8) {
@@ -851,10 +888,14 @@ struct NativeDashboardView: View {
                     .font(.system(size: 24, weight: .medium, design: .monospaced))
                     .tracking(1.5).lineLimit(1).minimumScaleFactor(0.68).textSelection(.enabled)
                     .accessibilityLabel("Your friend code \(invite.personalInviteCode)")
-                HStack(spacing: 6) {
+                // Two equal buttons across the card: the code is the thing
+                // people act on here, so its actions get room, not a footnote.
+                HStack(spacing: 8) {
                     Button { self.store.copyFriendCode(invite.personalInviteCode) } label: {
                         NativeCopyButtonLabel(title: "Copy code", copied: self.store.copiedItem == .friendCode)
-                    }.controlSize(.small).disabled(self.store.busy)
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(maxWidth: .infinity).frame(height: 22)
+                    }
                     Button { self.store.copyPersonalInviteLink() } label: {
                         NativeCopyButtonLabel(
                             title: "Copy link",
@@ -862,16 +903,18 @@ struct NativeDashboardView: View {
                             loadingTitle: "Preparing…",
                             isLoading: self.store.isRunning("copy-invite-link")
                         )
-                    }.controlSize(.small).disabled(self.store.busy)
-                    Spacer(minLength: 0)
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(maxWidth: .infinity).frame(height: 22)
+                    }
                 }
-                Text("Show the code nearby, or send the same invitation as a link.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                .modifier(NativeCapsuleGlassButtons())
+                .controlSize(.regular)
+                .disabled(self.store.busy)
+                .padding(.top, 2)
             }
             .padding(12)
             .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        } else if store.screenLoading {
+        } else if store.trayLoading {
             NativeDelayedSkeleton {
                 VStack(alignment: .leading, spacing: 10) {
                     NativeSkeletonShape(width: 108, height: 13)
@@ -884,65 +927,6 @@ struct NativeDashboardView: View {
         }
     }
 
-    /// A pasted link or code answers itself in place: the list shows who is
-    /// inviting and the single action that follows from it.
-    @ViewBuilder private var inviteBanner: some View {
-        if let candidate = store.inviteCandidate {
-            let prompt = self.invitePrompt(for: candidate)
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: prompt.icon)
-                        .font(.system(size: 14)).foregroundStyle(.secondary)
-                        .frame(width: 18, height: 18)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(prompt.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                        Text(prompt.message).font(.system(size: 11)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 6)
-                    if self.store.checkingInvite {
-                        NativeProgress(active: true, label: "Checking invitation")
-                    }
-                }
-                HStack(spacing: 6) {
-                    if let actionTitle = prompt.actionTitle {
-                        Button { self.store.addFromQuery() } label: {
-                            NativeAsyncButtonLabel(
-                                title: actionTitle,
-                                loadingTitle: prompt.loadingTitle,
-                                isLoading: self.store.isRunning("accept-invite")
-                            )
-                        }.buttonStyle(.borderedProminent).controlSize(.small).disabled(self.store.busy)
-                    } else if self.store.inviteError != nil {
-                        Button("Try again") { self.store.queryChanged() }
-                            .controlSize(.small).disabled(self.store.busy)
-                    }
-                    Button("Dismiss") { self.store.dismissInvite() }
-                        .controlSize(.small).disabled(self.store.busy)
-                    Spacer(minLength: 0)
-                }
-                if prompt.actionTitle != nil {
-                    HStack(spacing: 5) {
-                        Text("As \(self.accountLabel)").font(.system(size: 11)).foregroundStyle(.secondary)
-                            .lineLimit(1).truncationMode(.middle)
-                        Button("Switch…") { self.switchAccountForInvite() }
-                            .buttonStyle(.link).font(.system(size: 11)).disabled(self.store.busy)
-                    }
-                }
-            }
-            .padding(11)
-            .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // A sent invitation drops down towards Sent requests, where it is
-            // counted next; a dismissed one only fades.
-            .transition(self.store.inviteDeparting ? .sentInvite : .opacity)
-        }
-    }
-
     private var accountLabel: String {
         self.session.user?.primaryEmailAddress?.emailAddress ?? "your current account"
     }
@@ -951,74 +935,428 @@ struct NativeDashboardView: View {
         ContentLoadPhase.resolve(
             isLoading: self.store.loading && !self.store.hasLoadedCurrentList,
             hasContent: !self.store.people.isEmpty,
-            hasError: self.store.listError != nil
+            hasError: self.store.listFailure != nil
         )
     }
 
-    @ViewBuilder private var detailSkeleton: some View {
-        switch store.screen {
-        case .requests:
-            NativeRowsSkeleton(rows: 3, showActions: true)
-        default:
-            NativeMetricSkeleton()
-        }
-    }
-
     @ViewBuilder private var content: some View {
-        switch store.screen {
-        case .list: EmptyView()
-        case .connect: connectScreen
-        case .requests:
-            intro("Sent requests", message: "Invitations you sent that are still waiting.")
-            if store.requests.outgoing.isEmpty { quiet("No pending requests.") }
-            ForEach(store.requests.outgoing) { request in
-                if let person = request.target_user {
-                    requestRow(person, detail: "Waiting for a response") {
-                        operationButton(
-                            "Cancel",
-                            loadingTitle: "Cancelling…",
-                            key: "cancel-request-\(request.id)"
-                        ) { store.respond(request.id, action: "cancel") }
-                    }
-                }
-            }
-        case let .person(id): personDetail(id)
-        }
-    }
-
-    private var screenTitle: String {
-        self.screenTitle(for: self.store.screen)
+        if case let .person(id) = store.screen { personDetail(id) }
     }
 
     private var backDestinationTitle: String {
         self.screenTitle(for: self.store.previousScreen ?? .list)
     }
 
+    /// The arriving step settles in a beat after the leaving one has dimmed,
+    /// each drifting a few points down, so the two never sit on top of each
+    /// other at half strength. The same rule the screens follow.
+    private var trayStepTransition: AnyTransition {
+        if self.reduceMotion {
+            return .asymmetric(
+                insertion: .opacity.animation(.easeOut(duration: 0.2)),
+                removal: .opacity.animation(.easeOut(duration: 0.15))
+            )
+        }
+        return .asymmetric(
+            insertion: .offset(y: 14).combined(with: .opacity).animation(.easeOut(duration: 0.22).delay(0.06)),
+            removal: .offset(y: -10).combined(with: .opacity).animation(.easeOut(duration: 0.18))
+        )
+    }
+
+    /// What the Sent pill says. On the Sent tray it keeps the old number until
+    /// the mark has landed in it, so the count turns over as the mark arrives
+    /// rather than whenever the server happened to answer.
+    private var sentPillCount: Int {
+        let count = self.store.requests.outgoing.count
+        guard self.store.tray == .sent, !self.sentCheckLanded, let baseline = self.sentBaseline else { return count }
+        return min(count, baseline)
+    }
+
+    /// How the inviter's code reached the field. A link is their consent, so
+    /// it says so; a code is only a code; a link found in the clipboard says
+    /// where it came from, since nobody typed it.
+    private var inviterDetail: String {
+        if self.session.pendingInviteSource == .clipboard, self.store.queryIsLink { return "Found in your clipboard" }
+        if self.store.queryIsLink { return "Invited you with a link" }
+        if case let .friendCode(code)? = self.store.inviteCandidate {
+            return "Friend code \(self.displayFriendCode(code))"
+        }
+        return "Friend code"
+    }
+
+    /// The Sent tray's mark and the pill's icon share this id; with reduced
+    /// motion they get different ones and simply cross-fade.
+    private static func sentCheckMorphID(reduceMotion: Bool) -> String {
+        reduceMotion ? "sent-check-still" : "sent-check"
+    }
+
+    private static func joinedCheckMorphID(reduceMotion: Bool) -> String {
+        reduceMotion ? "joined-check-still" : "joined-check"
+    }
+
     private static func morphKey(origin: String, person: NativePerson) -> String { "\(origin)-\(person.id)" }
+
+    /// Header, field and paddings: everything in a tray that is not the step.
+    private static func trayFixedHeight(_ tray: SocialStore.Tray) -> CGFloat {
+        44 + (tray.showsField ? 40 + 12 : 0) + 6 + 14
+    }
+
+    private static func firstName(of name: String) -> String {
+        name.split(separator: " ").first.map(String.init) ?? name
+    }
+
+    /// Shows the periods under the button and returns when one is chosen or
+    /// the menu is dismissed. The chevron stays turned for exactly that long.
+    private func presentPeriodMenu() {
+        guard let anchor = self.periodMenuAnchor.view else { return }
+        let menu = NSMenu()
+        for (title, value) in [("Day", "24h"), ("Week", "7d"), ("Month", "30d")] {
+            let item = NSMenuItem(title: title, action: #selector(NativeMenuTarget.choose(_:)), keyEquivalent: "")
+            item.target = self.periodMenuTarget
+            item.representedObject = "period:" + value
+            item.state = self.store.period == value ? .on : .off
+            menu.addItem(item)
+        }
+        // The second half of the same menu: what the board ranks by. One
+        // control for the two questions a board answers, when and by what.
+        menu.addItem(.separator())
+        for (title, value) in [("Active time", "active"), ("Agent time", "agent"), ("Tokens", "tokens")] {
+            let item = NSMenuItem(title: title, action: #selector(NativeMenuTarget.choose(_:)), keyEquivalent: "")
+            item.target = self.periodMenuTarget
+            item.representedObject = "metric:" + value
+            item.state = self.store.metric == value ? .on : .off
+            menu.addItem(item)
+        }
+        self.periodMenuTarget.onChoose = { [store] value in
+            if value.hasPrefix("metric:") { store.setMetric(String(value.dropFirst(7))) }
+            else { store.setPeriod(String(value.dropFirst(7))) }
+        }
+        self.periodMenuOpen = true
+        let below = anchor.isFlipped ? anchor.bounds.maxY + 4 : -4
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: below), in: anchor)
+        self.periodMenuOpen = false
+    }
+
+    /// The step a joined group ends on. The mark lands, the refreshed groups
+    /// put the new tab into the strip and the list moves to it under the
+    /// veil; then the mark flies up into that tab. Closing the tray leaves
+    /// the group on screen: the result is already where it lives.
+    private func trayJoined(_ groupName: String) -> some View {
+        VStack(spacing: 6) {
+            ZStack {
+                if !self.joinedCheckLanded {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .frame(width: 36, height: 36)
+                        .background(Color.green.opacity(0.14), in: Circle())
+                        .matchedGeometryEffect(
+                            id: Self.joinedCheckMorphID(reduceMotion: self.reduceMotion),
+                            in: self.morph
+                        )
+                        .scaleEffect(self.joinedCheckShown ? 1 : 0.3)
+                        .opacity(self.joinedCheckShown ? 1 : 0)
+                }
+            }
+            .frame(height: 36)
+            .padding(.bottom, 4)
+            Text("You're in \(groupName)").font(.system(size: 13, weight: .medium)).lineLimit(1)
+            Text("Its tab is waiting at the top.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .task(id: self.store.joinedGroupID) {
+            if !self.joinedCheckShown {
+                withAnimation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.45, bounce: 0.4)) {
+                    self.joinedCheckShown = true
+                }
+            }
+            // The tab exists only once the groups have come back; until then
+            // there is nowhere to fly. The task runs again when they do.
+            guard let groupID = self.store.joinedGroupID, !self.joinedCheckLanded else { return }
+            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+            self.store.selectTab(groupID)
+            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+            withAnimation(self.reduceMotion ? .easeOut(duration: 0.2) : .easeInOut(duration: 0.5)) {
+                self.joinedCheckLanded = true
+            }
+        }
+    }
+
+    private func sentRequestsPill(_ tray: SocialStore.Tray) -> some View {
+        let count = self.sentPillCount
+        return Button { store.pushTray(.sentRequests) } label: {
+            HStack(spacing: 5) {
+                ZStack {
+                    if tray == .sent, self.sentCheckLanded {
+                        // Where the Sent tray's mark comes to rest: the same
+                        // shared geometry, so it flies here instead of vanishing.
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.green)
+                            .matchedGeometryEffect(
+                                id: Self.sentCheckMorphID(reduceMotion: self.reduceMotion),
+                                in: self.morph
+                            )
+                    } else {
+                        Image(systemName: "paperplane").font(.system(size: 10, weight: .medium))
+                    }
+                }
+                .frame(width: 12, height: 12)
+                Text("Sent").font(.system(size: 11))
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .contentTransition(.numericText(value: Double(count)))
+                    .animation(self.reduceMotion ? nil : .spring(duration: 0.35, bounce: 0), value: count)
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .frame(height: 22)
+            .background(Color.primary.opacity(0.06), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Sent requests")
+        .transition(.opacity)
+    }
+
+    /// The Send request tray: who the code or link belongs to, and the one
+    /// action that follows. The old banner's prompts supply the words.
+    @ViewBuilder private func trayCandidate(_ input: InviteInput) -> some View {
+        let prompt = self.invitePrompt(for: input)
+        let isToken: Bool = if case .token = input { true } else { false }
+        // The person, not the code: once the code's owner is known the card
+        // shows their face and name, and the button says who is being added.
+        let inviter: NativeJoinInfo.Inviter? = if case let .friendCode(code) = input,
+                                                  let known = self.store.inviter,
+                                                  known.code == code { known } else { nil }
+        HStack(alignment: .center, spacing: 10) {
+            if let inviter {
+                FirstlightAvatar(url: inviter.inviterAvatarUrl, name: inviter.inviterName, size: 32)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            } else {
+                Image(systemName: prompt.icon)
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(inviter?.inviterName ?? prompt.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    .contentTransition(.opacity)
+                Text(inviter == nil ? prompt.message : self.inviterDetail).font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+            }
+            Spacer(minLength: 6)
+            if self.store.checkingInvite {
+                NativeProgress(active: true, label: "Checking invitation")
+            }
+        }
+        .animation(self.reduceMotion ? nil : SocialStore.settle, value: inviter)
+        .padding(11)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
+        }
+        .animation(.easeOut(duration: 0.2), value: prompt.title)
+
+        // Shown while the link is still being read as well, so Checking and
+        // Found stand at one height and the tray moves once, not twice.
+        if isToken, self.store.inviteError == nil {
+            HStack(spacing: 5) {
+                Text("As \(self.accountLabel)").font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+                Button("Switch…") { self.switchAccountForInvite() }
+                    .buttonStyle(.link).font(.system(size: 11)).disabled(self.store.busy)
+            }
+        }
+        if let error = store.error {
+            Text(error).font(.system(size: 11)).foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        // A link's button is there from the first moment, dimmed while the
+        // link is read, so the tray is its final height at once; then the
+        // group's name arrives into the label. A code's button says what it
+        // does and turns into a spinner while it does it.
+        if prompt.actionTitle != nil || (isToken && self.store.inviteError == nil) {
+            self.trayActionButton(
+                isToken ? "Join \(self.store.inviteInfo?.invite.groupName ?? "group")" :
+                    "Add \(inviter.map { Self.firstName(of: $0.inviterName) } ?? "friend")",
+                isLoading: self.store.isRunning("accept-invite"),
+                enabled: prompt.actionTitle != nil
+            ) { self.store.addFromQuery() }
+        } else if self.store.inviteError != nil {
+            Button("Try again") { self.store.queryChanged() }
+                .controlSize(.small).disabled(self.store.busy)
+        }
+    }
+
+    /// The step a link-made friendship ends on. No request to wait for: the
+    /// mark lands and the new friend's row settles into the list under the
+    /// veil, so closing the tray finds them already there.
+    private func trayConnected(_ name: String) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.green)
+                .frame(width: 36, height: 36)
+                .background(Color.green.opacity(0.14), in: Circle())
+                .scaleEffect(self.sentCheckShown ? 1 : 0.3)
+                .opacity(self.sentCheckShown ? 1 : 0)
+                .padding(.bottom, 4)
+            Text("You're friends with \(name)").font(.system(size: 13, weight: .medium)).lineLimit(1)
+            Text("Their row is in your list now.")
+                .font(.system(size: 11)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .task {
+            withAnimation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.45, bounce: 0.4)) {
+                self.sentCheckShown = true
+            }
+        }
+    }
+
+    /// The tray's one action. Its words change by the word that changed;
+    /// while it works, the words give way to a spinner and the width holds.
+    private func trayActionButton(
+        _ title: String,
+        isLoading: Bool,
+        enabled: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            ZStack {
+                MorphingLabel(text: title, reduceMotion: self.reduceMotion)
+                    .opacity(isLoading ? 0 : 1)
+                if isLoading {
+                    ProgressView().controlSize(.small).tint(.white).transition(.opacity)
+                }
+            }
+            .font(.system(size: 13, weight: .medium))
+            .frame(maxWidth: .infinity)
+            .frame(height: 22)
+            .animation(.easeOut(duration: 0.2), value: isLoading)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.regular)
+        .tint(.accentColor)
+        .disabled(!enabled || self.store.busy)
+        .opacity(enabled ? 1 : 0.45)
+        .animation(.easeOut(duration: 0.25), value: enabled)
+        .keyboardShortcut(.defaultAction)
+    }
 
     private func inviteTray(_ tray: SocialStore.Tray) -> some View {
         VStack(spacing: 0) {
             self.trayHeader(tray)
             VStack(alignment: .leading, spacing: 12) {
                 if tray.showsField { self.inviteField }
-                self.trayStep(tray)
+                // The steps overlap while one gives way to the next, inside a
+                // frame that moves to the arriving step's height on its own
+                // spring. Only long lists ever scroll; the frame is the
+                // content's height otherwise, so nothing else can.
+                ZStack(alignment: .top) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) { self.trayStep(tray) }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                                self.trayStepMeasured(tray, height: height)
+                            }
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .id(tray)
+                    .transition(self.trayStepTransition)
+                }
+                .frame(height: self.trayStepHeight, alignment: .top)
             }
             .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxHeight: Self.trayMaximumHeight, alignment: .top)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.16), radius: 18, y: 6)
-        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.38, bounce: 0.1), value: tray)
-        .onChange(of: tray, initial: true) { _, value in
+        .onChange(of: tray, initial: true) { previous, value in
             if value == .home { self.inviteFieldFocused = true }
+            if value != .sent, !value.isConnected {
+                self.sentCheckShown = false
+                self.sentCheckLanded = false
+                self.sentBaseline = nil
+            }
+            if case .joined = value {} else {
+                self.joinedCheckShown = false
+                self.joinedCheckLanded = false
+            }
+            // Remember how tall the leaving tray stood, so the arriving one
+            // can be told to stand visibly apart from it.
+            if previous != value {
+                self.trayPreviousTotal = self.trayStepHeight.map { $0 + Self.trayFixedHeight(previous) }
+                self.applyTrayHeight(for: value)
+            }
+        }
+        .onDisappear {
+            self.trayStepHeight = nil
+            self.trayPreviousTotal = nil
+            self.trayStepNatural.removeAll()
+        }
+        // An emptied list is not a place to stay: after a beat it returns on
+        // its own, before the tray has shrunk to a lone header.
+        .task(id: self.trayAutoReturnKey(tray)) {
+            guard self.trayAutoReturnKey(tray) != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+            self.store.trayBack()
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(self.trayTitle(tray))
+    }
+
+    /// A step's natural height, as it lays itself out. The frame around the
+    /// steps follows it on the tray spring; the leaving step's late reports
+    /// are ignored so it cannot pull the frame back.
+    private func trayStepMeasured(_ tray: SocialStore.Tray, height: CGFloat) {
+        guard self.store.tray == tray, height > 0 else { return }
+        self.trayStepNatural[tray] = height
+        self.applyTrayHeight(for: tray)
+    }
+
+    /// Moves the step frame to what the tray needs: its natural height, capped
+    /// at the tray's limit, plus the 24 pt of air the rule may add. Called
+    /// when a step reports its size and, for a tray seen before, the moment
+    /// it comes back, so a return does not wait for a fresh layout or, worse,
+    /// keep the leaving tray's height and scroll.
+    private func applyTrayHeight(for tray: SocialStore.Tray) {
+        guard self.store.tray == tray, let natural = self.trayStepNatural[tray] else { return }
+        let maximumStep = Self.trayMaximumHeight - Self.trayFixedHeight(tray)
+        var step = min(natural, maximumStep)
+        // Neighbouring trays must differ in height, or the change is not
+        // seen. Within 24 pt the arriving tray takes 24 pt of air below.
+        if let previous = self.trayPreviousTotal,
+           abs(step + Self.trayFixedHeight(tray) - previous) < 24
+        {
+            step = min(step + 24, maximumStep)
+        }
+        guard self.trayStepHeight.map({ abs($0 - step) > 0.5 }) ?? true else { return }
+        let animation: Animation? = self.trayStepHeight == nil ? nil :
+            self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.38, bounce: 0.1)
+        withAnimation(animation) { self.trayStepHeight = step }
+    }
+
+    /// Non-nil while the open tray is a list that has just run out of rows.
+    private func trayAutoReturnKey(_ tray: SocialStore.Tray) -> String? {
+        guard !self.store.trayLoading, !self.store.busy else { return nil }
+        switch tray {
+        case .incoming where self.store.requests.incoming.isEmpty: return "incoming-empty"
+        case .sentRequests where self.store.requests.outgoing.isEmpty: return "sent-empty"
+        default: return nil
+        }
     }
 
     private func trayHeader(_ tray: SocialStore.Tray) -> some View {
@@ -1029,8 +1367,8 @@ struct NativeDashboardView: View {
                 .lineLimit(1)
                 .contentTransition(.opacity)
             Spacer(minLength: 0)
-            if tray == .home || tray == .sent, !store.requests.outgoing.isEmpty {
-                self.sentRequestsPill
+            if tray == .home || tray == .sent, self.sentPillCount > 0 || self.sentCheckLanded {
+                self.sentRequestsPill(tray)
             }
         }
         .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 6)
@@ -1049,11 +1387,11 @@ struct NativeDashboardView: View {
                     .opacity(back ? 1 : 0)
             }
             .font(.system(size: 12, weight: .semibold))
-            .frame(width: 26, height: 26)
-            .background(Color.primary.opacity(0.07), in: Circle())
-            .contentShape(Circle())
+            .frame(width: 18, height: 22)
         }
-        .buttonStyle(.plain)
+        // The same round glass control as Back in a profile and the gear in
+        // the footer, so the tray's one button belongs to the same family.
+        .modifier(NativeRoundGlassButton())
         .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.3, bounce: 0.15), value: back)
         .help(back ? "Back" : "Close")
         .accessibilityLabel(back ? "Back" : "Close")
@@ -1064,14 +1402,20 @@ struct NativeDashboardView: View {
         switch tray {
         case .home: "Add a friend"
         case .incoming: "Wants to be friends"
-        case let .candidate(input):
-            switch input {
+        case let .candidate(kind):
+            switch kind {
             case .token: "Group invitation"
-            case let .friendCode(code):
-                code.caseInsensitiveCompare(self.store.personalInvite?.personalInviteCode ?? "") == .orderedSame ?
-                    "Add a friend" : "Send request"
+            case .friendCode:
+                if case let .friendCode(code)? = self.store.inviteCandidate,
+                   code.caseInsensitiveCompare(self.store.personalInvite?.personalInviteCode ?? "") == .orderedSame
+                {
+                    "Add a friend"
+                } else {
+                    "Send request"
+                }
             }
         case .sent: "Sent"
+        case .connected: "Friends"
         case .joined: "Joined"
         case .sentRequests: "Sent requests"
         }
@@ -1083,6 +1427,9 @@ struct NativeDashboardView: View {
         switch tray {
         case .home:
             self.yourInviteBlock
+            if let error = store.error, !store.trayLoading {
+                NativeInlineError(message: error) { self.store.refreshTray(force: true) }
+            }
             if !self.store.requests.incoming.isEmpty {
                 Divider()
                 self.navigationRow(
@@ -1094,19 +1441,19 @@ struct NativeDashboardView: View {
         case .incoming:
             self.incomingRequestRows
             if self.store.requests.incoming.isEmpty { self.quiet("That's everyone.") }
+            if let error = store.error { NativeInlineError(message: error) }
         case .candidate:
-            self.inviteBanner
+            // The field may have just emptied; the tray is on its way back.
+            if let input = self.store.inviteCandidate { self.trayCandidate(input) }
         case .sent:
-            self.trayResult(title: "Request sent", message: "They show up here once they accept.") {
-                Button("Add another") { self.store.pushTray(.home) }
-                    .buttonStyle(.link).font(.system(size: 12))
-            }
+            self.traySent
+        case let .connected(name):
+            self.trayConnected(name)
         case let .joined(groupName):
-            self.trayResult(title: "You're in \(groupName)", message: "Its tab is waiting at the top.") {
-                EmptyView()
-            }
+            self.trayJoined(groupName)
         case .sentRequests:
             if self.store.requests.outgoing.isEmpty { self.quiet("No pending requests.") }
+            if let error = store.error { NativeInlineError(message: error) }
             ForEach(self.store.requests.outgoing) { request in
                 if let person = request.target_user {
                     self.requestRow(person, detail: "Waiting for a response") {
@@ -1174,16 +1521,6 @@ struct NativeDashboardView: View {
         self.store.open(.person(person.id))
     }
 
-    private func periodMenuButton(_ label: String, value: String) -> some View {
-        Button { self.store.setPeriod(value) } label: {
-            if self.store.period == value {
-                Label(label, systemImage: "checkmark")
-            } else {
-                Text(label)
-            }
-        }
-    }
-
     @ViewBuilder private func profileHeaderAction(
         _ title: String,
         isLoading: Bool = false,
@@ -1231,8 +1568,6 @@ struct NativeDashboardView: View {
     private func screenTitle(for screen: SocialStore.Screen) -> String {
         switch screen {
         case .list: "Friends"
-        case .connect: "Add friends"
-        case .requests: "Sent requests"
         case .person: "Profile"
         }
     }
@@ -1291,53 +1626,69 @@ struct NativeDashboardView: View {
                 // Frames measured mid-drag include the drag's own offsets.
                 if self.groupDrag == nil { self.groupTabFrames[id] = frame }
             },
-            gesture: DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.groupStripSpace))
-                .onChanged { value in
-                    let translation = value.translation.width
-                    if self.groupDrag == nil {
-                        self.groupDrag = GroupDrag(id: id, index: index, translation: translation, target: index)
-                    } else {
-                        self.groupDrag?.translation = translation
-                    }
-                    guard let frame = self.groupTabFrames[id] else { return }
-                    let center = frame.midX + translation
-                    let target = self.store.groups.indices.filter { other in
-                        other != index && (self.groupTabFrames[self.store.groups[other].id]?.midX ?? 0) < center
-                    }.count
-                    if self.groupDrag?.target != target {
-                        withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0)) {
-                            self.groupDrag?.target = target
-                        }
+            tap: { self.store.selectTab(id) },
+            dragChanged: { translation in
+                if self.groupDrag == nil {
+                    self.groupDrag = GroupDrag(id: id, index: index, translation: translation, target: index)
+                } else {
+                    self.groupDrag?.translation = translation
+                }
+                guard let frame = self.groupTabFrames[id] else { return }
+                let center = frame.midX + translation
+                let target = self.store.groups.indices.filter { other in
+                    other != index && (self.groupTabFrames[self.store.groups[other].id]?.midX ?? 0) < center
+                }.count
+                if self.groupDrag?.target != target {
+                    withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0)) {
+                        self.groupDrag?.target = target
                     }
                 }
-                .onEnded { _ in
-                    let target = self.groupDrag?.target ?? index
-                    withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
-                        self.groupDrag = nil
-                        self.store.moveGroup(id, to: target)
-                    }
+            },
+            dragEnded: {
+                let target = self.groupDrag?.target ?? index
+                withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
+                    self.groupDrag = nil
+                    self.store.moveGroup(id, to: target)
                 }
+            }
         )
     }
 
     private func tab(_ label: String, id: String) -> some View {
         let selected = self.store.tab == id
         return Button { store.selectTab(id) } label: {
-            Text(label).font(.system(size: 13, weight: .medium)).fixedSize()
-                // The label is the same object before and after: only its
-                // state changes, so the colour crosses over with the pill.
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background {
-                    if selected {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(Color.primary.opacity(0.11))
-                            .matchedGeometryEffect(id: "pill", in: self.tabPill)
-                    }
+            HStack(spacing: 5) {
+                // Where the Joined tray's mark comes to rest: the tab of the
+                // group just joined carries it until the tray has closed.
+                if self.store.joinedGroupID == id, self.joinedCheckLanded {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.green)
+                        .matchedGeometryEffect(
+                            id: Self.joinedCheckMorphID(reduceMotion: self.reduceMotion),
+                            in: self.morph
+                        )
+                        .transition(.opacity)
                 }
+                Text(label).font(.system(size: 13, weight: .medium)).fixedSize()
+            }
+            // The label is the same object before and after: only its
+            // state changes, so the colour crosses over with the pill.
+            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.primary.opacity(0.11))
+                        .matchedGeometryEffect(id: "pill", in: self.tabPill)
+                }
+            }
         }
         .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion))
         .id(id)
+        // A group joined from the tray gets its tab while the strip is on
+        // screen: the neighbours make room and the tab grows into the gap.
+        .transition(self.reduceMotion ? .opacity : .scale(scale: 0.7).combined(with: .opacity))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 
@@ -1404,27 +1755,63 @@ struct NativeDashboardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     VStack(alignment: .trailing, spacing: 2) {
-                        AnimatedDuration(minutes: person.active_minutes ?? 0)
-                            .foregroundStyle(.secondary).font(.system(size: 12))
-                            .fixedSize()
-                            // The same total the profile leads with: it goes
-                            // there, so the eye is sure it is the same number.
-                            .matchedGeometryEffect(
-                                id: self.morphID(Self.timeMorphID, row: morphSource),
-                                in: self.morph,
-                                properties: .position
-                            )
-                        if let activeApp = person.active_app, person.isActiveNow {
-                            HStack(spacing: 4) {
-                                NativeTrackedAppIcon(url: activeApp.icon_url, size: 16)
-                                Text(activeApp.name)
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
+                        Group {
+                            // On a board by tokens the figure is a count; on
+                            // the others a duration, of the person's own time
+                            // or of their agents'.
+                            if self.store.metric == "tokens" {
+                                Text(TokenLabel.compact(person.score ?? 0))
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText())
+                            } else {
+                                AnimatedDuration(
+                                    minutes: self.store.metric == "agent" ? person.score ?? 0 : person
+                                        .active_minutes ?? 0
+                                )
                             }
-                            .frame(maxWidth: 110, alignment: .trailing)
-                            .help(activeApp.name)
+                        }
+                        .foregroundStyle(.secondary).font(.system(size: 12))
+                        .fixedSize()
+                        // The same total the profile leads with: it goes
+                        // there, so the eye is sure it is the same number.
+                        .matchedGeometryEffect(
+                            id: self.morphID(Self.timeMorphID, row: morphSource),
+                            in: self.morph,
+                            properties: .position
+                        )
+                        let activeApp = person.isActiveNow ? person.active_app : nil
+                        let agent = person.isAgentWorkingNow ? person.agent : nil
+                        if activeApp != nil || agent != nil {
+                            // The list is looked at often, so an agent at work
+                            // is only a small mark beside the running app: it
+                            // grows out of the app icon's side and fades when
+                            // the agent goes quiet. Numbers wait for the profile.
+                            HStack(spacing: 5) {
+                                if let agent {
+                                    NativeAgentIndicator(tool: agent.tool, size: 11)
+                                        .matchedGeometryEffect(
+                                            id: self.morphID(Self.agentMorphID, row: morphSource),
+                                            in: self.morph,
+                                            properties: .position
+                                        )
+                                        .transition(.scale(scale: 0.4, anchor: .trailing).combined(with: .opacity))
+                                        .help("\(NativeAgentToolLabel.name(agent.tool)) is working")
+                                }
+                                if let activeApp {
+                                    NativeTrackedAppIcon(url: activeApp.icon_url, size: 16)
+                                    Text(activeApp.name)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                        .help(activeApp.name)
+                                }
+                            }
+                            .frame(maxWidth: 124, alignment: .trailing)
+                            .animation(
+                                self.reduceMotion ? nil : .snappy(duration: 0.3, extraBounce: 0),
+                                value: agent?.tool
+                            )
                         }
                     }
                 }
@@ -1646,6 +2033,23 @@ struct NativeDashboardView: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
             }
+            // The agents card follows the active-time card only for people
+            // with agent data: no empty card, no "0 tokens". It settles in
+            // when the summary answers instead of appearing between frames.
+            ZStack {
+                if let summary = store.agentSummary, summary.has_data {
+                    NativeAgentsCard(
+                        summary: summary,
+                        period: store.period,
+                        liveMorph: .init(id: self.morphID(Self.agentMorphID), namespace: self.morph)
+                    )
+                    .transition(.opacity.combined(with: .offset(y: 6)))
+                }
+            }
+            .animation(
+                self.reduceMotion ? nil : .snappy(duration: 0.32, extraBounce: 0),
+                value: self.store.agentSummary?.has_data ?? false
+            )
             if self.isLoadingProfileActivity {
                 NativeTrackedAppsSkeleton()
             }
@@ -1715,14 +2119,6 @@ struct NativeDashboardView: View {
         }
         .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
-    }
-
-    private func intro(_ title: String, message: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 14, weight: .medium))
-            Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     private func sectionHeading(_ title: String) -> some View {
@@ -1849,6 +2245,70 @@ private struct HorizontalScrollFadeMask: View {
                 endPoint: .trailing
             )
             .frame(width: 18)
+        }
+    }
+}
+
+/// The round Liquid Glass button the app uses for Back and Settings, with the
+/// bordered circle where glass is not available.
+private struct NativeRoundGlassButton: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.buttonStyle(.glass).buttonBorderShape(.circle).controlSize(.regular)
+        } else {
+            content.buttonStyle(.bordered).buttonBorderShape(.circle).controlSize(.regular)
+        }
+    }
+}
+
+/// Capsule glass buttons, like the Invite capsule in the footer, for a row of
+/// equal actions; bordered capsules before glass.
+private struct NativeCapsuleGlassButtons: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.buttonStyle(.glass).buttonBorderShape(.capsule)
+        } else {
+            content.buttonStyle(.bordered).buttonBorderShape(.capsule)
+        }
+    }
+}
+
+/// A label that changes by the word. Words the old and new text share keep
+/// their identity and slide to their new place; the words that differ leave
+/// upwards and arrive from below. "Join group" becomes "Join Runway" by
+/// moving one word, the way Family turns Continue into Confirm.
+private struct MorphingLabel: View {
+    // MARK: Internal
+
+    let text: String
+    var reduceMotion = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(self.words, id: \.id) { word in
+                Text(word.text)
+                    .fixedSize()
+                    .transition(self.reduceMotion ? .opacity : .asymmetric(
+                        insertion: .offset(y: 8).combined(with: .opacity),
+                        removal: .offset(y: -8).combined(with: .opacity)
+                    ))
+            }
+        }
+        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.1), value: self.text)
+        .accessibilityLabel(self.text)
+    }
+
+    // MARK: Private
+
+    /// Words identified by their text and how many times it has already
+    /// appeared, so a repeated word still gets an identity of its own.
+    private var words: [(id: String, text: String)] {
+        var seen: [String: Int] = [:]
+        return self.text.split(separator: " ").map { part in
+            let word = String(part)
+            let count = seen[word, default: 0]
+            seen[word] = count + 1
+            return (id: "\(word)#\(count)", text: word)
         }
     }
 }
@@ -2008,6 +2468,305 @@ private struct FirstlightAvatarMask: Shape {
     }
 }
 
+/// The glyph of one coding tool, drawn from a template asset so it takes the
+/// text colour around it. A tool without a glyph gets a generic spark.
+private struct NativeAgentGlyph: View {
+    let tool: String
+    var size: CGFloat = 12
+
+    var body: some View {
+        Group {
+            if let asset = NativeAgentToolLabel.glyph(self.tool), NSImage(named: asset) != nil {
+                Image(asset).renderingMode(.template).resizable().scaledToFit()
+            } else {
+                Image(systemName: "sparkle").resizable().scaledToFit()
+            }
+        }
+        .frame(width: self.size, height: self.size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// "An agent is writing right now": the tool's glyph with a dot that
+/// breathes. Breathing rather than blinking, and still under Reduce Motion,
+/// so a list full of working agents never flickers.
+private struct NativeAgentIndicator: View {
+    // MARK: Internal
+
+    let tool: String
+    var size: CGFloat = 12
+
+    var body: some View {
+        HStack(spacing: 3) {
+            NativeAgentGlyph(tool: self.tool, size: self.size).foregroundStyle(.secondary)
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: self.size * 0.5, height: self.size * 0.5)
+                .opacity(self.reduceMotion ? 1 : (self.breathingIn ? 1 : 0.35))
+                .animation(
+                    self.reduceMotion ? nil : .easeInOut(duration: 1.1).repeatForever(autoreverses: true),
+                    value: self.breathingIn
+                )
+        }
+        .onAppear { self.breathingIn = true }
+        .accessibilityLabel("\(NativeAgentToolLabel.name(self.tool)) is working")
+    }
+
+    // MARK: Private
+
+    @State private var breathingIn = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+}
+
+/// The small mark on the period pill when the board ranks by agent time or
+/// tokens: a glyph with a one-word label, so the pill still reads at a glance.
+private struct NativeMetricMark: View {
+    let metric: String
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: self.metric == "tokens" ? "number" : "sparkle")
+                .font(.system(size: 9, weight: .semibold))
+            Text(self.metric == "tokens" ? "Tokens" : "Agents")
+                .font(.system(size: 13, weight: .medium))
+                .fixedSize()
+        }
+        .foregroundStyle(.secondary)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Token counts as people say them: 842, 12.4K, 1.2M, 3.1B. Short so the
+/// width barely moves, and monospaced digits so what moves lines up.
+private enum TokenLabel {
+    static func compact(_ value: Double) -> String {
+        guard value.isFinite, value > 0 else { return "0" }
+        let units: [(Double, String)] = [(1e9, "B"), (1e6, "M"), (1e3, "K")]
+        for (scale, suffix) in units where value >= scale {
+            let scaled = value / scale
+            return scaled < 10 ? String(format: "%.1f%@", scaled, suffix) : String(format: "%.0f%@", scaled, suffix)
+        }
+        return String(format: "%.0f", value)
+    }
+
+    static func dollars(microUSD: Double) -> String {
+        let dollars = microUSD / 1_000_000
+        return dollars < 10 ? String(format: "$%.2f", dollars) : String(format: "$%.0f", dollars)
+    }
+}
+
+/// A person's coding agents over the period. The hero number is the time
+/// agents worked while the person was away, the one figure nothing else on
+/// the profile tells; the rest is set smaller. Hovering a day of the week
+/// bars swaps every number for that day, and leaving swaps them back.
+private struct NativeAgentsCard: View {
+    // MARK: Internal
+
+    let summary: NativeAgentSummary
+    let period: String
+    let liveMorph: FirstlightAvatar.Morph
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Agents").font(.system(size: 13, weight: .medium))
+                    Text(self.subtitle)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .contentTransition(.opacity)
+                        .animation(.easeOut(duration: 0.14), value: self.subtitle)
+                }
+                Spacer()
+                if let live = self.summary.active_tool {
+                    // Flew in from the row's small mark: this is where the
+                    // "working" status lives once the profile is open.
+                    NativeAgentIndicator(tool: live, size: 13)
+                        .matchedGeometryEffect(
+                            id: self.liveMorph.id,
+                            in: self.liveMorph.namespace,
+                            properties: .position
+                        )
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                self.stat("While away", minutes: self.shown.agentOnly)
+                self.stat("Agent time", minutes: self.shown.agent)
+                Spacer(minLength: 0)
+            }
+
+            if let days = self.summary.days, days.count > 1 {
+                NativeAgentWeekBars(days: days, hovered: self.$hoveredDay)
+            }
+
+            HStack(spacing: 6) {
+                if let tokens = self.summary.tokens {
+                    Text("\(TokenLabel.compact(tokens.total)) tokens")
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                }
+                if let tool = self.summary.top_tool {
+                    Text("·").foregroundStyle(.tertiary)
+                    NativeAgentGlyph(tool: tool, size: 11)
+                    Text(NativeAgentToolLabel.name(tool)).lineLimit(1)
+                }
+                if let concurrency = self.summary.max_concurrency, concurrency > 1 {
+                    Text("·").foregroundStyle(.tertiary)
+                    Text("up to \(concurrency) at once").monospacedDigit()
+                }
+                Spacer(minLength: 4)
+                if let cost = self.summary.estimated_cost_micro_usd {
+                    // Always an estimate, always marked as one.
+                    Text("≈ \(TokenLabel.dollars(microUSD: cost))")
+                        .monospacedDigit()
+                        .help("Estimated from token counts and public prices")
+                }
+            }
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.09), lineWidth: 0.5)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    // MARK: Private
+
+    private static let dayParser: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let dayLabel: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+        return formatter
+    }()
+
+    @State private var hoveredDay: Int?
+
+    /// The totals, or the hovered day's share of them.
+    private var shown: (agent: Double, agentOnly: Double) {
+        if let index = self.hoveredDay, let day = self.summary.days?[safe: index] {
+            return (day.agent_minutes, day.agent_only_minutes)
+        }
+        return (self.summary.agent_minutes ?? 0, self.summary.agent_only_minutes ?? 0)
+    }
+
+    private var subtitle: String {
+        if let index = self.hoveredDay, let day = self.summary.days?[safe: index],
+           let date = Self.dayParser.date(from: day.date)
+        {
+            return Self.dayLabel.string(from: date)
+        }
+        switch self.period {
+        case "24h": return "Last 24 hours"
+        case "7d": return "Last 7 days"
+        default: return "Last 30 days"
+        }
+    }
+
+    private func stat(_ title: String, minutes: Double) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            AnimatedDuration(minutes: minutes).font(.system(size: 20, weight: .medium))
+            Text(title).font(.caption).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Seven (or thirty) columns, one stack each: the person's own time in the
+/// light tone, the time agents added while the person was away on top in
+/// the dark tone. The pointer picks a day; the card above reads it out.
+private struct NativeAgentWeekBars: View {
+    // MARK: Internal
+
+    let days: [NativeAgentSummary.Day]
+    @Binding var hovered: Int?
+
+    var body: some View {
+        let scale = max(self.days.map { $0.human_minutes + $0.agent_only_minutes }.max() ?? 0, 1)
+        VStack(spacing: 4) {
+            HStack(alignment: .bottom, spacing: self.days.count > 7 ? 2 : 4) {
+                ForEach(Array(self.days.enumerated()), id: \.element.id) { index, day in
+                    let dimmed = self.hovered != nil && self.hovered != index
+                    VStack(spacing: 0) {
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(Color.primary.opacity(0.7))
+                            .frame(height: Self.height * day.agent_only_minutes / scale)
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(Color.primary.opacity(0.22))
+                            .frame(height: Self.height * day.human_minutes / scale)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .bottom)
+                    .frame(height: Self.height, alignment: .bottom)
+                    .background(alignment: .bottom) {
+                        // A floor so an empty day still has somewhere to hover.
+                        Rectangle().fill(Color.primary.opacity(0.06)).frame(height: 1)
+                    }
+                    .opacity(dimmed ? 0.45 : 1)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { self.hovered = index } else if self.hovered == index { self.hovered = nil }
+                    }
+                    .animation(self.reduceMotion ? nil : .easeOut(duration: 0.16), value: dimmed)
+                    .animation(self.reduceMotion ? nil : .snappy(duration: 0.4, extraBounce: 0), value: scale)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        "\(day.date): \(DurationLabel.minutes(day.agent_minutes)) agents, \(DurationLabel.minutes(day.human_minutes)) you"
+                    )
+                }
+            }
+            if self.days.count <= 7 {
+                HStack(spacing: 4) {
+                    ForEach(self.days) { day in
+                        Text(Self.weekdayLetter(day.date))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .accessibilityHidden(true)
+            }
+        }
+    }
+
+    // MARK: Private
+
+    private static let height: CGFloat = 40
+
+    private static let parser: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let weekday: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("EEEEE")
+        return formatter
+    }()
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static func weekdayLetter(_ date: String) -> String {
+        guard let parsed = self.parser.date(from: date) else { return "" }
+        return self.weekday.string(from: parsed)
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? { self.indices.contains(index) ? self[index] : nil }
+}
+
 private struct NativeTrackedAppIcon: View {
     let url: String?
     var size: CGFloat = 28
@@ -2032,14 +2791,25 @@ private struct NativeTrackedAppIcon: View {
 /// the pointer, a slight press on mouse down, then release does the switch.
 /// Three events, three motions, each shorter than the one before.
 private struct NativeTabButtonStyle: ButtonStyle {
+    // MARK: Internal
+
     let reduceMotion: Bool
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .modifier(NativeTabHover(pressed: configuration.isPressed))
-            .scaleEffect(configuration.isPressed && !self.reduceMotion ? 0.96 : 1)
-            .animation(.snappy(duration: 0.16, extraBounce: 0), value: configuration.isPressed)
+        let pressed = configuration.isPressed || self.gesturePressed
+        return configuration.label
+            // Passed back down so a label can answer the press too, like the
+            // period picker's chevron turning while its menu is open.
+            .environment(\.tabPressed, pressed)
+            .modifier(NativeTabHover(pressed: pressed))
+            .scaleEffect(pressed && !self.reduceMotion ? 0.96 : 1)
+            .animation(.snappy(duration: 0.16, extraBounce: 0), value: pressed)
     }
+
+    // MARK: Private
+
+    /// Set by a group tab's reorder gesture, which sees the mouse first.
+    @Environment(\.tabPressed) private var gesturePressed
 }
 
 /// The fill under a tab: faint under the pointer, firmer while pressed. An
@@ -2068,15 +2838,127 @@ private struct NativeTabHover: ViewModifier {
     @State private var hovering = false
 }
 
-private struct GroupTabDragModifier<DragAlong: Gesture>: ViewModifier {
+/// Whether the pointer is down on a tab, as seen by a gesture outside the
+/// button. A group tab's reorder gesture takes the mouse before the button
+/// does, so the button never learns it is pressed; the gesture tells the
+/// button style through the environment instead, and every tab presses alike.
+private struct TabPressedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+private extension EnvironmentValues {
+    var tabPressed: Bool {
+        get { self[TabPressedKey.self] }
+        set { self[TabPressedKey.self] = newValue }
+    }
+}
+
+/// The period picker's word. A Text that changes its string changes size at
+/// once, and the chevron beside it jumped while the pill caught up. Here all
+/// three words sit in one stack and cross-fade, and the width is a number,
+/// the measured width of the current word, which animates like any other
+/// frame: the pill grows or shrinks smoothly and the chevron rides along.
+private struct PeriodLabel: View {
+    // MARK: Internal
+
+    let period: String
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            ForEach(Self.periods, id: \.value) { entry in
+                Text(entry.label)
+                    .font(.system(size: 13, weight: .medium))
+                    .fixedSize()
+                    .opacity(entry.value == self.period ? 1 : 0)
+                    .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { width in
+                        self.widths[entry.value] = width
+                    }
+            }
+        }
+        .frame(width: self.widths[self.period], alignment: .leading)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: Private
+
+    private static let periods = [("24h", "Day"), ("7d", "Week"), ("30d", "Month")]
+        .map { (value: $0.0, label: $0.1) }
+
+    /// Each word's natural width, measured once it is laid out. Until then
+    /// the stack takes the widest word, so nothing is ever cut off.
+    @State private var widths: [String: CGFloat] = [:]
+}
+
+/// The period picker's chevron. It turns over for as long as the menu is
+/// open: the arrow points at the list that came out, and back down when it
+/// is gone.
+private struct PeriodChevron: View {
+    // MARK: Internal
+
+    let open: Bool
+
+    var body: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .rotationEffect(self.open && !self.reduceMotion ? .degrees(180) : .zero)
+            .animation(.snappy(duration: 0.2, extraBounce: 0), value: self.open)
+            .accessibilityHidden(true)
+    }
+
+    // MARK: Private
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+}
+
+/// Holds the AppKit view under a SwiftUI control so a native menu can be
+/// positioned against it.
+private final class NativeViewBox {
+    weak var view: NSView?
+}
+
+private struct NativeMenuAnchor: NSViewRepresentable {
+    let box: NativeViewBox
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        self.box.view = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        self.box.view = nsView
+    }
+}
+
+/// What a native menu item calls when chosen. NSMenuItem needs an Objective-C
+/// target; the closure is the SwiftUI side of it.
+private final class NativeMenuTarget: NSObject {
+    var onChoose: ((String) -> Void)?
+
+    @objc func choose(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
+        self.onChoose?(value)
+    }
+}
+
+/// One gesture for everything the mouse does to a group tab. Down: the tab
+/// presses. Up without moving: the tab is chosen. Moving past a few points:
+/// the press lets go and the tab lifts and follows the pointer instead.
+private struct GroupTabDragModifier: ViewModifier {
+    // MARK: Internal
+
     let isDragged: Bool
     let offset: CGFloat
     let reduceMotion: Bool
     let frameChanged: (CGRect) -> Void
-    let gesture: DragAlong
+    let tap: () -> Void
+    let dragChanged: (CGFloat) -> Void
+    let dragEnded: () -> Void
 
     func body(content: Content) -> some View {
         content
+            .environment(\.tabPressed, self.pressed)
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .named("groupStrip"))
             } action: { frame in
@@ -2087,7 +2969,36 @@ private struct GroupTabDragModifier<DragAlong: Gesture>: ViewModifier {
             .offset(x: self.offset)
             .zIndex(self.isDragged ? 1 : 0)
             .animation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0), value: self.isDragged)
-            .highPriorityGesture(self.gesture)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named("groupStrip"))
+                    .onChanged { value in
+                        let translation = value.translation.width
+                        if !self.dragging, abs(translation) < Self.dragThreshold {
+                            self.pressed = true
+                            return
+                        }
+                        self.dragging = true
+                        self.pressed = false
+                        self.dragChanged(translation)
+                    }
+                    .onEnded { _ in
+                        self.pressed = false
+                        if self.dragging {
+                            self.dragging = false
+                            self.dragEnded()
+                        } else {
+                            self.tap()
+                        }
+                    }
+            )
             .accessibilityHint("Drag to reorder")
     }
+
+    // MARK: Private
+
+    /// How far the pointer travels before a press turns into a drag.
+    private static let dragThreshold: CGFloat = 6
+
+    @State private var pressed = false
+    @State private var dragging = false
 }

@@ -12,7 +12,7 @@ struct NativePeoplePagingChecks {
         func person(_ id: String, rank: Int? = nil) -> NativePerson {
             NativePerson(
                 user_id: id, name: id, avatar_url: nil, rank: rank, active_minutes: nil, last_active_at: nil,
-                bio: nil, location: nil, website: nil, twitter: nil, telegram: nil, active_app: nil
+                bio: nil, location: nil, website: nil, twitter: nil, telegram: nil, active_app: nil, agent: nil, score: nil
             )
         }
         func page(_ ids: [String], total: Int, next: Int?, me: NativePerson? = nil) -> NativeLeaderboardPage {

@@ -189,6 +189,7 @@ final class Tracker {
 
         let now = Date.now
         let start = now.addingTimeInterval(-Constants.hearbeatInterval)
+        self.recordHumanPresence(from: start, to: now)
         let trackedApp = self.trackedApplication()
         let activity = PendingActivity(
             id: start.id,
@@ -298,7 +299,43 @@ private extension Tracker {
     }
 }
 
-private extension Date {
+// MARK: - Human presence per minute
+
+extension Tracker {
+    /// Whether the presence heartbeat counted the human as active during the
+    /// minute starting at `minuteStart`. Minutes older than the ring (about
+    /// two days) are unknown and read as `false`.
+    func wasHumanActive(minuteStart: Date) -> Bool {
+        let index = String(AgentUsageDates.minuteIndex(of: minuteStart))
+        return Self.humanMinutesLock.withLock { Self.humanMinutes().contains(index) }
+    }
+
+    private func recordHumanPresence(from start: Date, to end: Date) {
+        let first = AgentUsageDates.minuteIndex(of: start)
+        let last = AgentUsageDates.minuteIndex(of: end)
+        let indices = (min(first, last) ... max(first, last)).map(String.init)
+        Self.humanMinutesLock.withLock {
+            var ring = Self.humanMinutes()
+            for index in indices where !ring.contains(index) { ring.append(index) }
+            if ring.count > Self.humanMinutesLimit { ring.removeFirst(ring.count - Self.humanMinutesLimit) }
+            Self.humanMinutesCache = ring
+            Defaults[.recentHumanMinutes] = ring
+        }
+    }
+
+    private static let humanMinutesLimit = 2880
+    private static let humanMinutesLock = NSLock()
+    private nonisolated(unsafe) static var humanMinutesCache: [String]?
+
+    private static func humanMinutes() -> [String] {
+        if let cache = self.humanMinutesCache { return cache }
+        let stored = Defaults[.recentHumanMinutes]
+        self.humanMinutesCache = stored
+        return stored
+    }
+}
+
+extension Date {
     var id: String {
         withUnsafeBytes(
             of: self.timeIntervalSince1970

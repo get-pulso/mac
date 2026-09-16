@@ -1,5 +1,6 @@
 import ClerkKit
 import Combine
+import Defaults
 import Dependencies
 import SwiftUI
 
@@ -28,6 +29,11 @@ struct NativeSettingsView: View {
 
     @ObservedObject private var session = NativeSession.shared
     @ObservedObject private var socialStore = SocialStore.shared
+    @ObservedObject private var agentUsage: AgentUsageCollector = {
+        @Dependency(\.agentUsage) var agentUsage
+        return agentUsage
+    }()
+
     @AppStorage("firstlight.appearance") private var appearance = "system"
     @AppStorage("firstlight.trackingPaused") private var trackingPaused = false
     @State private var confirming = false
@@ -169,7 +175,7 @@ struct NativeSettingsView: View {
                 Toggle("Pause activity tracking", isOn: $trackingPaused)
                     .toggleStyle(.switch).controlSize(.small)
                 Text(
-                    "Firstlight records active time and the foreground app, never window titles or content. Tracking pauses while your Mac is idle or locked."
+                    "Firstlight records active time, the foreground app and how long your coding agents work, never window titles, prompts or file names. Tracking pauses while your Mac is idle or locked."
                 )
                 .font(.callout).foregroundStyle(.secondary)
                 Button(role: .destructive) {
@@ -183,6 +189,32 @@ struct NativeSettingsView: View {
                 }
                 .nativeSettingsActionButton()
                 .disabled(model.busy)
+            }
+            // Coding agents are read like any other activity, so they live
+            // here rather than behind a switch of their own: which ones this
+            // Mac has, and the one choice worth making about them.
+            panel {
+                ForEach(agentUsage.toolStatuses()) { item in
+                    HStack(spacing: 10) {
+                        Image(item.tool.iconAsset)
+                            .renderingMode(.template)
+                            .resizable().scaledToFit()
+                            .frame(width: 16, height: 16)
+                            .foregroundStyle(item.detected ? .primary : .tertiary)
+                        Text(item.tool.displayName)
+                        Spacer(minLength: 8)
+                        Text(item.detected ? "Reading" : "Not installed")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+                Toggle("Share cost estimate with friends", isOn: shareCostBinding)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .disabled(model.shareCost == nil || model.isRunning("agent-share-cost"))
+                Text("Friends always see agent time and tokens; the estimated cost only when this is on.")
+                    .font(.callout).foregroundStyle(.secondary)
+                if let error = agentUsage.status.lastError { NativeInlineError(message: error) }
             }
             Button("Quit Firstlight") { NSApp.terminate(nil) }
                 .nativeSettingsActionButton()
@@ -385,6 +417,10 @@ struct NativeSettingsView: View {
 
     private var version: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
+    }
+
+    private var shareCostBinding: Binding<Bool> {
+        Binding(get: { model.shareCost ?? false }, set: { model.setShareCost($0) })
     }
 
     private var launchAtLoginBinding: Binding<Bool> {

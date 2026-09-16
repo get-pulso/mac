@@ -8,6 +8,13 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<string>/.claude/</string>
+		<string>/.codex/</string>
+		<string>/.cursor/</string>
+		<string>/Library/Application Support/Cursor/</string>
+	</array>
     <key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
     <array>
         <string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>

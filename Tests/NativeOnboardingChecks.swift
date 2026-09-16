@@ -65,15 +65,17 @@ private final class OnboardingChecksDelegate: NSObject, NSApplicationDelegate {
                 carrier != nil && carrier?.isOpaque == false && carrier?.hasShadow == false,
                 "transparent cloud, no background panel or shadow"
             )
-            expect(native == nil || native?.alphaValue == 0, "no real window before the spring finishes")
+            expect(native == nil || native?.alphaValue == 0, "no real window before the light hands off")
             expect(dimmers.count == NSScreen.screens.count, "every display is dimmed")
             expect(
-                dimmers.allSatisfy { $0.alphaValue > 0.7 && $0.ignoresMouseEvents },
+                dimmers.allSatisfy { $0.alphaValue > IntroTiming.dimmingPeak - 0.08 && $0.ignoresMouseEvents },
                 "full-strength click-through dimming"
             )
-            print("PASS: Cloud intro, hidden login window, \(dimmers.count) displays")
+            print("PASS: Ray intro, hidden login window, \(dimmers.count) displays")
         }
-        self.later(6.5) { [self] in checkNativeHandoff() }
+        // The window takes over at the handoff and the clock keeps running inside
+        // it; check once the whole intro, in real seconds, is over.
+        self.later(IntroTiming.realSeconds(IntroTiming.duration) + 0.7) { [self] in checkNativeHandoff() }
     }
 
     func checkNativeHandoff() {

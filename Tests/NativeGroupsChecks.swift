@@ -23,7 +23,7 @@ struct NativeGroupsChecks {
         let friend = NativeContact(id: "friend", name: "Friend", email: nil, avatar_url: nil, is_creator: false)
         let eligibleFriend = NativePerson(
             user_id: "friend", name: "Friend", avatar_url: nil, rank: nil, active_minutes: nil,
-            last_active_at: nil, bio: nil, location: nil, website: nil, twitter: nil, telegram: nil, active_app: nil
+            last_active_at: nil, bio: nil, location: nil, website: nil, twitter: nil, telegram: nil, active_app: nil, agent: nil, score: nil
         )
         var group = NativeGroup(id: "one", name: "Studio", created_by: "owner", is_creator: true)
         var currentMembers = [owner, friend]

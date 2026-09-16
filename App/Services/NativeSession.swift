@@ -9,6 +9,8 @@ import SwiftUI
 final class NativeSession: ObservableObject {
     // MARK: Internal
 
+    enum PendingInviteSource { case link, clipboard }
+
     static let shared = NativeSession()
 
     @Published var ready = false
@@ -16,6 +18,10 @@ final class NativeSession: ObservableObject {
     @Published var error: String?
     @Published var revision = 0
     @Published var pendingInvite: String?
+    /// Where the pending invitation came from: the link itself, opened in the
+    /// app, or a link waiting in the clipboard after installing from the site.
+    @Published private(set) var pendingInviteSource: PendingInviteSource = .link
+
     @Published private(set) var welcomeAccount: WelcomeAccount?
     @Published private(set) var isCompletingSignIn = false
     private(set) var configured = false
@@ -59,6 +65,8 @@ final class NativeSession: ObservableObject {
                 try await self.finishSignIn(
                     presentDashboard: presentDashboardOnRestore && !OnboardingWindowController.shared.isPresented
                 )
+            } else {
+                self.adoptClipboardInvite()
             }
             self.ready = true
         } catch { self.error = error.localizedDescription }
@@ -140,8 +148,24 @@ final class NativeSession: ObservableObject {
         window.show()
     }
 
+    /// Someone who installed Firstlight from an invitation page arrives
+    /// signed out and with the link no longer anywhere the app can see it,
+    /// except the clipboard, where the page left it. A signed-out start
+    /// looks there once; the tray then says where the link was found and
+    /// Back declines it. Only whole Firstlight links count, never a bare code.
+    func adoptClipboardInvite() {
+        guard self.pendingInvite == nil,
+              let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              text.contains("://"), text.count <= 512,
+              (try? InviteInput.parse(text)) != nil
+        else { return }
+        self.pendingInviteSource = .clipboard
+        self.pendingInvite = text
+    }
+
     func handle(_ url: URL) async {
         if url.scheme == "firstlight", url.host == "invite" || url.host == "join" {
+            self.pendingInviteSource = .link
             self.pendingInvite = url.absoluteString
             @Dependency(\.windowManager) var window
             window.show()

@@ -51,7 +51,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [self.separatorID, self.navigationID, .flexibleSpace, self.newGroupID]
+        [self.separatorID, self.navigationID, .flexibleSpace, self.statusID, self.newGroupID]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -65,6 +65,16 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     ) -> NSToolbarItem? {
         if id == self.separatorID, let split {
             return NSTrackingSeparatorToolbarItem(identifier: id, splitView: split.splitView, dividerIndex: 0)
+        }
+        if id == self.statusID, let model {
+            let item = NSToolbarItem(itemIdentifier: id)
+            item.label = "Status"
+            item.paletteLabel = "Status"
+            let host = NSHostingView(rootView: NativeSettingsStatusView(model: model))
+            host.sizingOptions = [.intrinsicContentSize]
+            item.view = host
+            item.autovalidates = false
+            return item
         }
         if id == self.newGroupID {
             let item = NSToolbarItem(itemIdentifier: id)
@@ -112,6 +122,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
     private var observation: AnyCancellable?
     private let navigationID = NSToolbarItem.Identifier("FirstlightSettingsNavigation")
     private let newGroupID = NSToolbarItem.Identifier("FirstlightSettingsNewGroup")
+    private let statusID = NSToolbarItem.Identifier("FirstlightSettingsStatus")
     private let separatorID = NSToolbarItem.Identifier("FirstlightSettingsSeparator")
 
     private func makeWindow() {

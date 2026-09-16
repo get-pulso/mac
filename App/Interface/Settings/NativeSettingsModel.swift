@@ -33,7 +33,7 @@ final class NativeSettingsModel: ObservableObject {
         var keywords: String {
             switch self {
             case .account: "profile name username photo avatar bio location friend code website links sign out"
-            case .general: "appearance theme dark light system startup launch login activity period tracking pause history clear quit"
+            case .general: "appearance theme dark light system startup launch login activity period tracking pause history clear quit agents claude codex cursor tokens cost"
             case .groups: "friends members invite link create rename leaderboard"
             case .security: "sign-in google password email mfa two factor authenticator recovery backup codes delete account"
             case .sessions: "devices mac active sign out revoke"
@@ -88,6 +88,8 @@ final class NativeSettingsModel: ObservableObject {
     @Published var backupCodes: [String] = []
     @Published var verification: SessionVerification?
     @Published var verificationMethod = ""
+    /// `nil` until `GET /api/user/agent-usage/settings` answered for this window.
+    @Published var shareCost: Bool?
 
     var user: ClerkKit.User? { NativeSession.shared.user }
     var canGoBack: Bool { self.historyIndex > 0 }
@@ -147,6 +149,7 @@ final class NativeSettingsModel: ObservableObject {
         self.password = ""; self.currentPassword = ""; self.code = ""; self.confirmation = ""
         if page == "edit" { self.loadProfile() }
         if section == .sessions { self.refreshSessions() }
+        if section == .general { self.loadAgentSettings() }
         if section == .groups { self.groupSettings.open(groupsPage) }
     }
 
@@ -169,6 +172,7 @@ final class NativeSettingsModel: ObservableObject {
         self.password = ""; self.currentPassword = ""; self.code = ""; self.confirmation = ""
         if self.route.page == "edit" { self.loadProfile() }
         if self.route.section == .sessions { self.refreshSessions() }
+        if self.route.section == .general { self.loadAgentSettings() }
         if self.route.section == .groups { self.groupSettings.open(self.route.groupsPage) }
     }
 
@@ -387,6 +391,8 @@ final class NativeSettingsModel: ObservableObject {
         self.run("Clearing activity history…", key: "clear-activity") {
             @Dependency(\.tracker) var tracker
             try await tracker.resetActivity()
+            @Dependency(\.agentUsage) var agentUsage
+            if let userID = Defaults[.currentUserID] { try await agentUsage.drainAndClear(for: userID) }
             self.notice = "Activity history cleared."
             if let userID = Defaults[.currentUserID] {
                 SocialStore.shared.invalidateActivity(for: userID)
@@ -394,6 +400,38 @@ final class NativeSettingsModel: ObservableObject {
             await SocialStore.shared.refresh(force: true)
             if let userID = Defaults[.currentUserID] {
                 SocialStore.shared.refreshPersonIfVisible(userID)
+            }
+        }
+    }
+
+    // MARK: Coding agents
+
+    func loadAgentSettings() {
+        guard self.shareCost == nil else { return }
+        self.run("Loading…", key: "agent-settings") {
+            let settings: NativeAgentUsageSettings = try await self.network.request(
+                path: "/api/user/agent-usage/settings",
+                method: .get
+            )
+            self.shareCost = settings.share_cost ?? false
+        }
+    }
+
+    /// Optimistic: the switch moves at once and returns if the server refuses.
+    func setShareCost(_ enabled: Bool) {
+        let previous = self.shareCost
+        self.shareCost = enabled
+        self.run("Saving changes…", key: "agent-share-cost") {
+            do {
+                let settings: NativeAgentUsageSettings = try await self.network.request(
+                    path: "/api/user/agent-usage/settings",
+                    method: .patch,
+                    body: NativeAgentUsageSettings(share_cost: enabled)
+                )
+                self.shareCost = settings.share_cost ?? enabled
+            } catch {
+                self.shareCost = previous
+                throw error
             }
         }
     }
@@ -487,4 +525,9 @@ final class NativeSettingsModel: ObservableObject {
         } else { throw NativeError.message("Start verification again.") }
         self.navigate(.security, page: "verify-identity")
     }
+}
+
+/// `GET`/`PATCH /api/user/agent-usage/settings` body.
+struct NativeAgentUsageSettings: Codable {
+    let share_cost: Bool?
 }

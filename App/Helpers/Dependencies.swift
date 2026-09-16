@@ -7,6 +7,14 @@ extension Tracker: DependencyKey {
     )
 }
 
+extension AgentUsageCollector: DependencyKey {
+    nonisolated static let liveValue = AgentUsageCollector(
+        storage: .liveValue,
+        network: .liveValue,
+        tracker: .liveValue
+    )
+}
+
 extension Storage: DependencyKey {
     static let liveValue = Storage()
 }
@@ -35,6 +43,11 @@ extension DependencyValues {
     var tracker: Tracker {
         get { self[Tracker.self] }
         set { self[Tracker.self] = newValue }
+    }
+
+    var agentUsage: AgentUsageCollector {
+        get { self[AgentUsageCollector.self] }
+        set { self[AgentUsageCollector.self] = newValue }
     }
 
     var storage: Storage {

@@ -93,6 +93,19 @@ enum NativeLoadingLayoutChecks {
         let emptySize = empty.sizeThatFits(in: NSSize(width: 350, height: 400))
         expect(emptySize.width == 350)
         expect(emptySize.height >= 150)
+
+        // A list's message fills the height its rows would take, and no more,
+        // so it sits in the middle of the viewport without making it scroll.
+        let listMessage = NSHostingController(rootView: NativeStateMessage(
+            symbol: "wifi.slash",
+            title: "You're offline",
+            actionTitle: "Try again",
+            action: {},
+            minHeight: NativeLayout.peopleListHeight
+        ).frame(width: 350))
+        let listMessageSize = listMessage.sizeThatFits(in: NSSize(width: 350, height: 600))
+        expect(listMessageSize.width == 350)
+        expect(abs(listMessageSize.height - NativeLayout.peopleListHeight) < 0.5)
         print("Native loading layout checks passed: \(checks)")
     }
 }

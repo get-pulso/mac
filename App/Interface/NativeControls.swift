@@ -236,35 +236,6 @@ struct NativePeopleSkeleton: View {
     }
 }
 
-struct NativeRowsSkeleton: View {
-    var rows = 3
-    var showActions = false
-
-    var body: some View {
-        NativeDelayedSkeleton {
-            VStack(spacing: 12) {
-                ForEach(0 ..< rows, id: \.self) { _ in
-                    NativePersonSkeleton(avatarSize: 30, showAction: showActions)
-                }
-            }
-        }
-    }
-}
-
-struct NativeMetricSkeleton: View {
-    var body: some View {
-        NativeDelayedSkeleton {
-            VStack(alignment: .leading, spacing: 12) {
-                NativeSkeletonShape(width: 92, height: 22, radius: 5)
-                NativeSkeletonShape(width: 230, height: 11)
-                Divider()
-                NativeSkeletonShape(width: 126, height: 13)
-                NativeSkeletonShape(width: 210, height: 10)
-            }
-        }
-    }
-}
-
 struct NativeLabeledRowsSkeleton: View {
     var rows = 2
 
@@ -349,21 +320,68 @@ struct NativeAuthSkeleton: View {
     }
 }
 
+/// What stands where a list would, when there is nothing to list: an empty
+/// ranking, or one that could not be loaded. A symbol, one line, one thing
+/// to do. The block sits in the middle of the space the rows would fill, so
+/// the popover keeps its shape instead of opening onto a caption at the top
+/// of a void.
 struct NativeStateMessage: View {
+    // MARK: Internal
+
+    /// An SF Symbol for the situation. None keeps the message text-only.
+    var symbol: String?
     let title: String
-    let message: String
+    /// A second line, only where the title alone would leave a question.
+    var message: String?
+    /// The error's own words. Not shown: they sit under the pointer on the
+    /// title, for whoever wants to report the failure.
+    var detail: String?
     var actionTitle: String?
     var action: (() -> Void)?
+    /// The space the message is centred in. Lists pass the height their rows
+    /// would take, so the message sits in the middle of it, not at the top.
+    var minHeight: CGFloat = 150
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 0) {
+            if let symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, height: 40)
+                    .background(Color.primary.opacity(0.06), in: Circle())
+                    .padding(.bottom, 12)
+                    .accessibilityHidden(true)
+            }
             Text(title).font(.system(size: 14, weight: .semibold))
-            Text(message).font(.callout).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            if let actionTitle, let action { Button(actionTitle, action: action).controlSize(.small) }
+                .multilineTextAlignment(.center)
+                .help(detail ?? "")
+            if let message {
+                Text(message).font(.callout).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+            }
+            if let actionTitle, let action {
+                actionButton(actionTitle, action: action).padding(.top, 14)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 150)
+        .frame(maxWidth: 250)
         .padding(24)
+        .frame(maxWidth: .infinity, minHeight: minHeight)
+        .accessibilityElement(children: .contain)
+    }
+
+    // MARK: Private
+
+    /// The same capsule the popover's other standalone buttons wear.
+    @ViewBuilder private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
+        if #available(macOS 26.0, *) {
+            Button(title, action: action)
+                .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.regular)
+        } else {
+            Button(title, action: action)
+                .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.regular)
+        }
     }
 }
 

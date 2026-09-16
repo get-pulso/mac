@@ -9,12 +9,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Internal
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Installed from the start, not only while a window claims the Dock:
+        // the menu is never shown for a menu bar agent, but its key
+        // equivalents are how ⌘V reaches the field in the popover.
+        MainMenu.install()
         #if DEBUG
         if OnboardingPreview.showIfRequested() { return }
         #endif
         LaunchAtLogin.enableByDefaultIfNeeded()
         Defaults[.currentUserID] = nil
         self.tracker.activate()
+        self.agentUsage.activate()
         if !AppEnvironment.isLocalBackend { self.updater.start() }
         let appearance = UserDefaults.standard.string(forKey: "firstlight.appearance") ?? "system"
         NSApp.appearance = appearance == "system" ? nil : NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
@@ -63,6 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @Dependency(\.auth) private var auth
     @Dependency(\.storage) private var storage
     @Dependency(\.tracker) private var tracker
+    @Dependency(\.agentUsage) private var agentUsage
     @Dependency(\.appRouter) private var appRouter
     @Dependency(\.updater) private var updater
     @Dependency(\.windowManager) private var windowManager

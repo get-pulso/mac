@@ -7,29 +7,27 @@ struct ProfileAboutField: View {
     var focusedField: FocusState<ProfileDraft.Field?>.Binding
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("About you").fontWeight(.medium)
-                Spacer()
+        NativeFormRow("About") {
+            TextField("What are you working on? What interests you?", text: $text, axis: .vertical)
+                .lineLimit(4 ... 8)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.leading)
+                .focused(focusedField, equals: .bio)
+                .accessibilityLabel("About you")
+                .nativeFormField(focused: focusedField.wrappedValue == .bio)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if overLimit {
+                    NativeFormFieldError(
+                        message: "Use \(ProfileDraft.bioLimit) characters or fewer. Your text hasn't been shortened."
+                    )
+                } else {
+                    NativeFormHint(text: "A few sentences for people viewing your profile.")
+                }
+                Spacer(minLength: 0)
                 Text("\(text.count) / \(ProfileDraft.bioLimit)")
                     .font(.caption).monospacedDigit()
                     .foregroundStyle(overLimit ? Color.red : Color.secondary)
                     .accessibilityLabel("\(text.count) of \(ProfileDraft.bioLimit) characters")
-            }
-            TextField("What are you working on? What interests you?", text: $text, axis: .vertical)
-                .lineLimit(4 ... 8)
-                .multilineTextAlignment(.leading)
-                .textFieldStyle(.roundedBorder)
-                .focused(focusedField, equals: .bio)
-                .accessibilityLabel("About you")
-            if overLimit {
-                Label(
-                    "Use \(ProfileDraft.bioLimit) characters or fewer. Your text hasn't been shortened.",
-                    systemImage: "exclamationmark.circle"
-                )
-                .font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("A few sentences for people viewing your profile.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }

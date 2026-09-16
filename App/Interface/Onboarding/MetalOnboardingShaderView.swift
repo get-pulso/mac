@@ -21,8 +21,8 @@ private final class TransparentMetalView: MTKView {
     // MARK: Private
 
     private func updateResolution() {
-        // The intentionally blurred gas needs less sampling than native text.
-        // A 1.5x ceiling keeps the expansion within a 60 Hz GPU budget on Retina.
+        // Soft light needs less sampling than native text. A 1.5x ceiling keeps
+        // the 28-sample volume within a 60 Hz GPU budget on Retina.
         let scale = min(window?.backingScaleFactor ?? 2, 1.5)
         let size = CGSize(width: max(1, bounds.width * scale), height: max(1, bounds.height * scale))
         if drawableSize != size { drawableSize = size }
@@ -38,6 +38,7 @@ struct MetalOnboardingShaderView: NSViewRepresentable {
     let inset: Float
     let nativeSurface: Bool
     let variant: Int
+    var rayLogoRect: CGRect = .zero
     var targetSize: CGSize = .zero
     var targetOffset: CGPoint = .zero
     let onFailure: (String) -> Void
@@ -57,6 +58,7 @@ struct MetalOnboardingShaderView: NSViewRepresentable {
         do {
             guard let device = view.device else { throw ShaderError.unavailable }
             let renderer = try MetalRenderer(device: device)
+            renderer.onFailure = self.onFailure
             context.coordinator.renderer = renderer
             view.delegate = renderer
         } catch {
@@ -69,7 +71,7 @@ struct MetalOnboardingShaderView: NSViewRepresentable {
     func updateNSView(_ view: MTKView, context: Context) {
         let state = ShaderState(
             elapsed: elapsed, inset: inset, nativeSurface: nativeSurface, variant: variant,
-            targetSize: targetSize, targetOffset: targetOffset
+            targetSize: targetSize, targetOffset: targetOffset, rayLogoRect: rayLogoRect
         )
         guard context.coordinator.renderer?.state != state else { return }
         context.coordinator.renderer?.state = state
@@ -88,6 +90,18 @@ struct ShaderState: Equatable {
     var variant = 0
     var targetSize: CGSize = .zero
     var targetOffset: CGPoint = .zero
+    /// The fixed 92 pt slot; empty means the panel's default slot.
+    var rayLogoRect: CGRect = .zero
+    /// Onboarding is presented in the dark appearance; the surface color follows it.
+    var darkAppearance = true
+    /// Verification only: freeze temporal noise while inspecting optical transport.
+    var rayPhaseLock: Float = -1
+    /// Verification only: compare the fading layer with its unattenuated rays.
+    var rayOpacityOverride: Float = -1
+    /// Verification only: hold the collection at a fixed progress.
+    var rayLogoClipOverride: Float = -1
+    /// Verification only: hold the same 3D volume at a fixed flashlight tilt.
+    var rayLampTurnOverride: Float = -1
 }
 
 // Layout mirrors the Metal struct, including its 8-byte alignment.
@@ -98,8 +112,21 @@ struct ShaderUniforms {
     var nativeSurface: Float
     var scale: Float
     var variant: Float
+    var style: Float
     var targetSize: SIMD2<Float>
     var targetOffset: SIMD2<Float>
+    var tuning: SIMD4<Float>
+}
+
+/// Ray / Flow only. Every other value the shader once compared is fixed here.
+enum RayFlow {
+    /// Metal dispatch id of the Ray style and of the Flow gesture.
+    static let style: Float = 7
+    static let transition: Float = 1
+    /// Reach, definition, warmth, flow: the accepted texture.
+    static let tuning = SIMD4<Float>(0.35, 1.0, 0.55, 0.58)
+    /// Bloom is gone before the native handoff, so it can never differ between hosts.
+    static let bloomEnd: Float = 1.95
 }
 
 final class MetalRenderer: NSObject, MTKViewDelegate {
@@ -114,17 +141,26 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         let source = try String(contentsOf: url, encoding: .utf8)
         let library = try device.makeLibrary(source: source, options: nil)
+        self.library = library
         guard let vertex = library.makeFunction(name: "fullScreenVertex"),
-              let fragment = library.makeFunction(name: "waveFragment")
+              let radiance = library.makeFunction(name: "rayRadianceFragment"),
+              let composite = library.makeFunction(name: "rayCompositeFragment"),
+              let extract = library.makeFunction(name: "rayBloomExtract"),
+              let blur = library.makeFunction(name: "rayBloomBlur")
         else {
             throw ShaderError.missingFunction
         }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = vertex
-        descriptor.fragmentFunction = fragment
+        descriptor.fragmentFunction = radiance
+        descriptor.colorAttachments[0].pixelFormat = .rgba16Float
+        self.rayPipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        // The compositor writes premultiplied RGBA directly onto a transparent drawable.
+        descriptor.fragmentFunction = composite
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-        // The shader writes premultiplied RGBA directly onto a transparent drawable.
-        self.pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
+        self.rayComposite = try device.makeRenderPipelineState(descriptor: descriptor)
+        self.bloomExtract = try device.makeComputePipelineState(function: extract)
+        self.bloomBlur = try device.makeComputePipelineState(function: blur)
         self.commandQueue = queue
         super.init()
     }
@@ -132,8 +168,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     // MARK: Internal
 
     var state = ShaderState()
+    var onFailure: ((String) -> Void)?
     let commandQueue: MTLCommandQueue
-    let pipeline: MTLRenderPipelineState
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         view.setNeedsDisplay(view.bounds)
@@ -144,35 +180,161 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
               let pass = view.currentRenderPassDescriptor,
               let command = commandQueue.makeCommandBuffer() else { return }
         let scale = Float(view.drawableSize.width / max(view.bounds.width, 1))
-        self.encode(
-            pass: pass,
-            command: command,
-            width: drawable.texture.width,
-            height: drawable.texture.height,
-            scale: scale
-        )
+        do {
+            try self.encode(
+                pass: pass, command: command, width: drawable.texture.width,
+                height: drawable.texture.height, scale: scale
+            )
+        } catch {
+            let message = error.localizedDescription
+            DispatchQueue.main.async { [weak self] in self?.onFailure?(message) }
+            return
+        }
+        command.addCompletedHandler { [weak self] completed in
+            if completed.status == .error {
+                let message = completed.error?.localizedDescription ?? "Metal command failed"
+                DispatchQueue.main.async { self?.onFailure?(message) }
+            }
+        }
         command.present(drawable)
         command.commit()
     }
 
+    /// Two passes: linear radiance into a private RGBA16Float target, then
+    /// bloom, the whole-field condensation and the original mark on the drawable.
     func encode(
         pass: MTLRenderPassDescriptor,
         command: MTLCommandBuffer,
         width: Int,
         height: Int,
         scale: Float
-    ) {
-        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return }
+    ) throws {
         var uniforms = ShaderUniforms(
-            resolution: SIMD2(Float(width), Float(height)), time: state.elapsed,
+            resolution: SIMD2(Float(width), Float(height)), time: self.state.elapsed,
             inset: self.state.inset * scale, nativeSurface: self.state.nativeSurface ? 1 : 0, scale: scale,
-            variant: Float(self.state.variant),
+            variant: Float(self.state.variant), style: RayFlow.style,
             targetSize: SIMD2(Float(self.state.targetSize.width), Float(self.state.targetSize.height)),
-            targetOffset: SIMD2(Float(self.state.targetOffset.x), Float(self.state.targetOffset.y))
+            targetOffset: SIMD2(Float(self.state.targetOffset.x), Float(self.state.targetOffset.y)),
+            tuning: RayFlow.tuning
         )
-        encoder.setRenderPipelineState(self.pipeline)
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<ShaderUniforms>.stride, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        let targets = try self.targets(width: width, height: height)
+        let hdrPass = MTLRenderPassDescriptor()
+        hdrPass.colorAttachments[0].texture = targets.radiance
+        hdrPass.colorAttachments[0].loadAction = .dontCare
+        hdrPass.colorAttachments[0].storeAction = .store
+        guard let volume = command.makeRenderCommandEncoder(descriptor: hdrPass) else { throw ShaderError.renderFailed }
+        volume.label = "Ray · 28-sample light volume"
+        volume.setRenderPipelineState(self.rayPipeline)
+        volume.setFragmentBytes(&uniforms, length: MemoryLayout<ShaderUniforms>.stride, index: 0)
+        var palette = RayPalette.amethyst
+        volume.setFragmentBytes(&palette, length: MemoryLayout<RayPaletteUniforms>.stride, index: 1)
+        var transition = SIMD4<Float>(
+            RayFlow.transition, self.state.rayPhaseLock, self.state.darkAppearance ? 1 : 0,
+            self.state.rayOpacityOverride
+        )
+        volume.setFragmentBytes(&transition, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
+        if self.logoAsset == nil { self.logoAsset = try RayLogoAsset(device: self.commandQueue.device) }
+        guard let logoAsset else { throw ShaderError.missingSource }
+        var logo = logoAsset.uniforms(state: self.state)
+        volume.setFragmentBytes(&logo, length: MemoryLayout<RayLogoUniforms>.stride, index: 3)
+        volume.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        volume.endEncoding()
+
+        if !self.state.nativeSurface, self.state.elapsed < RayFlow.bloomEnd {
+            try self.compute(command, self.bloomExtract, input: targets.radiance, output: targets.bright)
+            try self.compute(
+                command,
+                self.bloomBlur,
+                input: targets.bright,
+                output: targets.scratch,
+                axis: SIMD2(scale, 0)
+            )
+            try self.compute(
+                command,
+                self.bloomBlur,
+                input: targets.scratch,
+                output: targets.bloom,
+                axis: SIMD2(0, scale)
+            )
+        }
+        guard let composite = command.makeRenderCommandEncoder(descriptor: pass) else { throw ShaderError.renderFailed }
+        composite.label = "Ray · bloom, condensation into the mark, native window color"
+        composite.setRenderPipelineState(self.rayComposite)
+        composite.setFragmentBytes(&uniforms, length: MemoryLayout<ShaderUniforms>.stride, index: 0)
+        var surface = RaySurface.uniforms(dark: self.state.darkAppearance)
+        composite.setFragmentBytes(&surface, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
+        composite.setFragmentBytes(&transition, length: MemoryLayout<SIMD4<Float>>.stride, index: 2)
+        composite.setFragmentBytes(&logo, length: MemoryLayout<RayLogoUniforms>.stride, index: 3)
+        composite.setFragmentTexture(targets.radiance, index: 0)
+        composite.setFragmentTexture(targets.bloom, index: 1)
+        composite.setFragmentTexture(logoAsset.color, index: 2)
+        composite.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        composite.endEncoding()
+    }
+
+    // MARK: Private
+
+    private struct RayTargets {
+        let radiance: MTLTexture
+        let bright: MTLTexture
+        let scratch: MTLTexture
+        let bloom: MTLTexture
+    }
+
+    private let library: MTLLibrary
+    private let rayPipeline: MTLRenderPipelineState
+    private let rayComposite: MTLRenderPipelineState
+    private let bloomExtract: MTLComputePipelineState
+    private let bloomBlur: MTLComputePipelineState
+    private var logoAsset: RayLogoAsset?
+    private var rayTargets: RayTargets?
+
+    /// Private, reusable GPU textures; bloom runs at quarter resolution.
+    private func targets(width: Int, height: Int) throws -> RayTargets {
+        if let rayTargets, rayTargets.radiance.width == width, rayTargets.radiance.height == height {
+            return rayTargets
+        }
+        func texture(_ w: Int, _ h: Int, _ usage: MTLTextureUsage, _ label: String) throws -> MTLTexture {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: .rgba16Float, width: w, height: h, mipmapped: false
+            )
+            descriptor.storageMode = .private
+            descriptor.usage = usage
+            guard let result = commandQueue.device.makeTexture(descriptor: descriptor) else {
+                throw ShaderError.renderFailed
+            }
+            result.label = label
+            return result
+        }
+        let w = max(1, (width + 3) / 4), h = max(1, (height + 3) / 4)
+        let result = try RayTargets(
+            radiance: texture(width, height, [.renderTarget, .shaderRead], "Ray linear radiance"),
+            bright: texture(w, h, [.shaderRead, .shaderWrite], "Ray bloom bright pass"),
+            scratch: texture(w, h, [.shaderRead, .shaderWrite], "Ray horizontal bloom"),
+            bloom: texture(w, h, [.shaderRead, .shaderWrite], "Ray vertical bloom")
+        )
+        self.rayTargets = result
+        return result
+    }
+
+    private func compute(
+        _ command: MTLCommandBuffer,
+        _ pipeline: MTLComputePipelineState,
+        input: MTLTexture,
+        output: MTLTexture,
+        axis: SIMD2<Float>? = nil
+    ) throws {
+        guard let encoder = command.makeComputeCommandEncoder() else { throw ShaderError.renderFailed }
+        encoder.setComputePipelineState(pipeline)
+        encoder.setTexture(input, index: 0)
+        encoder.setTexture(output, index: 1)
+        if var axis { encoder.setBytes(&axis, length: MemoryLayout<SIMD2<Float>>.stride, index: 0) }
+        let w = pipeline.threadExecutionWidth
+        let h = min(8, pipeline.maxTotalThreadsPerThreadgroup / w)
+        encoder.dispatchThreads(
+            MTLSize(width: output.width, height: output.height, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1)
+        )
         encoder.endEncoding()
     }
 }

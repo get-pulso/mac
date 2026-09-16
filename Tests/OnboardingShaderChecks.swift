@@ -3,185 +3,224 @@ import ImageIO
 import Metal
 import UniformTypeIdentifiers
 
+/// Offscreen GPU checks of the production Ray / Flow onboarding light.
 enum OnboardingShaderChecks {
     // MARK: Internal
 
     static func run() throws {
+        guard MemoryLayout<ShaderUniforms>.stride == 64,
+              MemoryLayout<RayPaletteUniforms>.stride == 96,
+              MemoryLayout<RayLogoUniforms>.stride == 80
+        else { throw ShaderError.invalidPixels("Swift/Metal uniform layout mismatch") }
         guard let device = MTLCreateSystemDefaultDevice() else { throw ShaderError.unavailable }
         let renderer = try MetalRenderer(device: device)
-        let folder = URL(fileURLWithPath: "/tmp/firstlight-integrated-gas-frames", isDirectory: true)
+        let folder = URL(fileURLWithPath: "/tmp/firstlight-integrated-ray-frames", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let times: [Float] = [0, 0.7, 1.8, 2.8, 3.55, 3.72, 3.95, 4.1, 4.6, 5.8]
-        var slowestGPU = 0.0
-        var measuredGPU: [Double] = []
+        let times: [Float] = [0, 0.35, 0.65, 1.10, 1.75, 2.05, 2.35, 2.65, 2.95, 3.15, 3.60, 4.0]
+        var count = 0
+        var gpu: [Double] = []
         var previews: [CGImage] = []
-        for variant in [2] {
-            for size in [CGSize(width: 1020, height: 760), CGSize(width: 820, height: 620)] {
-                for scale in [1, 2] {
-                    var earlyPixels: [UInt8]?
-                    for time in times {
-                        let width = Int(size.width) * scale, height = Int(size.height) * scale
-                        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
-                            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false
-                        )
-                        textureDescriptor.usage = [.renderTarget]
-                        textureDescriptor.storageMode = .shared
-                        guard let texture = device.makeTexture(descriptor: textureDescriptor),
-                              let command = renderer.commandQueue.makeCommandBuffer()
-                        else { throw ShaderError.renderFailed }
-                        let pass = MTLRenderPassDescriptor()
-                        pass.colorAttachments[0].texture = texture
-                        pass.colorAttachments[0].loadAction = .clear
-                        pass.colorAttachments[0].storeAction = .store
-                        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
-                        renderer.state = ShaderState(elapsed: time, inset: 76, nativeSurface: false, variant: variant)
-                        renderer.encode(pass: pass, command: command, width: width, height: height, scale: Float(scale))
-                        command.commit()
-                        command.waitUntilCompleted()
-                        guard command.status == .completed else { throw command.error ?? ShaderError.renderFailed }
-                        let gpuMS = (command.gpuEndTime - command.gpuStartTime) * 1000
-                        slowestGPU = max(slowestGPU, gpuMS)
-                        if time >= 1.8 { measuredGPU.append(gpuMS) }
-                        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-                        bytes.withUnsafeMutableBytes {
-                            texture.getBytes(
-                                $0.baseAddress!,
-                                bytesPerRow: width * 4,
-                                from: MTLRegionMake2D(0, 0, width, height),
-                                mipmapLevel: 0
-                            )
+        for size in [CGSize(width: 1020, height: 760), CGSize(width: 820, height: 620)] {
+            let panel = CGSize(width: size.width - 152, height: size.height - 152)
+            for scale in [1, 2] {
+                var early: Frame?
+                for time in times {
+                    let state = ShaderState(elapsed: time, inset: 76, nativeSurface: false, variant: 2, targetSize: panel)
+                    let frame = try render(renderer, size: size, scale: scale, state: state)
+                    count += 1
+                    if time >= 1.10 { gpu.append(frame.gpuMS) }
+                    try validate(frame, time: time, scale: scale)
+                    if time == 0.65 { early = frame }
+                    if time == 1.10, let early {
+                        guard changed(frame, early) > 500 * scale * scale else {
+                            throw ShaderError.invalidPixels("Light does not move")
                         }
-                        func alpha(_ x: Int, _ y: Int) -> UInt8 { bytes[(y * width + x) * 4 + 3] }
-                        var visible = 0
-                        var maxAlpha: UInt8 = 0
-                        var edgePixels = 0
-                        for y in 0 ..< height {
-                            for x in 0 ..< width {
-                                let index = (y * width + x) * 4, a = bytes[index + 3]
-                                if a > 0 { visible += 1 }
-                                if a > 10, a < 180 { edgePixels += 1 }
-                                maxAlpha = max(maxAlpha, a)
-                                for channel in 0 ..< 3 where Int(bytes[index + channel]) > Int(a) + 1 {
-                                    throw ShaderError.invalidPixels("Non-premultiplied color at t=\(time)")
+                    }
+                    if time >= Float(IntroTiming.handoff) {
+                        // From the handoff on, the native window shows the same pixels.
+                        var nativeState = state
+                        nativeState.inset = 0
+                        nativeState.nativeSurface = true
+                        let native = try render(renderer, size: panel, scale: scale, state: nativeState)
+                        count += 1
+                        for point in [(0, 0), (native.width - 1, 0), (0, native.height - 1),
+                                      (native.width - 1, native.height - 1)]
+                        {
+                            guard native.alpha(point.0, point.1) == 255 else {
+                                throw ShaderError.invalidPixels("Shader is rounding a native window corner")
+                            }
+                        }
+                        for y in stride(from: 16 * scale, to: native.height - 16 * scale, by: 17) {
+                            for x in stride(from: 16 * scale, to: native.width - 16 * scale, by: 17) {
+                                for c in 0 ..< 4 {
+                                    guard abs(Int(frame.channel(x + 76 * scale, y + 76 * scale, c)) -
+                                        Int(native.channel(x, y, c))) <= 1
+                                    else { throw ShaderError.invalidPixels("Native handoff mismatch at \(time)") }
                                 }
                             }
                         }
-                        guard alpha(0, 0) == 0, alpha(width - 1, height - 1) == 0 else {
-                            throw ShaderError.invalidPixels("Carrier corners are not clear")
+                    }
+                    if time == Float(IntroTiming.logoSettled) {
+                        // The original mark: identical whatever the seed or later time.
+                        var later = state
+                        later.elapsed = 42
+                        later.variant = 9901
+                        let final = try render(renderer, size: size, scale: scale, state: later)
+                        count += 1
+                        guard final.bytes == frame.bytes else {
+                            throw ShaderError.invalidPixels("Final logo depends on shader time or seed")
                         }
-                        if time == 0, visible != 0 { throw ShaderError.invalidPixels("First frame is not clear") }
-                        if time > 1, time < 3.6 {
-                            guard visible > 20000 * scale * scale, maxAlpha < 245, edgePixels > 6000 * scale * scale,
-                                  alpha(100 * scale, height / 2) == 0
-                            else {
-                                throw ShaderError
-                                    .invalidPixels("Missing translucent gas / unexpected window before morph")
-                            }
-                        }
-                        if time == 1.8 { earlyPixels = bytes }
-                        if time == 2.8, let earlyPixels {
-                            let changed = zip(bytes, earlyPixels).filter { abs(Int($0) - Int($1)) > 4 }.count
-                            guard changed > 10000 * scale * scale
-                            else { throw ShaderError.invalidPixels("Gas does not flow") }
-                        }
-                        if time > 5 {
-                            guard alpha(width / 2, height / 2) == 255, alpha(90 * scale, height / 2) == 255 else {
-                                throw ShaderError.invalidPixels("Missing final window")
-                            }
-                        }
-                        if size.width == 1020, scale == 1 {
-                            let image = try makeImage(bytes, width: width, height: height)
-                            let name = "opal"
-                            try save(image, to: folder.appendingPathComponent("\(name)-\(time).png"))
-                            if time == 2.8 || time == 3.95 || time == 5.8 {
-                                let preview = try composite(image, dim: IntroTiming.dimming(at: Double(time)))
-                                previews.append(preview)
-                                try self.save(preview, to: folder.appendingPathComponent("\(name)-\(time)-preview.png"))
-                            }
-                        }
-                        if time == 5.8 {
-                            guard let nativeCommand = renderer.commandQueue.makeCommandBuffer() else {
-                                throw ShaderError.renderFailed
-                            }
-                            renderer.state = ShaderState(elapsed: time, inset: 0, nativeSurface: true, variant: variant)
-                            renderer.encode(
-                                pass: pass,
-                                command: nativeCommand,
-                                width: width,
-                                height: height,
-                                scale: Float(scale)
-                            )
-                            nativeCommand.commit()
-                            nativeCommand.waitUntilCompleted()
-                            guard nativeCommand.status == .completed else { throw ShaderError.renderFailed }
-                            var corner = [UInt8](repeating: 0, count: 4)
-                            for point in [(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)] {
-                                corner.withUnsafeMutableBytes {
-                                    texture.getBytes(
-                                        $0.baseAddress!,
-                                        bytesPerRow: 4,
-                                        from: MTLRegionMake2D(point.0, point.1, 1, 1),
-                                        mipmapLevel: 0
-                                    )
+                        let slot = RayLogoTiming.rect(in: panel)
+                        var mark = 0
+                        let surface = RaySurface.uniforms(dark: true)
+                        for y in stride(from: 12, to: Int(panel.height) - 12, by: 7) {
+                            for x in stride(from: 12, to: Int(panel.width) - 12, by: 7) {
+                                let differences = (0 ..< 3).map {
+                                    abs(Float(frame.channel((x + 76) * scale, (y + 76) * scale, $0)) - surface[2 - $0] * 255)
                                 }
-                                guard corner[3] == 255 else {
-                                    throw ShaderError.invalidPixels("Shader is rounding a native window corner")
-                                }
+                                if !slot.insetBy(dx: -2, dy: -2).contains(CGPoint(x: x, y: y)) {
+                                    guard differences.max()! <= 2 else {
+                                        throw ShaderError.invalidPixels("Light remains outside the mark at \(x),\(y)")
+                                    }
+                                } else if differences.max()! > 25 { mark += 1 }
                             }
-                            print("PASS: native surface is unmasked; AppKit exclusively clips corners @\(scale)x")
                         }
-                        print(
-                            "PASS \("Opal") \(Int(size.width))x\(Int(size.height)) @\(scale)x t=\(time) alpha=\(maxAlpha) gpu=\(String(format: "%.2f", gpuMS))ms"
-                        )
+                        guard mark > 20 else { throw ShaderError.invalidPixels("Firstlight mark is missing") }
+                    }
+                    if size.width == 1020, scale == 1 {
+                        let image = try makeImage(frame)
+                        try save(image, to: folder.appendingPathComponent("ray-\(time).png"))
+                        if [1.10, 2.35, 2.95, 3.60].contains(time) {
+                            let preview = try composite(image, dim: IntroTiming.dimming(at: Double(time)))
+                            previews.append(preview)
+                        }
                     }
                 }
             }
         }
+        // Dense 60 Hz continuity through the turn, condensation and pigment.
+        var previous: Frame?
+        var maximumDelta = 0.0
+        for step in 0 ... 240 {
+            let time = Float(step) / 60
+            let frame = try render(
+                renderer, size: CGSize(width: 510, height: 380), scale: 1,
+                state: ShaderState(elapsed: time, inset: 38, variant: 703, targetSize: CGSize(width: 434, height: 304))
+            )
+            count += 1
+            if let previous {
+                let delta = zip(previous.bytes, frame.bytes).reduce(0.0) { $0 + Double(abs(Int($1.0) - Int($1.1))) }
+                    / Double(frame.bytes.count) / 255
+                maximumDelta = max(maximumDelta, delta)
+            }
+            previous = frame
+        }
+        guard maximumDelta < 0.045 else { throw ShaderError.invalidPixels("Frame discontinuity: \(maximumDelta)") }
         guard IntroTiming.dimming(at: 0) == 0,
-              IntroTiming.dimming(at: 2) > 0.7,
-              IntroTiming.dimming(at: 4.5) < IntroTiming.dimming(at: 3.7),
+              abs(IntroTiming.dimming(at: 1.0) - IntroTiming.dimmingPeak) < 0.001,
+              IntroTiming.dimming(at: IntroTiming.handoff) == 0,
               IntroTiming.dimming(at: IntroTiming.duration) == 0
         else {
             throw ShaderError.invalidPixels("Invalid desktop dimming timeline")
         }
         let context = CGContext(
-            data: nil,
-            width: 1530,
-            height: 380,
-            bitsPerComponent: 8,
-            bytesPerRow: 1530 * 4,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            data: nil, width: 2040, height: 380, bitsPerComponent: 8, bytesPerRow: 2040 * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
         for (index, preview) in previews.enumerated() {
             context.draw(preview, in: CGRect(x: index * 510, y: 0, width: 510, height: 380))
         }
-        try self.save(context.makeImage()!, to: folder.appendingPathComponent("opal-storyboard.png"))
-        let average = measuredGPU.reduce(0,+) / Double(measuredGPU.count)
-        print("40 Opal GPU frames passed; dimming, alpha, motion, compact/Retina sizes verified.")
+        try self.save(context.makeImage()!, to: folder.appendingPathComponent("ray-storyboard.png"))
+        let average = gpu.reduce(0,+) / Double(gpu.count)
         print(
-            "GPU mean \(String(format: "%.2f", average))ms, max \(String(format: "%.2f", slowestGPU))ms. Frames: \(folder.path)"
+            "\(count) Ray GPU frames passed: premultiplied alpha, clear carrier edges, motion, native handoff match from \(IntroTiming.handoff) s, static original mark, 60 Hz delta ≤\(String(format: "%.4f", maximumDelta)), dimming timeline."
         )
+        print("GPU mean \(String(format: "%.2f", average))ms, max \(String(format: "%.2f", gpu.max() ?? 0))ms. Frames: \(folder.path)")
     }
 
     // MARK: Private
 
-    private static func makeImage(_ bytes: [UInt8], width: Int, height: Int) throws -> CGImage {
-        let provider = CGDataProvider(data: Data(bytes) as CFData)!
+    private struct Frame {
+        let width: Int
+        let height: Int
+        let bytes: [UInt8]
+        let gpuMS: Double
+        func channel(_ x: Int, _ y: Int, _ c: Int) -> UInt8 { self.bytes[(y * self.width + x) * 4 + c] }
+        func alpha(_ x: Int, _ y: Int) -> UInt8 { self.channel(x, y, 3) }
+    }
+
+    private static func render(_ renderer: MetalRenderer, size: CGSize, scale: Int, state: ShaderState) throws -> Frame {
+        let width = Int(size.width) * scale, height = Int(size.height) * scale
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false
+        )
+        descriptor.usage = [.renderTarget]
+        descriptor.storageMode = .shared
+        guard let texture = renderer.commandQueue.device.makeTexture(descriptor: descriptor),
+              let command = renderer.commandQueue.makeCommandBuffer() else { throw ShaderError.renderFailed }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
+        renderer.state = state
+        try renderer.encode(pass: pass, command: command, width: width, height: height, scale: Float(scale))
+        command.commit()
+        command.waitUntilCompleted()
+        guard command.status == .completed else { throw command.error ?? ShaderError.renderFailed }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        bytes.withUnsafeMutableBytes {
+            texture.getBytes($0.baseAddress!, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        }
+        return Frame(width: width, height: height, bytes: bytes, gpuMS: (command.gpuEndTime - command.gpuStartTime) * 1000)
+    }
+
+    private static func validate(_ frame: Frame, time: Float, scale: Int) throws {
+        var visible = 0, soft = 0, maxAlpha: UInt8 = 0
+        for index in stride(from: 0, to: frame.bytes.count, by: 4) {
+            let a = frame.bytes[index + 3]
+            if a > 0 { visible += 1 }
+            if a > 10, a < 180 { soft += 1 }
+            maxAlpha = max(maxAlpha, a)
+            for c in 0 ..< 3 where Int(frame.bytes[index + c]) > Int(a) + 1 {
+                throw ShaderError.invalidPixels("Non-premultiplied pixel at \(time)")
+            }
+        }
+        for x in stride(from: 0, to: frame.width, by: 13) {
+            guard frame.alpha(x, 0) == 0, frame.alpha(x, frame.height - 1) == 0 else {
+                throw ShaderError.invalidPixels("Carrier top/bottom clipping at \(time)")
+            }
+        }
+        for y in stride(from: 0, to: frame.height, by: 13) {
+            guard frame.alpha(0, y) == 0, frame.alpha(frame.width - 1, y) == 0 else {
+                throw ShaderError.invalidPixels("Carrier side clipping at \(time)")
+            }
+        }
+        if time == 0, visible != 0 { throw ShaderError.invalidPixels("First frame is not clear") }
+        if time > 0.5, time < 1.05 {
+            guard visible > 3000 * scale * scale, maxAlpha < 245, soft > 1000 * scale * scale else {
+                throw ShaderError.invalidPixels("Missing translucent light at \(time)")
+            }
+        }
+        if time >= Float(IntroTiming.handoff) {
+            guard frame.alpha(frame.width / 2, frame.height / 2) == 255,
+                  frame.alpha(90 * scale, frame.height / 2) == 255
+            else { throw ShaderError.invalidPixels("Missing window surface at \(time)") }
+        }
+    }
+
+    private static func changed(_ a: Frame, _ b: Frame) -> Int {
+        zip(a.bytes, b.bytes).reduce(0) { $0 + (abs(Int($1.0) - Int($1.1)) > 2 ? 1 : 0) }
+    }
+
+    private static func makeImage(_ frame: Frame) throws -> CGImage {
+        let provider = CGDataProvider(data: Data(frame.bytes) as CFData)!
         let bitmap = CGBitmapInfo.byteOrder32Little
             .union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue))
         guard let image = CGImage(
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bitsPerPixel: 32,
-            bytesPerRow: width * 4,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: bitmap,
-            provider: provider,
-            decode: nil,
-            shouldInterpolate: false,
-            intent: .defaultIntent
+            width: frame.width, height: frame.height, bitsPerComponent: 8, bitsPerPixel: 32,
+            bytesPerRow: frame.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: bitmap, provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
         ) else { throw ShaderError.renderFailed }
         return image
     }
@@ -189,13 +228,8 @@ enum OnboardingShaderChecks {
     private static func composite(_ image: CGImage, dim: Double) throws -> CGImage {
         let width = image.width, height = image.height
         let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width * 4,
-            space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )!
         // Synthetic desktop for reproducible alpha proof, not a screenshot of user data.
         context.setFillColor(CGColor(red: 0.46, green: 0.43, blue: 0.42, alpha: 1))
@@ -208,14 +242,8 @@ enum OnboardingShaderChecks {
     }
 
     private static func save(_ image: CGImage, to url: URL) throws {
-        guard let destination = CGImageDestinationCreateWithURL(
-            url as CFURL,
-            UTType.png.identifier as CFString,
-            1,
-            nil
-        ) else {
-            throw ShaderError.renderFailed
-        }
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)
+        else { throw ShaderError.renderFailed }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw ShaderError.renderFailed }
     }

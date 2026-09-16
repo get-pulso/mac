@@ -7,21 +7,26 @@ struct NativeGroupsSettingsView: View {
     let navigate: (NativeGroupsPage) -> Void
 
     var body: some View {
-        Form {
+        Group {
             if !model.loaded, model.loading {
-                Section { NativeLabeledRowsSkeleton(rows: 4) }
+                Form { Section { NativeLabeledRowsSkeleton(rows: 4) } }
             } else if !model.loaded, let error = model.loadError {
-                NativeStateMessage(
-                    title: "Couldn't load groups",
-                    message: error,
-                    actionTitle: "Retry",
-                    action: model.reload
-                )
+                Form {
+                    NativeStateMessage(
+                        title: "Couldn't load groups",
+                        message: error,
+                        actionTitle: "Retry",
+                        action: model.reload
+                    )
+                }
             } else {
-                pageContent
+                switch model.page {
+                case .list: groupList
+                case .create: createForm
+                case .details: groupDetails
+                case let .addMembers(id): addMembersForm(id)
+                }
             }
-            if let error = model.error { NativeInlineError(message: error) }
-            if model.loaded, let error = model.loadError { NativeInlineError(message: error, retry: model.reload) }
         }
         .disabled(model.busy)
         .alert(confirmationTitle, isPresented: $confirming) {
@@ -38,17 +43,12 @@ struct NativeGroupsSettingsView: View {
     @State private var confirmationButton = "Remove"
     @State private var confirmationAction: (() -> Void)?
 
-    @ViewBuilder private var pageContent: some View {
-        switch model.page {
-        case .list: groupList
-        case .create: createForm
-        case .details: groupDetails
-        case let .addMembers(id): addMembersForm(id)
-        }
-    }
+    /// Errors from the current operation and from a stale reload both belong
+    /// in the footer, next to the action that will retry them.
+    private var footerError: String? { self.model.error ?? (self.model.loaded ? self.model.loadError : nil) }
 
     private var groupList: some View {
-        Group {
+        Form {
             Section {
                 if model.groups.isEmpty {
                     Text("No groups yet. Create one to get started.").foregroundStyle(.secondary)
@@ -71,21 +71,24 @@ struct NativeGroupsSettingsView: View {
                     }
                 }
             }
+            if let error = model.error { NativeInlineError(message: error) }
+            if model.loaded, let error = model.loadError { NativeInlineError(message: error, retry: model.reload) }
         }
     }
 
     private var createForm: some View {
-        Group {
-            Section {
+        NativeFormScreen {
+            NativeFormRow("Name") {
                 nameField
-            } footer: {
-                Text("Only members can see activity in this group.")
+                NativeFormHint(text: "Only members can see activity in this group.")
             }
-            HStack {
-                Spacer()
+        } footer: {
+            NativeFormFooter(error: footerError) {
                 Button("Cancel") { navigate(.list) }
-                    .nativeSettingsActionButton()
-                actionButton("Create group", loading: "Creating…", key: "create", primary: true) {
+                    .nativeFormCancelButton()
+                    .keyboardShortcut(.cancelAction)
+                Spacer(minLength: 12)
+                submitButton("Create Group", loading: "Creating…", key: "create") {
                     model.create { navigate(.details($0)) }
                 }.disabled(!model.validName)
             }
@@ -94,138 +97,171 @@ struct NativeGroupsSettingsView: View {
 
     @ViewBuilder private var groupDetails: some View {
         if let members = model.members {
-            Section {
-                if members.group.is_user_creator {
-                    nameField
-                    HStack {
-                        Spacer()
-                        actionButton("Save changes", loading: "Saving…", key: "save", primary: true, action: model.save)
-                            .disabled(!model.validName || !model.hasChanges)
+            let owner = members.group.is_user_creator
+            NativeFormScreen {
+                NativeFormRow("Name") {
+                    if owner { nameField } else { Text(members.group.name).padding(.vertical, 4) }
+                }
+                NativeFormRow("Invite link", alignment: .center) {
+                    HStack(spacing: 8) {
+                        Picker("Link can be used", selection: $model.usageLimit) {
+                            Text("Once").tag(1)
+                            Text("5 times").tag(5)
+                            Text("10 times").tag(10)
+                            Text("25 times").tag(25)
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        Button(action: model.copyInvite) {
+                            NativeCopyButtonLabel(
+                                title: "Copy invite link",
+                                copied: model.copied,
+                                loadingTitle: "Creating…",
+                                isLoading: model.operation == "invite"
+                            )
+                        }
+                        .nativeSettingsActionButton()
                     }
-                } else {
-                    LabeledContent("Group name", value: members.group.name)
+                    NativeFormHint(text: "Choose how many people can join with one link.")
                 }
-            }
-            Section {
-                Picker("Link can be used", selection: $model.usageLimit) {
-                    Text("Once").tag(1)
-                    Text("5 times").tag(5)
-                    Text("10 times").tag(10)
-                    Text("25 times").tag(25)
+                NativeFormRow("Members") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(members.members.enumerated()), id: \.element.id) { index, person in
+                            HStack(spacing: 10) {
+                                FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 26)
+                                Text(person.displayName).lineLimit(1)
+                                Spacer(minLength: 8)
+                                if person.is_creator == true {
+                                    Text("Owner").font(.caption).foregroundStyle(.secondary)
+                                } else if owner {
+                                    Button {
+                                        confirm(
+                                            "Remove \(person.displayName)?",
+                                            message: "They will no longer have access to this group.",
+                                            button: "Remove"
+                                        ) { model.removeMember(person) }
+                                    } label: {
+                                        NativeAsyncButtonLabel(
+                                            title: "Remove…",
+                                            loadingTitle: "Removing…",
+                                            isLoading: model.operation == "remove-\(person.id)"
+                                        )
+                                    }
+                                    .nativeSettingsActionButton().controlSize(.small)
+                                }
+                            }
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            if index < members.members.count - 1 { Divider().padding(.leading, 46) }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .nativeFormField()
+                    .padding(.top, 2)
+                    HStack {
+                        NativeFormHint(text: "\(members.members.count) in this group.")
+                        Spacer(minLength: 8)
+                        if owner {
+                            Button("Add friends…") { navigate(.addMembers(members.group.id)) }
+                                .nativeSettingsActionButton()
+                        }
+                    }
                 }
-                LabeledContent("Invite people to this group") {
-                    Button(action: model.copyInvite) {
-                        NativeCopyButtonLabel(
-                            title: "Copy invite link",
-                            copied: model.copied,
-                            loadingTitle: "Creating…",
-                            isLoading: model.operation == "invite"
+                NativeFormRow("", alignment: .center) {
+                    Button(role: .destructive) {
+                        confirm(
+                            owner ? "Delete \(members.group.name)?" : "Leave \(members.group.name)?",
+                            message: owner ? "This deletes the group for everyone. This cannot be undone." :
+                                "You will no longer have access to this group's leaderboard.",
+                            button: owner ? "Delete group" : "Leave group"
+                        ) { model.remove { navigate(.list) } }
+                    } label: {
+                        NativeAsyncButtonLabel(
+                            title: owner ? "Delete group…" : "Leave group…",
+                            loadingTitle: owner ? "Deleting…" : "Leaving…",
+                            isLoading: model.operation == "remove"
                         )
                     }
                     .nativeSettingsActionButton()
                 }
-            }
-            Section {
-                ForEach(members.members) { person in
-                    HStack(spacing: 10) {
-                        FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 28)
-                        Text(person.displayName).lineLimit(2)
-                        Spacer(minLength: 8)
-                        if person.is_creator == true {
-                            Text("Owner").foregroundStyle(.secondary)
-                        } else if members.group.is_user_creator {
-                            actionButton("Remove…", loading: "Removing…", key: "remove-\(person.id)") {
-                                confirm(
-                                    "Remove \(person.displayName)?",
-                                    message: "They will no longer have access to this group.",
-                                    button: "Remove"
-                                ) {
-                                    model.removeMember(person)
-                                }
-                            }
-                        }
-                    }.padding(.vertical, 2)
-                }
-                if members.group.is_user_creator {
-                    HStack {
-                        Spacer()
-                        Button("Add friends…") { navigate(.addMembers(members.group.id)) }
-                            .nativeSettingsActionButton()
+                .padding(.top, 6)
+            } footer: {
+                if owner {
+                    NativeFormFooter(error: footerError) {
+                        Button("Cancel") { navigate(.list) }
+                            .nativeFormCancelButton()
+                            .keyboardShortcut(.cancelAction)
+                        Spacer(minLength: 12)
+                        submitButton("Save", loading: "Saving…", key: "save", action: model.save)
+                            .disabled(!model.validName || !model.hasChanges)
                     }
+                } else if let error = footerError {
+                    NativeFormFooter(error: error) { EmptyView() }
                 }
-            } header: { Text("Members (\(members.members.count))") }
-            Button(role: .destructive) {
-                let owner = members.group.is_user_creator
-                confirm(
-                    owner ? "Delete \(members.group.name)?" : "Leave \(members.group.name)?",
-                    message: owner ? "This deletes the group for everyone. This cannot be undone." :
-                        "You will no longer have access to this group's leaderboard.",
-                    button: owner ? "Delete group" : "Leave group"
-                ) { model.remove { navigate(.list) } }
-            } label: {
-                NativeAsyncButtonLabel(
-                    title: members.group.is_user_creator ? "Delete group…" : "Leave group…",
-                    loadingTitle: members.group.is_user_creator ? "Deleting…" : "Leaving…",
-                    isLoading: model.operation == "remove"
-                )
             }
-            .nativeSettingsActionButton()
         }
     }
 
     private var nameField: some View {
-        LabeledContent("Group name") {
-            TextField("Group name", text: $model.name).labelsHidden()
-                .frame(minWidth: 140, maxWidth: 270)
-        }
+        NativeFormTextField(placeholder: "Group name", text: $model.name, title: "Group name")
     }
 
     private func addMembersForm(_ id: String) -> some View {
-        Group {
-            Section {
+        NativeFormScreen {
+            NativeFormRow("Friends") {
                 if model.eligibleMembers.isEmpty {
                     Text("No friends available to add. You can invite someone with a link from the group settings.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.secondary).padding(.vertical, 4)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    ForEach(model.eligibleMembers) { person in
-                        Toggle(isOn: Binding(
-                            get: { model.selectedMembers.contains(person.id) },
-                            set: { selected in
-                                if selected { model.selectedMembers.insert(person.id) }
-                                else { model.selectedMembers.remove(person.id) }
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(model.eligibleMembers.enumerated()), id: \.element.id) { index, person in
+                            Toggle(isOn: Binding(
+                                get: { model.selectedMembers.contains(person.id) },
+                                set: { selected in
+                                    if selected { model.selectedMembers.insert(person.id) }
+                                    else { model.selectedMembers.remove(person.id) }
+                                }
+                            )) {
+                                HStack(spacing: 10) {
+                                    FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 26)
+                                    Text(person.displayName).lineLimit(1)
+                                }
                             }
-                        )) {
-                            HStack(spacing: 10) {
-                                FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 28)
-                                Text(person.displayName).lineLimit(2)
-                            }
-                        }.toggleStyle(.checkbox).padding(.vertical, 2)
+                            .toggleStyle(.checkbox)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            if index < model.eligibleMembers.count - 1 { Divider().padding(.leading, 10) }
+                        }
                     }
+                    .padding(.vertical, 2)
+                    .nativeFormField()
+                    .padding(.top, 2)
+                    NativeFormHint(text: "Select friends to add to this group.")
                 }
-            } footer: { Text("Select friends to add to this group.") }
-            HStack {
-                Spacer()
+            }
+        } footer: {
+            NativeFormFooter(error: footerError) {
                 Button("Cancel") { navigate(.details(id)) }
-                    .nativeSettingsActionButton()
-                actionButton("Add friends", loading: "Adding…", key: "add-members", primary: true) {
+                    .nativeFormCancelButton()
+                    .keyboardShortcut(.cancelAction)
+                Spacer(minLength: 12)
+                submitButton("Add Friends", loading: "Adding…", key: "add-members") {
                     model.addMembers { navigate(.details($0)) }
                 }.disabled(model.selectedMembers.isEmpty)
             }
         }
     }
 
-    @ViewBuilder private func actionButton(
+    private func submitButton(
         _ title: String,
         loading: String,
         key: String,
-        primary: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        let button = Button(action: action) {
-            NativeAsyncButtonLabel(title: title, loadingTitle: loading, isLoading: model.operation == key)
+        Button(action: action) {
+            NativeFormSubmitLabel(title: title, loadingTitle: loading, isLoading: model.operation == key)
         }
-        if primary { button.nativeSettingsPrimaryButton().keyboardShortcut(.defaultAction) }
-        else { button.nativeSettingsActionButton() }
+        .nativeFormSubmitButton()
+        .keyboardShortcut(.return, modifiers: .command)
     }
 
     private func confirm(_ title: String, message: String, button: String, action: @escaping () -> Void) {

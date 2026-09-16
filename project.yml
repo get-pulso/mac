@@ -55,6 +55,10 @@ targets:
       - path: App/Resources/OnboardingShaders
         type: folder
         buildPhase: resources
+      # The onboarding light condenses into the original AppIcon mark, sampled
+      # from this file at runtime; the asset catalog only yields the app icon.
+      - path: App/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png
+        buildPhase: resources
     dependencies:
       - package: Clerk
         product: ClerkKit

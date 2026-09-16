@@ -22,6 +22,12 @@ struct NativePerson: Decodable, Identifiable {
     let twitter: String?
     let telegram: String?
     let active_app: NativeAppPresence?
+    /// The coding agent that wrote to its log most recently, when that was
+    /// within the last few minutes. Absent for people without agent data.
+    let agent: NativeAgentPresence?
+    /// The ranking's figure when the board is not by active time: agent
+    /// minutes or tokens over the period. Absent on the default board.
+    let score: Double?
 
     var id: String { self.user_id }
     var displayName: String { self.name?.isEmpty == false ? self.name! : "Firstlight user" }
@@ -29,6 +35,14 @@ struct NativePerson: Decodable, Identifiable {
     var timeLabel: String { DurationLabel.minutes(self.active_minutes ?? 0) }
     var isActiveNow: Bool {
         guard let raw = last_active_at, let date = Self.timestamp(raw) else { return false }
+        let age = Date().timeIntervalSince(date)
+        return age >= -30 && age <= 120
+    }
+
+    /// An agent counts as working for two minutes after its last write, the
+    /// same window as a person's own presence.
+    var isAgentWorkingNow: Bool {
+        guard let raw = agent?.last_active_at, let date = Self.timestamp(raw) else { return false }
         let age = Date().timeIntervalSince(date)
         return age >= -30 && age <= 120
     }
@@ -133,7 +147,109 @@ struct NativeAppPresence: Decodable {
     let icon_url: String?
 }
 
+/// Which coding agent a person's Mac last saw writing, and when.
+struct NativeAgentPresence: Decodable {
+    let tool: String
+    let last_active_at: String
+}
+
+/// `/api/users/:id/agent-summary`: a person's coding agents over the period.
+/// Everything past `has_data` is optional so an older server, or a person
+/// with nothing to show, decodes to an empty summary instead of an error.
+struct NativeAgentSummary: Decodable {
+    struct Tokens: Decodable {
+        let total: Double
+        let input: Double?
+        let cache_write: Double?
+        let cache_read: Double?
+        let output: Double?
+        let reasoning: Double?
+    }
+
+    struct ToolUsage: Decodable, Identifiable {
+        let tool: String
+        let tokens_total: Double
+        let requests: Int?
+        let sessions: Int?
+        let agent_minutes: Double?
+        let top_model: String?
+        let estimated_cost_micro_usd: Double?
+        let reported_cost_cents: Int?
+
+        var id: String { self.tool }
+    }
+
+    /// One local day, oldest first. Empty days are present with zeros so a
+    /// week always has seven bars.
+    struct Day: Decodable, Identifiable {
+        let date: String
+        let human_minutes: Double
+        let agent_minutes: Double
+        let agent_only_minutes: Double
+
+        var id: String { self.date }
+    }
+
+    let period: String
+    let has_data: Bool
+    let agent_minutes: Double?
+    let agent_only_minutes: Double?
+    let max_concurrency: Int?
+    let tokens: Tokens?
+    let by_tool: [ToolUsage]?
+    let top_tool: String?
+    let top_model: String?
+    /// Present only for yourself, or for a friend who chose to share it.
+    let estimated_cost_micro_usd: Double?
+    let cost_shared: Bool?
+    let days: [Day]?
+    let last_agent_active_at: String?
+    let active_tool: String?
+}
+
+/// Display names and glyphs for the tools a summary can name. Unknown tools
+/// keep their raw name so a newer server never renders as nothing.
+enum NativeAgentToolLabel {
+    static func name(_ tool: String) -> String {
+        switch tool {
+        case "claude_code": "Claude Code"
+        case "codex": "Codex"
+        case "cursor": "Cursor"
+        default: tool.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    /// Asset catalog template image, or nil for a tool without a glyph.
+    static func glyph(_ tool: String) -> String? {
+        switch tool {
+        case "claude_code": "ToolClaude"
+        case "codex": "ToolCodex"
+        case "cursor": "ToolCursor"
+        default: nil
+        }
+    }
+}
+
 struct NativeAck: Decodable {}
+
+/// Who a personal friend link belongs to, from `/api/join/[code]`. Public,
+/// so the tray can show the face before anyone is signed in.
+struct NativeJoinInfo: Decodable {
+    struct Inviter: Decodable, Equatable {
+        let code: String
+        let inviterName: String
+        let inviterAvatarUrl: String?
+    }
+
+    let invite: Inviter
+}
+
+/// The answer to a friend request by code. `connected` is true when the code
+/// came from the owner's own link and the two are friends at once.
+struct NativeFriendRequestResult: Decodable {
+    let success: Bool
+    let connected: Bool?
+}
 
 struct NativeDirectFriends: Decodable {
     let directFriendIds: [String]
@@ -144,6 +260,17 @@ enum InviteInput: Hashable {
     case friendCode(String)
 
     // MARK: Internal
+
+    /// What sort of invitation this is, without the text: a group link or a
+    /// friend code. The tray keys on this, so typing does not change trays.
+    enum Kind: Hashable { case token, friendCode }
+
+    var kind: Kind {
+        switch self {
+        case .token: .token
+        case .friendCode: .friendCode
+        }
+    }
 
     static func parse(_ text: String) throws -> InviteInput {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)

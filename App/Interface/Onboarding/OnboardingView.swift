@@ -6,7 +6,8 @@ struct OnboardingFormExpandedKey: PreferenceKey {
     static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
 }
 
-/// The proxy contains only the cloud; welcome content starts after native handoff.
+/// Both hosts render the same light. The proxy carries only the light; the
+/// native window continues it into the original mark, then shows Welcome.
 struct OnboardingView: View {
     // MARK: Internal
 
@@ -17,12 +18,18 @@ struct OnboardingView: View {
     var body: some View {
         GeometryReader { proxy in
             let panel = nativeSurface ? CGRect(origin: .zero, size: proxy.size) : playback.panelRect
-            let elapsed = nativeSurface ? IntroTiming.duration : playback.elapsed
+            let elapsed = playback.renderTime(nativeSurface: nativeSurface)
+            // Derived from the panel, not measured: both hosts must agree on
+            // the optical root from the very first frame, before Welcome exists.
+            let slot = RayLogoTiming.rect(in: panel.size)
             ZStack {
                 if playback.shaderFailure == nil {
                     MetalOnboardingShaderView(
                         elapsed: Float(elapsed), inset: 0, nativeSurface: nativeSurface,
-                        variant: 2, targetSize: panel.size,
+                        variant: playback.variant,
+                        // An expanded form owns the whole window; the mark leaves the pane.
+                        rayLogoRect: expandedForm ? slot.offsetBy(dx: 0, dy: -panel.height - slot.height) : slot,
+                        targetSize: panel.size,
                         targetOffset: CGPoint(
                             x: panel.midX - proxy.size.width / 2,
                             y: panel.midY - proxy.size.height / 2
@@ -30,13 +37,13 @@ struct OnboardingView: View {
                         onFailure: playback.fail
                     ).accessibilityHidden(true)
                 } else {
-                    Rectangle().fill(Color(red: 0.37, green: 0.29, blue: 0.59))
+                    Rectangle().fill(Color(nsColor: .windowBackgroundColor))
                         .frame(width: panel.width, height: panel.height)
                         .position(x: panel.midX, y: panel.midY)
                 }
 
                 if nativeSurface {
-                    welcome(size: panel.size)
+                    welcome(size: panel.size, slot: slot)
                         .frame(width: panel.width, height: panel.height)
                         .position(x: panel.midX, y: panel.midY)
                 }
@@ -50,37 +57,30 @@ struct OnboardingView: View {
 
     @State private var expandedForm = false
 
-    private func welcome(size: CGSize) -> some View {
-        let time = self.playback.welcomeElapsed
+    private func welcome(size: CGSize, slot: CGRect) -> some View {
+        let time = self.playback.elapsed
         let compact = size.height < 538 || size.width < 748
-        let logoIn = WelcomeTiming.spring(time, after: WelcomeTiming.logoStart)
-        let logoOut = WelcomeTiming.spring(time, after: WelcomeTiming.logoExitStart)
-        let titleIn = WelcomeTiming.spring(time, after: WelcomeTiming.titleStart)
-        let buttonIn = WelcomeTiming.spring(time, after: WelcomeTiming.buttonStart)
-        let logoAlpha = WelcomeTiming.logoOpacity(at: time)
         let titleAlpha = WelcomeTiming.titleOpacity(at: time)
-        let buttonAlpha = IntroTiming.smooth(WelcomeTiming.buttonStart, WelcomeTiming.interactiveAt, time)
+        let buttonIn = WelcomeTiming.spring(time, after: WelcomeTiming.buttonStart)
+        let buttonAlpha = WelcomeTiming.buttonOpacity(at: time)
         let enabled = time >= WelcomeTiming.interactiveAt
 
-        return ZStack {
-            Text("P")
-                .font(.system(size: compact ? 88 : 100, weight: .semibold, design: .rounded))
-                .scaleEffect(1 - logoOut * 0.08)
-                .opacity(logoAlpha)
-                .blur(radius: (1 - logoAlpha) * 10)
-                .offset(y: (1 - logoIn) * 56 - logoOut * 64)
-                .accessibilityHidden(true)
-
-            Text("Welcome to Firstlight")
-                .font(.system(size: compact ? 38 : 48, weight: .medium))
-                .tracking(-1.8)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 28)
-                .opacity(expandedForm ? 0 : titleAlpha)
-                .blur(radius: (1 - titleAlpha) * 8)
-                .offset(y: (1 - titleIn) * 40)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityHidden(expandedForm || titleAlpha < 1)
+        return ZStack(alignment: .top) {
+            VStack(spacing: compact ? 17 : 22) {
+                // The mark itself is the shader's light; this only reserves its slot.
+                Color.clear.frame(width: slot.width, height: slot.height).accessibilityHidden(true)
+                Text("Welcome to Firstlight")
+                    .font(.system(size: compact ? 38 : 48, weight: .medium))
+                    .tracking(-1.8)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 28)
+                    .opacity(expandedForm ? 0 : titleAlpha)
+                    .blur(radius: (1 - titleAlpha) * 2)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityHidden(expandedForm || titleAlpha < 1)
+            }
+            .frame(width: size.width)
+            .offset(y: slot.minY)
 
             VStack {
                 Spacer(minLength: 0)
@@ -102,6 +102,7 @@ struct OnboardingView: View {
                 .accessibilityHidden(!enabled)
                 .padding(.bottom, compact ? 24 : 36)
             }
+            .frame(width: size.width, height: size.height)
         }
         .foregroundStyle(.white)
         .onPreferenceChange(OnboardingFormExpandedKey.self) { expandedForm = $0 }

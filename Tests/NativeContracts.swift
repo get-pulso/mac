@@ -46,6 +46,20 @@ struct NativeContracts {
         expect(ContentLoadPhase.resolve(isLoading: false, hasContent: false, hasError: false) == .empty)
         expect(ContentLoadPhase.resolve(isLoading: false, hasContent: false, hasError: true) == .failedEmpty)
         expect(ContentLoadPhase.resolve(isLoading: false, hasContent: true, hasError: true) == .failedWithContent)
+
+        // Only a Mac with no route out is "offline"; a slow or refused server is
+        // an ordinary failure, or people would be sent to check their Wi-Fi.
+        expect(NativeLoadFailure(URLError(.notConnectedToInternet)).isOffline)
+        expect(NativeLoadFailure(URLError(.networkConnectionLost)).isOffline)
+        expect(NativeLoadFailure(URLError(.dnsLookupFailed)).isOffline)
+        expect(NativeLoadFailure(NSError(domain: NSURLErrorDomain, code: URLError.cannotFindHost.rawValue)).isOffline)
+        expect(!NativeLoadFailure(URLError(.timedOut)).isOffline)
+        expect(!NativeLoadFailure(URLError(.cannotConnectToHost)).isOffline)
+        expect(!NativeLoadFailure(NativeError.message("Server said no")).isOffline)
+        expect(NativeLoadFailure(NativeError.message("Server said no")).message == "Server said no")
+        // The path monitor's word outranks the error code at the moment of failure.
+        expect(NativeLoadFailure(NativeError.message("Server said no"), online: false).isOffline)
+        expect(NativeLoadFailure(URLError(.notConnectedToInternet), online: true).isOffline)
         let requests = try JSONDecoder().decode(NativeRequests.self, from: Data(#"{"incoming":[],"outgoing":[]}"#.utf8))
         expect(requests.incoming.isEmpty && requests.outgoing.isEmpty)
         let user = try JSONDecoder().decode(UserResponse.self, from: Data(#"{"user":{"id":"id","name":null},"groups":[]}"#.utf8))

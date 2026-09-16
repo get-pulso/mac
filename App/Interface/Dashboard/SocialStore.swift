@@ -1,10 +1,21 @@
 import Alamofire
+import Combine
 import Defaults
 import Dependencies
 import SwiftUI
 
 @MainActor
 final class SocialStore: ObservableObject {
+    // MARK: Lifecycle
+
+    init() {
+        // The connection coming back is the retry nobody has to click: a
+        // list that failed for want of it loads again as soon as there is one.
+        self.reachabilityWatch = NativeReachability.shared.$isOnline
+            .dropFirst().removeDuplicates().filter { $0 }
+            .sink { [weak self] _ in self?.reloadAfterReconnect() }
+    }
+
     // MARK: Internal
 
     enum CopiedItem: Equatable { case friendCode, inviteLink }
@@ -28,7 +39,9 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    enum Screen: Hashable { case list, connect, requests, person(String) }
+    /// What the popover shows under the tray: the list, or one profile.
+    /// Adding friends and the sent requests are trays, not screens.
+    enum Screen: Hashable { case list, person(String) }
 
     /// Which way the last screen change went. Forward pushes deeper (a tap on
     /// a row, on Invite, on Sent requests); back returns (Back, Escape, a
@@ -52,7 +65,10 @@ final class SocialStore: ObservableObject {
     /// lookup state; your own code is `.candidate(.friendCode)` compared with
     /// `personalInvite`.
     enum Tray: Hashable {
-        case home, incoming, candidate(InviteInput), sent, joined(String), sentRequests
+        /// The candidate tray is identified by the kind of input, not by the
+        /// text: typing the rest of a code changes the field, not the tray.
+        /// What it shows is read from `inviteCandidate` as it is typed.
+        case home, incoming, candidate(InviteInput.Kind), sent, connected(String), joined(String), sentRequests
 
         // MARK: Internal
 
@@ -64,8 +80,15 @@ final class SocialStore: ObservableObject {
                  .sentRequests: true
             case .home,
                  .sent,
+                 .connected,
                  .joined: false
             }
+        }
+
+        /// A friendship made by following the inviter's own link.
+        var isConnected: Bool {
+            if case .connected = self { return true }
+            return false
         }
 
         /// Trays where the invitation field is on screen. It is one view on
@@ -75,14 +98,6 @@ final class SocialStore: ObservableObject {
             case .home,
                  .candidate: true
             default: false
-            }
-        }
-
-        /// The screen that showed this content before the tray existed.
-        var legacyScreen: Screen {
-            switch self {
-            case .sentRequests: .requests
-            default: .connect
             }
         }
     }
@@ -98,11 +113,6 @@ final class SocialStore: ObservableObject {
         var to: Tray?
         var direction: Direction = .forward
     }
-
-    /// The tray replaces the old Add friends and Sent requests screens. Off,
-    /// every tray call falls back to those screens; they stay in the code
-    /// until the tray has every step and its edge cases.
-    static var inviteTrayEnabled = true
 
     /// One motion for every screen change, so a tap, Back and Escape all read
     /// the same way. The same spring as an iOS navigation push: about 0.4 s
@@ -139,10 +149,16 @@ final class SocialStore: ObservableObject {
     @Published private(set) var trayLoading = false
     private(set) var trayOrigin: TrayOrigin = .none
     private(set) var trayNavigation = TrayNavigation()
+    /// The group just joined from the tray, once the refreshed groups have
+    /// arrived. The Joined tray's mark flies into this group's tab and the
+    /// list moves to it under the veil. Cleared when the tray closes.
+    @Published private(set) var joinedGroupID: String?
 
     @Published var screen: Screen = .list
     @Published var tab = "friends"
     @Published private(set) var period = SocialStore.storedPeriod
+    /// `active`, `agent` or `tokens`; see `setMetric`.
+    @Published private(set) var metric = SocialStore.storedMetric
     @Published var groups: [NativeGroup] = []
     /// The visible tab and period, as far as it has been scrolled. Rows beyond
     /// the first page arrive through `loadMore()`.
@@ -152,16 +168,27 @@ final class SocialStore: ObservableObject {
     @Published var requests = NativeRequests()
     @Published var personalInvite: NativePersonalInvite?
     @Published private(set) var inviteInfo: NativeInviteInfo?
+    /// Whose friend code sits in the field, once looked up. The tray shows the
+    /// person, never the code: the code is the transport.
+    @Published private(set) var inviter: NativeJoinInfo.Inviter?
+    /// True while the code in the field is being looked up. A miss ends it
+    /// with `inviter` still nil: the card then stops waiting for a face.
+    @Published private(set) var checkingInviter = false
     @Published private(set) var checkingInvite = false
     @Published private(set) var inviteError: String?
     @Published var directFriendIDs = Set<String>()
     @Published var activity: NativeActivity?
+    /// The open profile's coding agents. Loaded beside `activity`; nil until
+    /// it answers, or when the person has none.
+    @Published var agentSummary: NativeAgentSummary?
     @Published var loading = true
     @Published var busy = false
     @Published var screenLoading = false
     @Published var operationLabel = "Saving…"
     @Published var operationKey: String?
-    @Published var listError: String?
+    /// Why the visible list could not be loaded, or nil while it can. Set by
+    /// `refresh`; cleared when the list changes or a refresh succeeds.
+    @Published private(set) var listFailure: NativeLoadFailure?
     @Published var error: String?
     @Published var notice: String?
     @Published var feedbackToast: FeedbackToast?
@@ -186,12 +213,19 @@ final class SocialStore: ObservableObject {
     var trimmedQuery: String { self.query.trimmingCharacters(in: .whitespacesAndNewlines) }
     var people: [NativePerson] { self.peopleList.items }
 
+    /// A link is the inviter's own consent, so following one makes friends at
+    /// once. A bare code, typed or pasted, still asks its owner.
+    var queryIsLink: Bool { self.trimmedQuery.contains("://") }
+
     /// People waiting on an answer. Shown on the Invite button itself, so the
     /// only way to learn about a request is not to open the tray.
     var incomingRequestCount: Int { self.requests.incoming.count }
 
     var previousScreen: Screen? { self.navigationHistory.previous }
-    var hasLoadedCurrentList: Bool { self.listCache.contains(self.tab + self.period) }
+    var hasLoadedCurrentList: Bool { self.listCache.contains(self.listKey) }
+
+    /// One cached list per tab, period and metric.
+    var listKey: String { self.tab + self.period + (self.metric == "active" ? "" : "|" + self.metric) }
 
     /// Where a person stands in the ranking on screen. A loaded row knows its
     /// own place; the caller's pinned row answers for itself when it sits
@@ -205,18 +239,19 @@ final class SocialStore: ObservableObject {
         return LeaderboardPlace.place(rank: me.rank, loadedIndex: nil)
     }
 
-    func hasLoaded(_ screen: Screen) -> Bool {
-        switch screen {
-        case .requests: self.requestsCache.contains("requests")
-        case .connect: self.personalInviteCache.contains("invite")
-        default: true
-        }
-    }
-
     func setPeriod(_ period: String) {
         guard Self.supportedPeriods.contains(period), self.period != period else { return }
         self.period = period
         UserDefaults.standard.set(period, forKey: Self.periodDefaultsKey)
+    }
+
+    /// What the ranking is by: a person's own active time, the time their
+    /// coding agents worked, or the tokens those agents used. The rows
+    /// re-sort in place; the reorder is the whole story of the change.
+    func setMetric(_ metric: String) {
+        guard Self.supportedMetrics.contains(metric), self.metric != metric else { return }
+        self.metric = metric
+        UserDefaults.standard.set(metric, forKey: Self.metricDefaultsKey)
     }
 
     func goBack() {
@@ -254,18 +289,20 @@ final class SocialStore: ObservableObject {
     func refresh(force: Bool = false) async {
         let selectedTab = self.tab
         let selectedPeriod = self.period
-        let key = selectedTab + selectedPeriod
+        let selectedMetric = self.metric
+        let key = self.listKey
         if self.displayedListKey != key {
             self.peopleList = self.listCache.value(for: key) ?? .empty
             self.displayedListKey = key
-            self.listError = nil
+            self.listFailure = nil
             self.loadMoreError = nil
         }
         if let cachedGroups = self.groupsCache.value(for: "groups") { self.groups = cachedGroups }
         if !force,
            self.listCache.isFresh(key, for: Self.cacheLifetime),
            self.groupsCache.isFresh("groups", for: Self.cacheLifetime),
-           self.requestsCache.isFresh("requests", for: Self.cacheLifetime)
+           self.requestsCache.isFresh("requests", for: Self.cacheLifetime),
+           self.personalInviteCache.contains("invite")
         {
             if !self.refreshingList { self.loading = false }
             return
@@ -288,7 +325,8 @@ final class SocialStore: ObservableObject {
         async let loadedPeople: NativeLeaderboardPage = self.network.request(
             path: "/api/friends/leaderboard", method: .get,
             query: Self.leaderboardQuery(
-                tab: selectedTab, period: selectedPeriod, limit: self.peopleList.refreshLimit, offset: 0
+                tab: selectedTab, period: selectedPeriod, metric: selectedMetric,
+                limit: self.peopleList.refreshLimit, offset: 0
             )
         )
         // The Invite button carries the number of people waiting on an
@@ -296,20 +334,31 @@ final class SocialStore: ObservableObject {
         // costs a badge, not the list.
         async let loadedRequests: NativeRequests? = try? self.network
             .request(path: "/api/friends/requests", method: .get)
+        // Your own code hardly ever changes, so it is fetched once with the
+        // first list and kept: the tray opens with it already in place
+        // instead of loading it on every tap. The tray still refreshes it
+        // when its own cache goes stale.
+        async let loadedInvite: NativePersonalInvite? = self.personalInviteCache.contains("invite") ? nil :
+            try? self.network.request(path: "/api/user/invite-link", method: .get)
 
         var newGroups: [NativeGroup]?
         var newPeople: NativeLeaderboardPage?
-        var failures: [String] = []
+        var failures: [Error] = []
         do { newGroups = try await loadedGroups }
-        catch { if !(error is CancellationError) { failures.append(error.localizedDescription) } }
+        catch { if !(error is CancellationError) { failures.append(error) } }
         do { newPeople = try await loadedPeople }
-        catch { if !(error is CancellationError) { failures.append(error.localizedDescription) } }
+        catch { if !(error is CancellationError) { failures.append(error) } }
         let newRequests = await loadedRequests
+        let newInvite = await loadedInvite
 
         guard self.refreshID == id, Defaults[.currentUserID] != nil else { return }
         if let newRequests {
             self.requests = newRequests
             self.requestsCache.insert(newRequests, for: "requests")
+        }
+        if let newInvite {
+            self.personalInvite = newInvite
+            self.personalInviteCache.insert(newInvite, for: "invite")
         }
         if let newGroups {
             self.groups = newGroups.filter { $0.id != "global" }
@@ -317,7 +366,7 @@ final class SocialStore: ObservableObject {
             if selectedTab != "friends", selectedTab != "global",
                !self.groups.contains(where: { $0.id == selectedTab })
             {
-                self.listError = nil
+                self.listFailure = nil
                 self.selectTab("friends")
                 return
             }
@@ -332,7 +381,11 @@ final class SocialStore: ObservableObject {
                 self.selectedPerson = refreshedPerson
             }
         }
-        self.listError = failures.first
+        // Classified now, not when shown: the path monitor answers for the
+        // moment the request failed, not for whenever the list is next drawn.
+        self.listFailure = failures.first.map {
+            NativeLoadFailure($0.asAFError?.underlyingError ?? $0, online: NativeReachability.shared.isOnline)
+        }
     }
 
     /// Appends the next page of the visible list. The sentinel row under the
@@ -341,7 +394,8 @@ final class SocialStore: ObservableObject {
     func loadMore() async {
         let selectedTab = self.tab
         let selectedPeriod = self.period
-        let key = selectedTab + selectedPeriod
+        let selectedMetric = self.metric
+        let key = self.listKey
         guard self.displayedListKey == key, !self.loadingMore, let offset = self.peopleList.nextOffset else { return }
         self.loadingMore = true
         self.loadMoreError = nil
@@ -350,7 +404,8 @@ final class SocialStore: ObservableObject {
             let page: NativeLeaderboardPage = try await self.network.request(
                 path: "/api/friends/leaderboard", method: .get,
                 query: Self.leaderboardQuery(
-                    tab: selectedTab, period: selectedPeriod, limit: NativePeopleList.pageSize, offset: offset
+                    tab: selectedTab, period: selectedPeriod, metric: selectedMetric,
+                    limit: NativePeopleList.pageSize, offset: offset
                 )
             )
             guard self.displayedListKey == key, Defaults[.currentUserID] != nil else { return }
@@ -368,8 +423,6 @@ final class SocialStore: ObservableObject {
             self.showList()
             return
         }
-        // Opening the screen fresh must not surface the last invitation typed.
-        if next == .connect, self.screen != .connect { self.clearQuery() }
         self.navigationHistory.record(self.screen, before: next)
         self.navigate(to: next)
     }
@@ -381,15 +434,11 @@ final class SocialStore: ObservableObject {
     /// this is a push, so `openTray(.candidate)` from a deep link lands on top
     /// of whatever was there.
     func openTray(_ tray: Tray = .home, from origin: TrayOrigin = .none) {
-        guard Self.inviteTrayEnabled else {
-            self.open(tray.legacyScreen)
-            return
-        }
         if self.tray == nil {
             self.trayOrigin = origin
             self.trayHistory.removeAll()
             if tray == .home { self.clearQuery() }
-            self.restoreCachedValue(for: .connect)
+            self.restoreInviteData()
             self.present(tray, direction: .forward)
             self.refreshTray()
         } else {
@@ -399,10 +448,6 @@ final class SocialStore: ObservableObject {
 
     /// One tray deeper. Back returns here.
     func pushTray(_ next: Tray) {
-        guard Self.inviteTrayEnabled else {
-            self.open(next.legacyScreen)
-            return
-        }
         guard let current = self.tray else {
             self.openTray(next)
             return
@@ -416,10 +461,6 @@ final class SocialStore: ObservableObject {
     /// land here. Leaving a candidate clears the field, so Home comes back
     /// clean and the same code is not offered again.
     func trayBack() {
-        guard Self.inviteTrayEnabled else {
-            self.goBack()
-            return
-        }
         guard let current = self.tray else { return }
         guard current.canGoBack, let previous = self.trayHistory.pop() else {
             self.closeTray()
@@ -435,23 +476,22 @@ final class SocialStore: ObservableObject {
     /// Shrinks the tray back into the button. Nothing in flight is cancelled:
     /// closing the tray does not take back a request.
     func closeTray() {
-        guard Self.inviteTrayEnabled else {
-            self.showList()
-            return
-        }
         guard let current = self.tray else { return }
         self.trayNavigation = TrayNavigation(from: current, to: nil, direction: .back)
         self.trayHistory.removeAll()
         self.trayTask?.cancel()
         self.trayLoading = false
         self.error = nil
-        withAnimation(Self.screenTransition) { self.tray = nil }
+        withAnimation(Self.screenTransition) {
+            self.tray = nil
+            self.joinedGroupID = nil
+        }
     }
 
     /// Reloads your code and the requests for the open tray.
     func refreshTray(force: Bool = false) {
         guard self.tray != nil else { return }
-        if !force, self.isFresh(.connect) { return }
+        if !force, self.isInviteDataFresh { return }
         self.trayTask?.cancel()
         self.trayLoading = true
         self.trayTask = Task {
@@ -495,8 +535,14 @@ final class SocialStore: ObservableObject {
     }
 
     func invalidateActivity(for userID: String) {
-        for period in ["24h", "7d", "30d"] { self.activityCache.invalidate(userID + period) }
-        if case let .person(id) = self.screen, id == userID { self.activity = nil }
+        for period in ["24h", "7d", "30d"] {
+            self.activityCache.invalidate(userID + period)
+            self.agentSummaryCache.invalidate(userID + period)
+        }
+        if case let .person(id) = self.screen, id == userID {
+            self.activity = nil
+            self.agentSummary = nil
+        }
     }
 
     func refreshPersonIfVisible(_ userID: String) {
@@ -632,6 +678,7 @@ final class SocialStore: ObservableObject {
         self.checkingInvite = false
         self.inviteDeparting = false
         self.syncCandidateTray()
+        self.lookUpInviter()
         guard case let .token(token)? = self.inviteCandidate else {
             self.inviteInfo = nil
             self.lookedUpToken = nil
@@ -664,21 +711,40 @@ final class SocialStore: ObservableObject {
         self.inviteDeparting = true
         switch candidate {
         case let .friendCode(code):
-            self.run("Sending request…", key: "accept-invite") {
-                do { try await self.mutate("/api/friends/request", body: ["inviteCode": code]) }
-                catch { self.inviteDeparting = false; throw error }
-                self.finishInvite(notice: "Friend request sent.", tray: .sent)
+            let fromLink = self.queryIsLink
+            let name = self.inviter?.code == code ? self.inviter?.inviterName : nil
+            self.run(fromLink ? "Adding…" : "Sending request…", key: "accept-invite") {
+                let result: NativeFriendRequestResult
+                do {
+                    result = try await self.network.request(
+                        path: "/api/friends/request",
+                        method: .post,
+                        body: ["inviteCode": code, "source": fromLink ? "link" : "code"]
+                    )
+                } catch { self.inviteDeparting = false; throw error }
+                if result.connected == true {
+                    self.finishInvite(notice: "You're friends now.", tray: .connected(name ?? "your friend"))
+                } else {
+                    self.finishInvite(notice: "Friend request sent.", tray: .sent)
+                }
                 try? await self.loadRequests()
                 await self.refresh(force: true)
             }
         case let .token(token):
             let groupName = self.inviteInfo?.invite.groupName ?? "the group"
+            let knownGroups = Set(self.groups.map(\.id))
             self.run("Joining…", key: "accept-invite") {
                 do { try await self.mutate("/api/invite/accept", body: ["token": token]) }
                 catch { self.inviteDeparting = false; throw error }
                 SettingsWindowController.shared.invalidateGroups()
                 self.finishInvite(notice: "Invitation accepted.", tray: .joined(groupName))
                 await self.refresh(force: true)
+                // The invitation only names the group; the refreshed list says
+                // which one is new. A group known before (a re-used link) is
+                // found by its name instead.
+                guard self.tray == .joined(groupName) else { return }
+                self.joinedGroupID = self.groups.first { !knownGroups.contains($0.id) }?.id
+                    ?? self.groups.first { $0.name == groupName }?.id
             }
         }
     }
@@ -692,8 +758,10 @@ final class SocialStore: ObservableObject {
 
     func clearQuery() {
         self.inviteLookup?.cancel()
+        self.inviterLookup?.cancel()
         self.query = ""
         self.inviteInfo = nil
+        self.inviter = nil
         self.inviteError = nil
         self.checkingInvite = false
         self.lookedUpToken = nil
@@ -701,19 +769,22 @@ final class SocialStore: ObservableObject {
 
     func reset() {
         self.refreshID = UUID()
-        self.screenTask?.cancel(); self.screenLoading = false; self.activityCache.removeAll(); self.listError = nil
+        self.screenTask?.cancel(); self.screenLoading = false; self.activityCache.removeAll(); self.listFailure = nil
         self.listCache.removeAll(); self.groupsCache.removeAll(); self.displayedListKey = ""; self.navigationHistory
             .removeAll()
         self.screen = .list; self.tab = "friends"; self.groups = []; self.peopleList = .empty
         self.navigation = Navigation(); self.tabDirection = 1; self.acceptedRequestIDs = []; self
             .inviteDeparting = false
         self.trayTask?.cancel(); self.tray = nil; self.trayLoading = false; self.trayOrigin = .none
+        self.joinedGroupID = nil
         self.trayNavigation = TrayNavigation(); self.trayHistory.removeAll()
         self.loadingMore = false; self.loadMoreError = nil
         self.requests = NativeRequests()
         self.personalInvite = nil; self.selectedPerson = nil
         self.activity = nil
-        self.inviteLookup?.cancel(); self.query = ""; self.inviteInfo = nil
+        self.agentSummary = nil; self.agentSummaryCache.removeAll()
+        self.inviteLookup?.cancel(); self.inviterLookup?.cancel(); self.query = ""; self.inviteInfo = nil
+        self.inviter = nil
         self.inviteError = nil; self.checkingInvite = false; self.lookedUpToken = nil
         self.error = nil; self.notice = nil; self.feedbackToast = nil
         self.copiedItem = nil
@@ -730,12 +801,20 @@ final class SocialStore: ObservableObject {
     private static let cacheLifetime: TimeInterval = 30
     private static let periodDefaultsKey = "firstlight.activityPeriod"
     private static let supportedPeriods = Set(["24h", "7d", "30d"])
+    private static let metricDefaultsKey = "firstlight.leaderboardMetric"
+    private static let supportedMetrics = Set(["active", "agent", "tokens"])
 
     private static var storedPeriod: String {
         let stored = UserDefaults.standard.string(forKey: self.periodDefaultsKey) ?? "24h"
         return self.supportedPeriods.contains(stored) ? stored : "24h"
     }
 
+    private static var storedMetric: String {
+        let stored = UserDefaults.standard.string(forKey: self.metricDefaultsKey) ?? "active"
+        return self.supportedMetrics.contains(stored) ? stored : "active"
+    }
+
+    private var reachabilityWatch: AnyCancellable?
     private var screenTask: Task<Void, Never>?
     private var trayTask: Task<Void, Never>?
     private var navigationHistory = NativeNavigationHistory<Screen>()
@@ -744,6 +823,7 @@ final class SocialStore: ObservableObject {
     private var groupsCache = NativeResourceCache<String, [NativeGroup]>()
     private var displayedListKey = ""
     private var activityCache = NativeResourceCache<String, NativeActivity>()
+    private var agentSummaryCache = NativeResourceCache<String, NativeAgentSummary>()
     private var requestsCache = NativeResourceCache<String, NativeRequests>()
     private var personalInviteCache = NativeResourceCache<String, NativePersonalInvite>()
     private var directFriendsCache = NativeResourceCache<String, Set<String>>()
@@ -753,15 +833,64 @@ final class SocialStore: ObservableObject {
     private var copyFeedbackTask: Task<Void, Never>?
     private var inviteLookup: Task<Void, Never>?
     private var lookedUpToken: String?
+    private var inviterLookup: Task<Void, Never>?
 
-    private static func leaderboardQuery(tab: String, period: String, limit: Int, offset: Int) -> [String: String?] {
+    private var isInviteDataFresh: Bool {
+        self.personalInviteCache.isFresh("invite", for: Self.cacheLifetime) &&
+            self.requestsCache.isFresh("requests", for: Self.cacheLifetime)
+    }
+
+    private static func leaderboardQuery(
+        tab: String,
+        period: String,
+        metric: String,
+        limit: Int,
+        offset: Int
+    ) -> [String: String?] {
         [
             "period": period,
             "group_id": tab == "friends" ? nil : tab,
             "profiles": "true",
             "limit": String(limit),
             "offset": String(offset),
+            // The server names the metrics after its tables; the app after
+            // what a person sees. Active time is the default and sends nothing.
+            "metric": metric == "agent" ? "agent_minutes" : metric == "tokens" ? "tokens" : nil,
         ]
+    }
+
+    /// Asks who a friend code belongs to, as soon as the field holds one. Own
+    /// code and half-typed input are left alone; a miss simply keeps the code
+    /// on screen, so a wrong code is never dressed up as a person.
+    private func lookUpInviter() {
+        self.inviterLookup?.cancel()
+        guard case let .friendCode(code)? = self.inviteCandidate,
+              code.caseInsensitiveCompare(self.personalInvite?.personalInviteCode ?? "") != .orderedSame
+        else {
+            self.inviter = nil
+            self.checkingInviter = false
+            return
+        }
+        if self.inviter?.code == code { return }
+        self.inviter = nil
+        self.checkingInviter = true
+        self.inviterLookup = Task {
+            defer { if !Task.isCancelled { self.checkingInviter = false } }
+            do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            guard let info: NativeJoinInfo = try? await self.network
+                .request(path: "/api/join/\(code)", method: .get),
+                !Task.isCancelled,
+                case .friendCode(code)? = self.inviteCandidate
+            else { return }
+            self.inviter = info.invite
+        }
+    }
+
+    /// Only a list that failed is fetched again; one that loaded fine before
+    /// the connection dropped is refreshed on its usual clock.
+    private func reloadAfterReconnect() {
+        guard Defaults[.currentUserID] != nil, self.listFailure != nil else { return }
+        if self.screen == .list { Task { await self.refresh(force: true) } }
     }
 
     /// Position along the tab strip: Friends, then the groups in order, then
@@ -779,7 +908,7 @@ final class SocialStore: ObservableObject {
     /// Home back over it.
     private func finishInvite(notice: String, tray: Tray) {
         NativeSession.shared.pendingInvite = nil
-        if Self.inviteTrayEnabled, self.tray != nil {
+        if self.tray != nil {
             self.trayHistory.removeAll()
             self.present(tray, direction: .forward)
         } else {
@@ -823,46 +952,48 @@ final class SocialStore: ObservableObject {
         self.screenLoading = true
         self.screenTask = Task {
             defer { if self.screen == next, !Task.isCancelled { self.screenLoading = false } }
-            do {
-                switch next {
-                case .requests:
-                    try await self.loadRequests()
-                case .connect:
-                    try await self.loadInviteData()
-                case let .person(id):
-                    // The leaderboard already supplies the visible total. Treat
-                    // this fresher detail request as an optional enhancement so
-                    // an empty/transient response never replaces known data with
-                    // a low-level serialization error.
-                    async let details: NativeActivity? = try? self.network.request(
-                        path: "/api/user/activity",
-                        method: .get,
-                        query: ["user_id": id, "period": self.period]
-                    )
-                    async let direct: NativeDirectFriends? = try? self.network.request(
-                        path: "/api/user/direct-friends",
-                        method: .get
-                    )
-                    if let details = await details {
-                        self.activity = details
-                        self.activityCache.insert(details, for: id + self.period)
-                    }
-                    if let connections = await direct {
-                        let ids = Set(connections.directFriendIds)
-                        self.directFriendIDs = ids
-                        self.directFriendsCache.insert(ids, for: "friends")
-                    }
-                default: break
+            // Both requests are optional enhancements to data the list already
+            // supplied, so nothing here throws; a miss just leaves the cache.
+            if case let .person(id) = next {
+                // The leaderboard already supplies the visible total. Treat
+                // this fresher detail request as an optional enhancement so
+                // an empty/transient response never replaces known data with
+                // a low-level serialization error.
+                async let details: NativeActivity? = try? self.network.request(
+                    path: "/api/user/activity",
+                    method: .get,
+                    query: ["user_id": id, "period": self.period]
+                )
+                async let direct: NativeDirectFriends? = try? self.network.request(
+                    path: "/api/user/direct-friends",
+                    method: .get
+                )
+                // Days are cut at the viewer's midnight, so the week's bars
+                // line up with the day the viewer is looking at.
+                async let agents: NativeAgentSummary? = try? self.network.request(
+                    path: "/api/users/\(id)/agent-summary",
+                    method: .get,
+                    query: ["period": self.period, "tz": TimeZone.current.identifier]
+                )
+                if let details = await details {
+                    self.activity = details
+                    self.activityCache.insert(details, for: id + self.period)
                 }
-            } catch {
-                if !Task.isCancelled, self.screen == next { self.error = error.localizedDescription }
+                if let summary = await agents {
+                    self.agentSummary = summary
+                    self.agentSummaryCache.insert(summary, for: id + self.period)
+                }
+                if let connections = await direct {
+                    let ids = Set(connections.directFriendIds)
+                    self.directFriendIDs = ids
+                    self.directFriendsCache.insert(ids, for: "friends")
+                }
             }
         }
     }
 
-    /// The invite surface shows incoming requests and the user's own code, so
-    /// it needs both before it is fully populated. Shared by the old Add
-    /// friends screen and the tray.
+    /// The tray shows incoming requests and the user's own code, so it needs
+    /// both before it is fully populated.
     private func loadInviteData() async throws {
         async let loadedInvite: NativePersonalInvite = self.network
             .request(path: "/api/user/invite-link", method: .get)
@@ -881,12 +1012,12 @@ final class SocialStore: ObservableObject {
     /// place, and an emptied field comes back. Typing anywhere else, or with
     /// the tray closed, moves nothing.
     private func syncCandidateTray() {
-        guard Self.inviteTrayEnabled, let current = self.tray else { return }
+        guard let current = self.tray else { return }
         switch (current, self.inviteCandidate) {
         case let (.home, candidate?):
-            self.pushTray(.candidate(candidate))
-        case let (.candidate(shown), candidate?) where shown != candidate:
-            self.present(.candidate(candidate), direction: .forward)
+            self.pushTray(.candidate(candidate.kind))
+        case let (.candidate(shown), candidate?) where shown != candidate.kind:
+            self.present(.candidate(candidate.kind), direction: .forward)
         case (.candidate, nil):
             self.present(self.trayHistory.pop() ?? .home, direction: .back)
         default:
@@ -904,25 +1035,23 @@ final class SocialStore: ObservableObject {
 
     private func restoreCachedValue(for screen: Screen) {
         switch screen {
-        case .requests:
-            if let cached = self.requestsCache.value(for: "requests") { self.requests = cached }
-        case .connect:
-            if let cached = self.personalInviteCache.value(for: "invite") { self.personalInvite = cached }
-            if let cached = self.requestsCache.value(for: "requests") { self.requests = cached }
         case let .person(id):
             self.activity = self.activityCache.value(for: id + self.period)
+            self.agentSummary = self.agentSummaryCache.value(for: id + self.period)
             if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
         case .list: break
         }
     }
 
+    /// What the tray can show before its own request answers.
+    private func restoreInviteData() {
+        if let cached = self.personalInviteCache.value(for: "invite") { self.personalInvite = cached }
+        if let cached = self.requestsCache.value(for: "requests") { self.requests = cached }
+    }
+
     private func isFresh(_ screen: Screen) -> Bool {
         switch screen {
         case .list: true
-        case .requests: self.requestsCache.isFresh("requests", for: Self.cacheLifetime)
-        case .connect:
-            self.personalInviteCache.isFresh("invite", for: Self.cacheLifetime) &&
-                self.requestsCache.isFresh("requests", for: Self.cacheLifetime)
         case let .person(id):
             self.activityCache.isFresh(id + self.period, for: Self.cacheLifetime) &&
                 self.directFriendsCache.isFresh("friends", for: Self.cacheLifetime)

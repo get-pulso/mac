@@ -1,9 +1,9 @@
 import AppKit
 import Defaults
 
-/// The menu bar shown while `DockPresence` keeps the app in `.regular`. Without it the
-/// bar would carry the app name and nothing else, and text fields would lose Undo and
-/// Cut/Copy/Paste, which reach their first responder through the menu's key equivalents.
+/// The menu bar shown while `DockPresence` keeps the app in `.regular`, and installed at
+/// launch even as a menu bar agent: the bar is not visible then, but Undo and
+/// Cut/Copy/Paste reach the popover's text fields only through the menu's key equivalents.
 @MainActor
 final class MainMenu: NSObject, NSMenuItemValidation {
     // MARK: Internal

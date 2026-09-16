@@ -24,6 +24,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     // MARK: Internal
 
     static let shared = OnboardingWindowController()
+    /// Kept from the first shipped intro so existing installs do not replay it.
     static let introSeenKey = "firstlight.onboarding.opal.introSeen"
 
     private(set) var isPresented = false
@@ -148,7 +149,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
 
     private func updateDesktop(time: Double, finished: Bool) {
         guard self.isPresented, let carrier, let native = nativeWindow else { return }
-        if !finished, self.dimmers.isEmpty {
+        // The real window takes over while the light is still moving; the same
+        // clock keeps running inside it until the light has become the mark.
+        let presentNative = self.playback.readyForNative || finished
+        if !presentNative, self.dimmers.isEmpty {
             native.orderOut(nil)
             for screen in NSScreen.screens {
                 let dimmer = NSWindow(
@@ -178,7 +182,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             }
         }
         self.dimmers.forEach { $0.alphaValue = IntroTiming.dimming(at: time) }
-        guard finished, !self.handingOff else { return }
+        guard presentNative, !self.handingOff, !self.playback.nativePresented else { return }
         self.removeDimmers()
         self.handingOff = true
         let ticket = self.generation
@@ -192,8 +196,8 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
             else { native.orderBack(nil) }
             native.invalidateShadow()
             carrier.orderOut(nil)
-            carrier.contentView = nil // Release the proxy's Metal resources and duplicate form.
-            self.playback.beginWelcome()
+            carrier.contentView = nil // Release the proxy's Metal resources.
+            self.playback.didPresentNative()
             self.defaults.set(true, forKey: Self.introSeenKey)
         }
     }
@@ -223,7 +227,6 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
                         .accessibilityDisplayShouldReduceMotion
                     {
                         self?.finishAnimation()
-                        self?.playback.finishWelcome()
                     }
                 }
             }
