@@ -172,11 +172,15 @@ final class IntroPlayback: ObservableObject {
         self.startedAt = ProcessInfo.processInfo.systemUptime
         self.elapsed = 0
         self.realElapsed = 0
+        self.nextRayHapticAt = 0
         self.onFrame?(self.elapsed, false)
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             guard let self else { return }
+            let previousRealElapsed = self.realElapsed
+            let previousElapsed = self.elapsed
             self.realElapsed = min(IntroTiming.realDuration, ProcessInfo.processInfo.systemUptime - self.startedAt)
             self.elapsed = IntroTiming.shaderTime(atReal: self.realElapsed)
+            self.playHaptics(afterReal: previousRealElapsed, shader: previousElapsed)
             self.onFrame?(self.elapsed, self.finished)
             if self.finished { self.stop() }
         }
@@ -208,6 +212,52 @@ final class IntroPlayback: ObservableObject {
 
     // MARK: Private
 
+    /// The first broad rays appear at 0.08 shader seconds. The swell reaches
+    /// full speed half a second before the native window handoff, where its
+    /// final accent lands. AppKit taps have fixed strength, so cadence carries it.
+    private static let rayHapticStart = 0.08
+    private static let climaxAtReal = IntroTiming.realHandoff - 0.5
+    private static let rayHapticFull = IntroTiming.shaderTime(atReal: IntroPlayback.climaxAtReal)
+    private static let rayHapticSlowInterval = 0.34
+    private static let rayHapticFastInterval = 0.09
+
     private var timer: Timer?
     private var startedAt = 0.0
+    private var nextRayHapticAt = 0.0
+
+    private func playHaptics(afterReal previousRealElapsed: Double, shader previousElapsed: Double) {
+        // A stalled frame must never dump delayed taps into the trackpad.
+        guard self.realElapsed - previousRealElapsed < 0.25 else {
+            self.nextRayHapticAt = self.realElapsed + Self.rayHapticSlowInterval
+            return
+        }
+
+        // Leave room for a distinct final beat instead of firing two taps together.
+        if self.elapsed >= Self.rayHapticStart,
+           self.realElapsed < Self.climaxAtReal - Self.rayHapticFastInterval,
+           self.realElapsed >= self.nextRayHapticAt
+        {
+            let rayDensity = IntroTiming.easeInOut(
+                IntroTiming.unit(Self.rayHapticStart, Self.rayHapticFull, self.elapsed)
+            )
+            // Perceived energy rises sooner than a linear cadence while the
+            // ray field keeps gaining detail all the way to the handoff.
+            let swell = pow(rayDensity, 0.4)
+            let interval = Self.rayHapticSlowInterval
+                + (Self.rayHapticFastInterval - Self.rayHapticSlowInterval) * swell
+            NativeHaptics.introPulse()
+            self.nextRayHapticAt = self.realElapsed + interval
+        }
+
+        if previousRealElapsed < Self.climaxAtReal, self.realElapsed >= Self.climaxAtReal {
+            NativeHaptics.introClimax()
+        }
+
+        if previousElapsed < WelcomeTiming.riseStart, self.elapsed >= WelcomeTiming.riseStart {
+            NativeHaptics.introRiseStarted()
+        }
+        if previousElapsed < WelcomeTiming.riseEnd, self.elapsed >= WelcomeTiming.riseEnd {
+            NativeHaptics.introRiseEnded()
+        }
+    }
 }

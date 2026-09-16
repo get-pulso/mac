@@ -1899,9 +1899,13 @@ struct NativeDashboardView: View {
     }
 
     private func moveGroup(_ id: String, to index: Int) {
+        guard let from = self.store.groups.firstIndex(where: { $0.id == id }),
+              from != index, self.store.groups.indices.contains(index)
+        else { return }
         withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.25, extraBounce: 0)) {
             self.store.moveGroup(id, to: index)
         }
+        NativeHaptics.groupPlaced()
     }
 
     /// The dragged tab follows the pointer; the neighbours it has crossed
@@ -1927,6 +1931,7 @@ struct NativeDashboardView: View {
             dragChanged: { translation in
                 if self.groupDrag == nil {
                     self.groupDrag = GroupDrag(id: id, index: index, translation: translation, target: index)
+                    NativeHaptics.groupPlaced()
                 } else {
                     self.groupDrag?.translation = translation
                 }
@@ -1939,6 +1944,7 @@ struct NativeDashboardView: View {
                     withAnimation(self.reduceMotion ? nil : .snappy(duration: 0.2, extraBounce: 0)) {
                         self.groupDrag?.target = target
                     }
+                    NativeHaptics.groupCrossing()
                 }
             },
             dragEnded: {
@@ -1947,6 +1953,7 @@ struct NativeDashboardView: View {
                     self.groupDrag = nil
                     self.store.moveGroup(id, to: target)
                 }
+                if target != index { NativeHaptics.groupPlaced() }
             }
         )
     }
