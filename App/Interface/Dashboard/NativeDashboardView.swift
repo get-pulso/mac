@@ -87,6 +87,14 @@ struct NativeDashboardView: View {
 
     // MARK: Private
 
+    /// Every row column shares the avatar's vertical centre, so the name, the
+    /// duration and the running app sit on one line whether or not the profile
+    /// carries a second line. The divider starts exactly where the text does.
+    private static let rowHorizontalPadding: CGFloat = 12
+    private static let rowAvatarSize: CGFloat = 40
+    private static let rowAvatarSpacing: CGFloat = 10
+    private static let rowDividerInset = rowHorizontalPadding + rowAvatarSize + rowAvatarSpacing
+
     @ObservedObject private var store = SocialStore.shared
     @ObservedObject private var session = NativeSession.shared
     @Dependency(\.windowManager) private var windowManager
@@ -165,8 +173,7 @@ struct NativeDashboardView: View {
 
             periodPicker
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 10)
+        .padding(.horizontal, Self.rowHorizontalPadding)
         .frame(height: NativeLayout.popoverHeaderHeight)
     }
 
@@ -364,7 +371,7 @@ struct NativeDashboardView: View {
                             store.open(.person(person.id))
                         } label: { personRow(person) }.buttonStyle(.plain)
                         if index < store.people.count - 1 {
-                            Divider().padding(.leading, 65).opacity(0.55)
+                            Divider().padding(.leading, Self.rowDividerInset).opacity(0.55)
                         }
                     }
                     if listPhase == .failedWithContent {
@@ -678,14 +685,14 @@ struct NativeDashboardView: View {
     private func personRow(_ person: NativePerson) -> some View {
         let location = self.profileText(person.location)
         let subtitle = [location, profileText(person.bio)].compactMap { $0 }.joined(separator: " · ")
-        return HStack(spacing: 10) {
+        return HStack(spacing: Self.rowAvatarSpacing) {
             PulsoAvatar(
                 url: person.avatar_url,
                 name: person.displayName,
-                size: 40,
+                size: Self.rowAvatarSize,
                 showsOnlineIndicator: person.id == Defaults[.currentUserID] || person.isActiveNow
             )
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(person.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
@@ -704,11 +711,7 @@ struct NativeDashboardView: View {
                         }
                     }
                 }
-                .frame(
-                    maxWidth: .infinity,
-                    maxHeight: .infinity,
-                    alignment: subtitle.isEmpty ? .leading : .topLeading
-                )
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .trailing, spacing: 2) {
                     AnimatedDuration(minutes: person.active_minutes ?? 0)
@@ -728,13 +731,15 @@ struct NativeDashboardView: View {
                     }
                 }
             }
-            .frame(height: 40)
-        }.padding(.horizontal, 13).padding(.vertical, 10).contentShape(Rectangle())
+            .frame(height: Self.rowAvatarSize)
+        }
+        .padding(.horizontal, Self.rowHorizontalPadding).padding(.vertical, 10)
+        .contentShape(Rectangle())
     }
 
     // Location and bio are the only profile text the list carries. Social links
     // stay on the person's profile. An unfilled profile gets no second line at
-    // all, so the row keeps its single centred title.
+    // all, and the single title stays on the avatar's centre either way.
     private func profileText(_ value: String?) -> String? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
         return value
