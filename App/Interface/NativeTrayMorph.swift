@@ -6,9 +6,23 @@ struct NativeTrayMorph {
     let id: String
     let namespace: Namespace.ID
     var isExpanded: Bool
+    var usesGlass = true
 
     static func animation(isExpanded: Bool, reduceMotion: Bool) -> Animation {
         reduceMotion ? .easeOut(duration: 0.12) : .spring(duration: isExpanded ? 0.24 : 0.18, bounce: 0)
+    }
+}
+
+/// Contains just the floating source and destination, never the scrolling page.
+struct NativeTrayMorphContainer<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: 0) { content() }
+        } else {
+            content()
+        }
     }
 }
 
@@ -20,14 +34,21 @@ struct NativeTraySurface: ViewModifier {
     var backgroundMaterial: Material = .regular
 
     func body(content: Content) -> some View {
-        content.background {
-            // Keep the material in this view's own background. A shared glass
-            // container also collects the list's scroll-edge bars and controls.
-            if let morph, !reduceMotion {
-                surface.matchedGeometryEffect(id: morph.id, in: morph.namespace)
-                    .allowsHitTesting(false)
-            } else {
-                surface.allowsHitTesting(false)
+        if #available(macOS 26.0, *), let morph, morph.usesGlass, !self.reduceTransparency {
+            // The effect owns its foreground, so the material stays behind
+            // the text while the shared glass identity changes its shape.
+            content
+                .glassEffect(.regular, in: .rect(cornerRadius: 16))
+                .glassEffectID(reduceMotion ? nil : morph.id, in: morph.namespace)
+                .glassEffectTransition(reduceMotion ? .identity : .matchedGeometry)
+        } else {
+            content.background {
+                if let morph, !reduceMotion {
+                    surface.matchedGeometryEffect(id: morph.id, in: morph.namespace)
+                        .allowsHitTesting(false)
+                } else {
+                    surface.allowsHitTesting(false)
+                }
             }
         }
     }
@@ -70,7 +91,7 @@ struct NativeTrayMorphButton<Label: View>: View {
             }
             if !morph.isExpanded {
                 restingButton
-                    .transition(.opacity.animation(.easeOut(duration: 0.12)))
+                    .transition(.opacity)
             }
         }
         .allowsHitTesting(!morph.isExpanded)
@@ -80,20 +101,13 @@ struct NativeTrayMorphButton<Label: View>: View {
     // MARK: Private
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     @ViewBuilder private var restingButton: some View {
-        if #available(macOS 26.0, *) {
+        if #available(macOS 26.0, *), morph.usesGlass, !reduceTransparency {
             nativeButton
-                .background {
-                    if !reduceMotion {
-                        // Register the native capsule's exact bounds without
-                        // replacing its glass or collecting any neighbouring UI.
-                        Color.clear
-                            .matchedGeometryEffect(id: morph.id, in: morph.namespace)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                    }
-                }
+                .glassEffectID(reduceMotion ? nil : morph.id, in: morph.namespace)
+                .glassEffectTransition(reduceMotion ? .identity : .matchedGeometry)
         } else {
             Button(action: action) { buttonLabel }
                 .buttonStyle(NativeTrayMorphButtonStyle(morph: morph, prominent: prominent))

@@ -473,20 +473,24 @@ private struct BumpSurface: ViewModifier {
 
     private var controls: some View {
         ZStack(alignment: .bottomTrailing) {
-            if case .person = store.screen, let person = store.selectedPerson,
-               effects.canSend(to: person), store.tray == nil, effects.incoming == nil
-            {
-                outgoingControls
-            }
             if effects.trayOpen {
                 Color(nsColor: .windowBackgroundColor).opacity(0.64)
                     .onTapGesture { closeTray() }
                     .accessibilityLabel("Dismiss bump choices")
                     .transition(.opacity.animation(.easeOut(duration: 0.14)))
             }
-            if effects.trayOpen {
-                tray.padding(8)
-                    .transition(.opacity.animation(.easeOut(duration: 0.12)))
+            NativeTrayMorphContainer {
+                ZStack(alignment: .bottomTrailing) {
+                    if case .person = store.screen, let person = store.selectedPerson,
+                       effects.canSend(to: person), store.tray == nil, effects.incoming == nil
+                    {
+                        outgoingControls
+                    }
+                    if effects.trayOpen {
+                        tray.padding(8)
+                            .transition(.opacity)
+                    }
+                }
             }
         }
         .transaction { if effects.reduceMotion { $0.disablesAnimations = true } }

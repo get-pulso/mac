@@ -777,7 +777,6 @@ struct NativeDashboardView: View {
         HStack(spacing: 8) {
             dashboardSettingsButton
             Spacer()
-            dashboardInviteButton
         }
         .padding(.horizontal, 12)
         .padding(.top, 5)
@@ -1005,19 +1004,33 @@ struct NativeDashboardView: View {
                     .transition(.opacity.animation(.easeOut(duration: 0.14)))
                     .accessibilityHidden(true)
             }
-            if let tray = store.tray {
-                self.inviteTray(tray)
-                    .padding(8)
-                    .transition(self.trayTransition)
+            NativeTrayMorphContainer {
+                ZStack(alignment: .bottom) {
+                    if store.screen == .list {
+                        HStack {
+                            Spacer()
+                            dashboardInviteButton
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.top, 5)
+                        .padding(.bottom, 12)
+                        .frame(height: NativeLayout.peopleFooterHeight)
+                    }
+                    if let tray = store.tray {
+                        self.inviteTray(tray)
+                            .padding(8)
+                            .transition(self.trayTransition)
+                    }
+                }
             }
         }
-        .allowsHitTesting(self.store.tray != nil)
+        .allowsHitTesting(self.store.tray != nil || self.store.screen == .list)
     }
 
     /// The shared surface carries the geometry; its contents keep their size.
     /// Deep links have no visible source and use the same quick fade.
     private var trayTransition: AnyTransition {
-        .opacity.animation(.easeOut(duration: 0.12))
+        .opacity
     }
 
     /// The one field of the flow, sized for a code you read across a room:
@@ -1281,7 +1294,8 @@ struct NativeDashboardView: View {
         NativeTrayMorph(
             id: origin == .footerInvite ? "invite-footer" : "invite-empty",
             namespace: self.inviteMorph,
-            isExpanded: self.store.tray != nil && self.store.trayOrigin == origin
+            isExpanded: self.store.tray != nil && self.store.trayOrigin == origin,
+            usesGlass: origin == .footerInvite
         )
     }
 
