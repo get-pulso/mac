@@ -4,6 +4,7 @@ import SwiftUI
 final class AppRouter: ObservableObject {
     enum Destination: Equatable {
         case login
+        case signInCompletion
         case dashboard
         case settings
     }

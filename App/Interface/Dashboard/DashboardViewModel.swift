@@ -24,7 +24,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func openWebClient() {
-        NSWorkspace.shared.open(URL(string: "https://pulso.sh")!)
+        NSWorkspace.shared.open(AppEnvironment.baseURL)
         self.window.hide()
     }
 

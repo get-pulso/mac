@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Defaults
 import Dependencies
 import SwiftUI
 
@@ -17,15 +18,53 @@ final class WindowManager {
     @MainActor
     func configure() {
         self.prepareWindow()
-        self.statusIconAnimator = StatusIconAnimator()
+        self.statusIconAnimator = StatusIconAnimator(menu: StatusItemMenu(
+            toggle: { [weak self] in
+                guard let self else { return }
+                if self.isVisible { self.hide() } else { self.show() }
+            },
+            open: { [weak self] in self?.show() },
+            invite: { [weak self] in
+                SocialStore.shared.openConnect(.shareMine)
+                self?.show()
+            },
+            beforeMenu: { [weak self] in self?.hide() },
+            settings: { SettingsWindowController.shared.show() },
+            canOpenSettings: { Defaults[.currentUserID] != nil },
+            replayOnboarding: { [weak self] in self?.replayOnboarding() },
+            canReplayOnboarding: { Self.canReplayOnboarding },
+            quit: { NSApp.terminate(nil) }
+        ))
         self.startMouseMonitor()
     }
 
     @MainActor
+    func showWelcome() {
+        self.hide()
+        OnboardingWindowController.shared.show(content: AnyView(LoginView(onboarding: true)))
+    }
+
+    @MainActor
+    func replayOnboarding() {
+        guard Self.canReplayOnboarding else { return }
+        self.hide()
+        OnboardingWindowController.shared.close()
+        OnboardingWindowController.shared.show(content: AnyView(LoginView(onboarding: true)), forceAnimation: true)
+    }
+
+    @MainActor
     func show() {
+        @Dependency(\.appRouter) var router
+        // An active Clerk session can still be resolving its Pulso profile.
+        // That work belongs here, without granting dashboard access early.
+        guard Defaults[.currentUserID] != nil || router.destination == .signInCompletion else {
+            self.showWelcome()
+            return
+        }
+        OnboardingWindowController.shared.close()
         guard let targetWindowPostion, let window else { return }
         window.setFrameTopLeftPoint(targetWindowPostion)
-        window.orderFront(nil)
+        window.makeKeyAndOrderFront(nil)
         self.statusIconAnimator?.highlight()
         NSApp.activate()
         self.visibilitySubject.send(true)
@@ -40,6 +79,11 @@ final class WindowManager {
 
     // MARK: Private
 
+    @MainActor
+    private static var canReplayOnboarding: Bool {
+        !LoginViewModel.shared.busy && !NativeSession.shared.loading && !NativeSession.shared.isCompletingSignIn
+    }
+
     private var visibilitySubject = CurrentValueSubject<Bool, Never>(false)
     private var window: AppWindow?
     private var statusIconAnimator: StatusIconAnimator?
@@ -48,7 +92,7 @@ final class WindowManager {
     @MainActor
     private var targetWindowPostion: NSPoint? {
         guard
-            let button = self.statusIconAnimator?.statusBarButton,
+            let button = statusIconAnimator?.statusBarButton,
             let buttonWindow = button.window,
             let screen = buttonWindow.screen
         else { return nil }
@@ -59,7 +103,7 @@ final class WindowManager {
 
         let visibleFrame = screen.visibleFrame
 
-        let windowWidth: CGFloat = 300
+        let windowWidth: CGFloat = 350
         let cornerRadius: CGFloat = 16
 
         // Calculate Y: align top of window to bottom of status item
@@ -103,19 +147,6 @@ final class WindowManager {
             DispatchQueue.main.async {
                 self.hide()
             }
-        }
-    }
-}
-
-public extension NSStatusBarButton {
-    override func mouseDown(with event: NSEvent) {
-        super.mouseDown(with: event)
-        @Dependency(\.windowManager) var windowManager
-
-        if windowManager.isVisible {
-            windowManager.hide()
-        } else {
-            windowManager.show()
         }
     }
 }

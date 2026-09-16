@@ -43,6 +43,8 @@ final class Updater {
         self.driver.pendingUpdateSubject.value?.actionCallback(.install)
     }
 
+    func checkForUpdates() { self.updater.checkForUpdates() }
+
     func skipUpdate() {
         self.driver.pendingUpdateSubject.value?.actionCallback(.skip)
     }

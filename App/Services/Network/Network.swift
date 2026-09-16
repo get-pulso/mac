@@ -1,4 +1,5 @@
 import Alamofire
+import Defaults
 import Foundation
 
 struct Network {
@@ -35,14 +36,41 @@ struct Network {
         )
     }
 
-    func publishActivity(start: Date, end: Date) async throws -> UpdateResponse {
-        try await self.request(
+    func publishActivity(_ activity: PendingActivity, userID: String) async throws -> UpdateResponse {
+        struct TrackedApp: Encodable {
+            let bundleIdentifier: String
+            let name: String
+            let version: String?
+            let iconPNGBase64: String?
+        }
+        struct Payload: Encodable {
+            let startTime: Date
+            let endTime: Date
+            let clientIntervalId: String
+            let app: TrackedApp?
+        }
+        let app: TrackedApp? = if let bundleIdentifier = activity.appBundleIdentifier,
+                                  let name = activity.appName
+        {
+            TrackedApp(
+                bundleIdentifier: bundleIdentifier,
+                name: name,
+                version: activity.appVersion,
+                iconPNGBase64: activity.appIconPNGBase64
+            )
+        } else {
+            nil
+        }
+        return try await self.request(
             path: "/api/user/activity",
             method: .post,
-            body: [
-                "startTime": start,
-                "endTime": end,
-            ]
+            body: Payload(
+                startTime: activity.startedAt,
+                endTime: activity.endedAt,
+                clientIntervalId: activity.id,
+                app: app
+            ),
+            expectedUserID: userID
         )
     }
 
@@ -62,34 +90,20 @@ struct Network {
         )
     }
 
-    // MARK: Private
-
-    private static let baseURL = URL(string: "https://pulso.sh")!
-
-    private let jsonEncoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private let jsonDecoder: JSONDecoder = {
-        let encoder = JSONDecoder()
-        encoder.dateDecodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private let auth: Auth
-
-    private func request<Response: Decodable>(
+    func request<Response: Decodable>(
         baseURL: URL? = nil,
         path: String,
         method: HTTPMethod,
         auth: Bool = true,
         query: [String: String?]? = nil,
         body: Encodable? = nil,
-        retryCounter: Int = 0
+        retryCounter: Int = 0,
+        expectedUserID: String? = nil
     ) async throws -> Response {
+        try Task.checkCancellation()
         let baseURL = baseURL ?? Self.baseURL
+        let sessionID = await NativeSession.shared.session?.id
+        if let expectedUserID, Defaults[.currentUserID] != expectedUserID { throw CancellationError() }
 
         let url: URL
         if let query {
@@ -107,6 +121,7 @@ struct Network {
         }
         var request = URLRequest(url: url)
         request.httpMethod = method.rawValue
+        request.timeoutInterval = 20
 
         var headers: HTTPHeaders = []
 
@@ -116,6 +131,7 @@ struct Network {
             }
             headers.add(.authorization(bearerToken: token))
         }
+        if let expectedUserID, Defaults[.currentUserID] != expectedUserID { throw CancellationError() }
 
         if let body {
             request.httpBody = try self.jsonEncoder.encode(body)
@@ -123,21 +139,23 @@ struct Network {
         }
 
         request.headers = headers
+        if auth, await NativeSession.shared.session?.id != sessionID { throw CancellationError() }
 
         let task = AF.request(request).serializingData()
 
         let response = await task.response
+        try Task.checkCancellation()
+        if auth, await NativeSession.shared.session?.id != sessionID { throw CancellationError() }
 
-        if response.response?.statusCode == 401 {
+        if auth, response.response?.statusCode == 401 {
             guard retryCounter == 0 else {
-                try? await self.auth.invalidateTokens()
+                await NativeSession.shared.clearAccount()
                 throw URLError(.userAuthenticationRequired)
             }
 
             do {
                 try await self.auth.refreshAccessToken()
             } catch {
-                try? await self.auth.invalidateTokens()
                 throw URLError(.userAuthenticationRequired)
             }
 
@@ -148,11 +166,36 @@ struct Network {
                 auth: auth,
                 query: query,
                 body: body,
-                retryCounter: retryCounter + 1
+                retryCounter: retryCounter + 1,
+                expectedUserID: expectedUserID
             )
         }
 
         let data = try await task.value
+        guard let status = response.response?.statusCode, (200 ..< 300).contains(status) else {
+            let message = (try? self.jsonDecoder.decode(APIError.self, from: data))?.error
+            throw NativeError.message(message ?? "The server could not complete this request.")
+        }
         return try self.jsonDecoder.decode(Response.self, from: data)
     }
+
+    // MARK: Private
+
+    private struct APIError: Decodable { let error: String? }
+
+    private static let baseURL = AppEnvironment.baseURL
+
+    private let jsonEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
+    private let jsonDecoder: JSONDecoder = {
+        let encoder = JSONDecoder()
+        encoder.dateDecodingStrategy = .iso8601
+        return encoder
+    }()
+
+    private let auth: Auth
 }

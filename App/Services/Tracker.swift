@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Defaults
 import Foundation
 import IsCameraOn
 import Logging
@@ -32,6 +33,13 @@ final class Tracker {
             object: nil
         )
 
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(self.handleApplicationActivation(_:)),
+            name: NSWorkspace.didActivateApplicationNotification,
+            object: nil
+        )
+
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(self.handleScreenLock),
@@ -55,12 +63,65 @@ final class Tracker {
         try self.stopTracking()
     }
 
+    @MainActor func resetActivity() async throws {
+        guard let userID = Defaults[.currentUserID] else { throw URLError(.userAuthenticationRequired) }
+        try self.stopTracking()
+        defer { self.startTracking() }
+        // Drain in-flight uploads before deleting history so queued data cannot
+        // reappear after the server confirms a reset.
+        await self.publishingTask?.value
+        guard Defaults[.currentUserID] == userID else { throw CancellationError() }
+        let _: NativeAck = try await self.network.request(
+            path: "/api/user/activity/reset",
+            method: .delete,
+            expectedUserID: userID
+        )
+        try self.storage.deletePendingActivity(for: userID)
+    }
+
     // MARK: Private
 
     private let logger = Logger(label: "pulso.tracker")
     private let storage: Storage
     private let network: Network
     private var timer: Timer?
+    private var publishing = false
+    private var publishingTask: Task<Void, Never>?
+    private var lastExternalApplication: NSRunningApplication?
+
+    private static func iconPNGBase64(_ image: NSImage?) -> String? {
+        guard let image,
+              let bitmap = NSBitmapImageRep(
+                  bitmapDataPlanes: nil,
+                  pixelsWide: 128,
+                  pixelsHigh: 128,
+                  bitsPerSample: 8,
+                  samplesPerPixel: 4,
+                  hasAlpha: true,
+                  isPlanar: false,
+                  colorSpaceName: .deviceRGB,
+                  bytesPerRow: 0,
+                  bitsPerPixel: 0
+              ),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap)
+        else { return nil }
+
+        bitmap.size = NSSize(width: 128, height: 128)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(
+            in: NSRect(x: 0, y: 0, width: 128, height: 128),
+            from: .zero,
+            operation: .copy,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high]
+        )
+        context.flushGraphics()
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = bitmap.representation(using: .png, properties: [:]), data.count <= 256_000 else { return nil }
+        return data.base64EncodedString()
+    }
 
     private func startTracking() {
         if self.timer?.isValid == true {
@@ -97,7 +158,17 @@ final class Tracker {
         self.startTracking()
     }
 
+    @objc private func handleApplicationActivation(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
+            as? NSRunningApplication,
+            self.isTrackable(application)
+        else { return }
+        self.lastExternalApplication = application
+    }
+
     private func heartbeat() throws {
+        guard let userID = Defaults[.currentUserID],
+              !UserDefaults.standard.bool(forKey: "pulso.trackingPaused") else { return }
         self.logger.info("Heartbeat")
 
         let trackedEvents: [CGEventType] = [.mouseMoved, .keyDown, .scrollWheel]
@@ -118,32 +189,106 @@ final class Tracker {
 
         let now = Date.now
         let start = now.addingTimeInterval(-Constants.hearbeatInterval)
-        let activity = PendingActivity(id: start.id, startedAt: start, endedAt: now)
+        let trackedApp = self.trackedApplication()
+        let activity = PendingActivity(
+            id: start.id,
+            startedAt: start,
+            endedAt: now,
+            userID: userID,
+            appBundleIdentifier: trackedApp?.bundleIdentifier,
+            appName: trackedApp?.name,
+            appVersion: trackedApp?.version,
+            appIconPNGBase64: trackedApp?.iconPNGBase64
+        )
         try self.storage.store(activity: activity)
 
-        Task {
-            for activity in try self.storage.pendingActivity() {
-                self.logger.info("Publishing activity \(activity.startedAt) - \(activity.endedAt)")
-                let response = try await self.network.publishActivity(
-                    start: activity.startedAt,
-                    end: activity.endedAt
-                )
+        guard !self.publishing else { return }
+        self.publishing = true
+        self.publishingTask = Task { @MainActor in
+            defer { self.publishing = false }
+            do {
+                for activity in try self.storage.pendingActivity() where activity.userID == userID {
+                    guard Defaults[.currentUserID] == userID else { return }
+                    self.logger.info("Publishing activity \(activity.startedAt) - \(activity.endedAt)")
+                    let response = try await self.network.publishActivity(activity, userID: userID)
 
-                if response.success == true {
-                    self.logger.info("Successfully published activity: \(activity.startedAt) - \(activity.endedAt)")
+                    if response.success == true {
+                        self.logger.info("Successfully published activity: \(activity.startedAt) - \(activity.endedAt)")
+                    }
+                    if let error = response.error {
+                        self.logger.error(
+                            "Failed to publish activity \(activity.startedAt) - \(activity.endedAt)",
+                            metadata: [
+                                "error": .string(error),
+                            ]
+                        )
+                    }
+                    if response.success == true {
+                        self.updateIconCache(for: activity, needsIcon: response.needs_app_icon == true)
+                        try self.storage.deletePendingActivity(with: activity.id)
+                    }
                 }
-                if let error = response.error {
-                    self.logger.error(
-                        "Failed to publish activity \(activity.startedAt) - \(activity.endedAt)",
-                        metadata: [
-                            "error": .string(error),
-                        ]
-                    )
-                }
-                try self.storage.deletePendingActivity(with: activity.id)
+            } catch {
+                self.logger.warning("Activity upload deferred; queued data is retained.")
             }
         }
     }
+
+    private func trackedApplication() -> TrackedApplication? {
+        if let frontmostApplication = NSWorkspace.shared.frontmostApplication,
+           self.isTrackable(frontmostApplication)
+        {
+            self.lastExternalApplication = frontmostApplication
+        }
+
+        guard let application = self.lastExternalApplication,
+              !application.isTerminated,
+              let bundleIdentifier = application.bundleIdentifier,
+              let name = application.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty
+        else { return nil }
+
+        let version = application.bundleURL.flatMap(Bundle.init(url:))?.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String
+        let iconCacheKey = self.iconCacheKey(for: bundleIdentifier)
+        let iconVersion = version ?? "unknown"
+        let needsIcon = Defaults[.uploadedAppIconVersions][iconCacheKey] != iconVersion
+        return TrackedApplication(
+            bundleIdentifier: bundleIdentifier,
+            name: name,
+            version: version,
+            iconPNGBase64: needsIcon ? Self.iconPNGBase64(application.icon) : nil
+        )
+    }
+
+    private func isTrackable(_ application: NSRunningApplication) -> Bool {
+        guard let bundleIdentifier = application.bundleIdentifier else { return false }
+        return bundleIdentifier != Bundle.main.bundleIdentifier && !application.isTerminated
+    }
+
+    private func updateIconCache(for activity: PendingActivity, needsIcon: Bool) {
+        guard let bundleIdentifier = activity.appBundleIdentifier else { return }
+        let cacheKey = self.iconCacheKey(for: bundleIdentifier)
+        var versions = Defaults[.uploadedAppIconVersions]
+        if needsIcon {
+            versions.removeValue(forKey: cacheKey)
+        } else if activity.appIconPNGBase64 != nil {
+            versions[cacheKey] = activity.appVersion ?? "unknown"
+        }
+        Defaults[.uploadedAppIconVersions] = versions
+    }
+
+    private func iconCacheKey(for bundleIdentifier: String) -> String {
+        "\(AppEnvironment.baseURL.host ?? "unknown")|\(bundleIdentifier)"
+    }
+}
+
+private struct TrackedApplication {
+    let bundleIdentifier: String
+    let name: String
+    let version: String?
+    let iconPNGBase64: String?
 }
 
 private extension Tracker {

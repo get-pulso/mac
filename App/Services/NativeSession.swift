@@ -1,0 +1,169 @@
+import AppKit
+import ClerkKit
+import Defaults
+import Dependencies
+import SwiftUI
+
+/// Persists outside the popover so closing it does not discard authentication.
+@MainActor
+final class NativeSession: ObservableObject {
+    // MARK: Internal
+
+    static let shared = NativeSession()
+
+    @Published var ready = false
+    @Published var loading = false
+    @Published var error: String?
+    @Published var revision = 0
+    @Published var pendingInvite: String?
+    @Published private(set) var welcomeAccount: WelcomeAccount?
+    @Published private(set) var isCompletingSignIn = false
+    private(set) var configured = false
+
+    var user: ClerkKit.User? { self.configured ? Clerk.shared.user : nil }
+    var session: Session? { self.configured ? Clerk.shared.session : nil }
+
+    var canContinueFromWelcome: Bool {
+        guard let welcomeAccount else { return false }
+        return self.session?.status == .active && Defaults[.currentUserID] == welcomeAccount.id
+    }
+
+    func start() async {
+        guard !self.loading else { return }
+        self.loading = true
+        self.error = nil
+        defer { loading = false }
+        do {
+            if !self.configured {
+                struct Config: Decodable { let publishableKey: String }
+                let url = AppEnvironment.baseURL.appending(path: "/api/native/config")
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 15
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                    throw NativeError.message("Cannot load sign-in configuration. Check that the Pulso API is running.")
+                }
+                let config = try JSONDecoder().decode(Config.self, from: data)
+                guard config.publishableKey.hasPrefix("pk_")
+                else { throw NativeError.message("Invalid sign-in configuration.") }
+                Clerk.configure(publishableKey: config.publishableKey, options: .init(
+                    redirectConfig: .init(redirectUrl: "pulso://callback", callbackUrlScheme: "pulso")
+                ))
+                self.configured = true
+            }
+            _ = try await Clerk.shared.refreshEnvironment()
+            _ = try await Clerk.shared.refreshClient()
+            self.observeEvents()
+            if self.session?.status == .active {
+                try await self.finishSignIn(presentDashboard: !OnboardingWindowController.shared.isPresented)
+            }
+            self.ready = true
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func token(forceRefresh: Bool = false) async throws -> String? {
+        guard self.configured, self.session?.status == .active else { return nil }
+        let sessionID = self.session?.id
+        let token = try await Clerk.shared.auth.getToken(.init(skipCache: forceRefresh))
+        guard self.session?.id == sessionID else { throw CancellationError() }
+        return token
+    }
+
+    func finishSignIn(presentDashboard: Bool = true) async throws {
+        guard !self.isCompletingSignIn else { return }
+        guard self.session?.status == .active else {
+            throw NativeError.message("Complete the remaining account verification before continuing.")
+        }
+        self.isCompletingSignIn = true
+        self.error = nil
+        defer { isCompletingSignIn = false }
+        @Dependency(\.network) var network
+        @Dependency(\.appRouter) var router
+        @Dependency(\.windowManager) var window
+        let sessionID = self.session?.id
+        // Move to the actual menu-bar panel before any profile request can suspend.
+        // Never paint a completed-account screen or skeleton over the Opal welcome.
+        if presentDashboard {
+            router.move(to: .signInCompletion)
+            window.show()
+        }
+        do {
+            let info = try await network.userInfo()
+            guard self.session?.id == sessionID, self.session?.status == .active else { throw CancellationError() }
+            Defaults[.currentUserID] = info.user.id
+            self.welcomeAccount = WelcomeAccount(
+                id: info.user.id, firstName: self.user?.firstName, fullName: info.user.name,
+                username: self.user?.username, avatarURL: self.user?.imageUrl
+            )
+            self.revision += 1
+            router.move(to: .dashboard)
+            // The panel is already open. If the user dismissed it while loading,
+            // respect that instead of reopening it when the response arrives.
+        } catch {
+            if self.session?.id == sessionID { self.error = error.localizedDescription }
+            throw error
+        }
+    }
+
+    func continueFromWelcome() {
+        guard self.canContinueFromWelcome else { return }
+        @Dependency(\.windowManager) var window
+        window.show()
+    }
+
+    func signOut() async throws {
+        if self.configured { try await Clerk.shared.auth.signOut() }
+        self.clearAccount()
+    }
+
+    func clearAccount() {
+        Defaults[.currentUserID] = nil
+        self.welcomeAccount = nil
+        LoginViewModel.shared.step = .email
+        LoginViewModel.shared.password = ""
+        LoginViewModel.shared.code = ""
+        @Dependency(\.storage) var storage
+        @Dependency(\.appRouter) var router
+        try? storage.cleanFriendsStore()
+        SettingsWindowController.shared.close()
+        SocialStore.shared.reset()
+        self.revision += 1
+        router.move(to: .login)
+        @Dependency(\.windowManager) var window
+        window.show()
+    }
+
+    func handle(_ url: URL) async {
+        if url.scheme == "pulso", url.host == "invite" || url.host == "join" {
+            self.pendingInvite = url.absoluteString
+            @Dependency(\.windowManager) var window
+            window.show()
+            return
+        }
+        guard self.configured else { return }
+        do {
+            if try await Clerk.shared.handle(url), self.session?.status == .active { try await self.finishSignIn() }
+        } catch { self.error = error.localizedDescription }
+    }
+
+    // MARK: Private
+
+    private var events: Task<Void, Never>?
+
+    private func observeEvents() {
+        guard self.events == nil else { return }
+        self.events = Task { [weak self] in
+            for await event in Clerk.shared.auth.events {
+                guard let self else { return }
+                revision += 1
+                switch event {
+                case .signedOut,
+                     .accountDeleted: clearAccount()
+                case let .sessionChanged(_, next):
+                    if next == nil || next?.status == .revoked || next?.status == .expired { clearAccount() }
+                default: break
+                }
+            }
+        }
+    }
+}

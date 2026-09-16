@@ -8,20 +8,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Internal
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if OnboardingPreview.showIfRequested() { return }
+        #endif
+        Defaults[.currentUserID] = nil
         self.tracker.activate()
-        self.updater.start()
+        if !AppEnvironment.isLocalBackend { self.updater.start() }
+        let appearance = UserDefaults.standard.string(forKey: "pulso.appearance") ?? "system"
+        NSApp.appearance = appearance == "system" ? nil : NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
         Defaults[.sessionCounter] += 1
         Task {
-            if await self.auth.hasToken {
-                // cleaning auth from previos installations
-                if Defaults[.sessionCounter] == 1 {
-                    try? await self.auth.invalidateTokens()
-                    self.appRouter.move(to: .login)
-                } else {
-                    self.appRouter.move(to: .dashboard)
-                }
-            } else {
-                self.appRouter.move(to: .login)
+            self.appRouter.move(to: .login)
+            await NativeSession.shared.start()
+            // A restored session stays on the welcome's "Continue as" action;
+            // new Google sign-in still opens the menu bar on completion.
+            if Defaults[.currentUserID] == nil, !OnboardingWindowController.shared.hasPresentedThisLaunch {
+                self.windowManager.show()
             }
 
             // observing logout
@@ -31,11 +33,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                 await MainActor.run {
                     self.appRouter.move(to: .login)
+                    self.windowManager.show()
                 }
             }
         }
 
         self.windowManager.configure()
+        self.windowManager.showWelcome()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        OnboardingWindowController.shared.close()
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { Task { await NativeSession.shared.handle(url) } }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        self.windowManager.show()
+        return true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        SettingsWindowController.shared.confirmTermination() ? .terminateNow : .terminateCancel
     }
 
     // MARK: Private

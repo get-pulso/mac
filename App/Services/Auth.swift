@@ -14,16 +14,25 @@ actor Auth {
         (try? self.keychain.get(Keys.refreshToken.rawValue)) != nil
     }
 
-    func authToken() throws -> String? {
-        try self.keychain.get(Keys.jwtToken.rawValue)
+    func authToken() async throws -> String? {
+        if await NativeSession.shared.configured {
+            return try await NativeSession.shared.token()
+        }
+        return try self.keychain.get(Keys.jwtToken.rawValue)
     }
 
     func refreshAccessToken() async throws {
+        if await NativeSession.shared.configured {
+            _ = try await NativeSession.shared.token(forceRefresh: true)
+            return
+        }
         guard let refreshToken = try self.keychain.get(Keys.refreshToken.rawValue) else {
             return
         }
 
-        var request = URLRequest(url: URL(string: "https://pulso.sh/api/user/refresh-token")!)
+        var request = URLRequest(
+            url: AppEnvironment.baseURL.appending(path: "/api/user/refresh-token")
+        )
         request.method = .post
         request.headers = [
             .contentType("application/json"),
@@ -44,7 +53,8 @@ actor Auth {
         try self.keychain.set(refreshToken, key: Keys.refreshToken.rawValue)
     }
 
-    func invalidateTokens() throws {
+    func invalidateTokens() async throws {
+        try await NativeSession.shared.signOut()
         try self.keychain.remove(Keys.jwtToken.rawValue)
         try self.keychain.remove(Keys.refreshToken.rawValue)
         self.invalidationSubject.send()

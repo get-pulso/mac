@@ -16,6 +16,10 @@ final class AppWindow: NSWindow {
         self.setupLayout()
     }
 
+    // MARK: Internal
+
+    override var canBecomeKey: Bool { true }
+
     // MARK: Private
 
     private let appView: AppView

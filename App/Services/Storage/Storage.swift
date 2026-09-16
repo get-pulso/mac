@@ -32,6 +32,13 @@ final class Storage {
         }
     }
 
+    func deletePendingActivity(for userID: String) throws {
+        try self.write(to: .activity) { realm in
+            let records = realm.objects(PendingActivityObject.self).where { $0.userID == userID }
+            realm.delete(records)
+        }
+    }
+
     // MARK: Friends
 
     func friendsStream(filter: TimeFilter) -> AnyPublisher<[Friend], Error> {
@@ -165,8 +172,8 @@ private extension Realm.Configuration {
     static let activity: Realm.Configuration = .init(
         fileURL: URL.applicationSupportDirectory.appending(path: "Activity.realm"),
         encryptionKey: nil,
-        schemaVersion: 1,
-        deleteRealmIfMigrationNeeded: true,
+        schemaVersion: 3,
+        migrationBlock: { _, _ in },
         objectTypes: [
             PendingActivityObject.self,
         ]

@@ -3,6 +3,9 @@ configs:
   Debug: debug
   Release: release    
 packages:
+  Clerk:
+    url: https://github.com/clerk/clerk-ios.git
+    exactVersion: 1.5.4
   Alamofire:
     url: https://github.com/Alamofire/Alamofire.git
     exactVersion: 5.10.2
@@ -26,10 +29,10 @@ packages:
     exactVersion: 1.2.1
   Nuke:
     url: https://github.com/kean/Nuke.git
-    exactVersion: 12.8.0
+    exactVersion: 13.0.6
   Realm:
     url: https://github.com/realm/realm-swift.git
-    exactVersion: 20.0.2
+    exactVersion: 20.0.5
   WindowAnimation:
     url: https://github.com/Lakr233/WindowAnimation.git
     exactVersion: 1.0.5
@@ -47,7 +50,14 @@ targets:
         excludes:
           - Resources/Info.plist
           - Resources/Pulso.entitlements
+          - Resources/OnboardingShaders
+      # Runtime Metal compilation; folder resource avoids an optional Metal-toolchain build step.
+      - path: App/Resources/OnboardingShaders
+        type: folder
+        buildPhase: resources
     dependencies:
+      - package: Clerk
+        product: ClerkKit
       - package: Alamofire
       - package: Defaults
       - package: Dependencies
@@ -65,15 +75,44 @@ targets:
       - package: Sparkle
       - package: WindowAnimation
     preBuildScripts:
+      - name: Require Developer ID signing
+        basedOnDependencyAnalysis: False
+        script: |
+                expected_identity="Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
+                expected_hash="8860656E61AD605EBC00898C674E0D8484E2B94D"
+                if [ "${DEVELOPMENT_TEAM:-}" != "25UG4QYN9F" ] ||
+                   [ "${CODE_SIGNING_ALLOWED:-NO}" != "YES" ] ||
+                   [ "${CODE_SIGNING_REQUIRED:-NO}" != "YES" ] ||
+                   { [ "${CODE_SIGN_IDENTITY:-}" != "$expected_identity" ] &&
+                     [ "${CODE_SIGN_IDENTITY:-}" != "$expected_hash" ]; }; then
+                  echo "error: Pulso must be signed with $expected_identity. Use Scripts/run-local-signed.sh."
+                  exit 1
+                fi
+                if ! security find-identity -v -p codesigning | grep -F "$expected_identity" >/dev/null; then
+                  echo "error: Missing signing identity: $expected_identity"
+                  exit 1
+                fi
       - name: SwiftFormat
         basedOnDependencyAnalysis: False
         script: |
-                ~/bin/swiftformat --swiftversion 5.10 --config Scripts/.swiftformat "${SRCROOT}/App"
+                if [ "${PULSO_SKIP_SWIFTFORMAT:-NO}" != "YES" ]; then
+                  ~/bin/swiftformat --swiftversion 5.10 --config Scripts/.swiftformat "${SRCROOT}/App"
+                fi
     settings:
+      configs:
+        Debug:
+          PULSO_API_BASE_URL: http://localhost:3001
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
+          OTHER_CODE_SIGN_FLAGS: --timestamp=none
+        Release:
+          PULSO_API_BASE_URL: https://pulso-wheat-six.vercel.app
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
       base:
         MARKETING_VERSION: 0.1.0
         CURRENT_PROJECT_VERSION: 4
-        DEVELOPMENT_TEAM: XSCH3APH3M
+        DEVELOPMENT_TEAM: 25UG4QYN9F
         SWIFT_VERSION: 5
         SDKROOT: macosx
         CLANG_ENABLE_MODULES: YES

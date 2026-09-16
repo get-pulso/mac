@@ -9,8 +9,10 @@ import SwiftUI
 final class StatusIconAnimator {
     // MARK: Lifecycle
 
-    init() {
+    init(menu: StatusItemMenu) {
+        self.menu = menu
         self.statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        menu.attach(to: self.statusBarItem)
         self.observeLiveUsers()
         self.startAnimationTimer()
     }
@@ -42,6 +44,7 @@ final class StatusIconAnimator {
     private static let maxAvatars = 3
 
     private var statusBarItem: NSStatusItem
+    private let menu: StatusItemMenu
     private var iconFrames: [NSImage] = []
     private var iconFrameIndex: Int = 0
     private var iconTimer: Timer?
