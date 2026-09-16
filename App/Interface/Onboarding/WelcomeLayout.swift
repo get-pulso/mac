@@ -27,8 +27,13 @@ enum WelcomeLayout {
 
     /// The header line the pair rises to, measured from the top.
     static let headerCenterY: CGFloat = 44
-    /// The mark's size once the pair has risen into the header.
-    static let headerMarkSide: CGFloat = 40
+    /// The mark's size once the pair has risen into the header. The mark is
+    /// held a little under the pair's own shrink, so the name reads as the
+    /// header and the mark sits beside it rather than over it.
+    static let headerMarkSide: CGFloat = 30
+    /// What the name and the gap beside it shrink to in the header. The mark
+    /// has its own header size, so this is not read from it.
+    static let headerScale: CGFloat = 40 / RayLogoTiming.side
     static let gap: CGFloat = 16
     static let nameFontSize: CGFloat = 42
     static let nameTracking: CGFloat = -1.5
@@ -39,14 +44,15 @@ enum WelcomeLayout {
     /// The mark settles in the centre; the name slides out from behind it to
     /// the right through a soft transparent edge, last letters first, while
     /// the pair stays centred; then the pair rises to the header line and
-    /// shrinks, and stays there.
+    /// shrinks — the mark a little more than the name — and stays there.
     static func frame(at time: Double, in panel: CGSize) -> Frame {
         let reveal = CGFloat(WelcomeTiming.nameProgress(at: time))
         let rise = CGFloat(WelcomeTiming.riseProgress(at: time))
-        let scale = 1 + (self.headerMarkSide / RayLogoTiming.side - 1) * rise
+        let scale = 1 + (self.headerScale - 1) * rise
+        let markScale = 1 + (self.headerMarkSide / RayLogoTiming.side - 1) * rise
         let centerY = panel.height / 2 + (self.headerCenterY - panel.height / 2) * rise
         let nameWidth = self.nameWidth * scale
-        let markSide = RayLogoTiming.side * scale
+        let markSide = RayLogoTiming.side * markScale
         let gapWidth = self.gap * scale
         let total = markSide + (gapWidth + nameWidth) * reveal
         let left = panel.width / 2 - total / 2
