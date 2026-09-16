@@ -444,6 +444,7 @@ struct NativeSettingsSidebar: View {
                             name: session.user?.firstName ?? "Account",
                             size: 28
                         )
+                        .overlay { NativeSettingsAvatarBorder() }
                         VStack(alignment: .leading, spacing: 2) {
                             Text(session.user?.firstName ?? "Your account").lineLimit(1)
                             Text("Account").font(.system(size: 11)).foregroundStyle(.secondary)

@@ -7,7 +7,14 @@ enum NativeStatusMenuChecks {
     @MainActor static func main() {
         _ = NSApplication.shared
         var checks = 0
-        func expect(_ value: Bool) { precondition(value); checks += 1 }
+        func expect(
+            _ value: @autoclosure () -> Bool,
+            file: StaticString = #file,
+            line: UInt = #line
+        ) {
+            checks += 1
+            precondition(value(), "Status menu check \(checks) failed", file: file, line: line)
+        }
         var opened = 0, invited = 0, settings = 0, replayed = 0, quit = 0
         var signedIn = false
         var canReplay = true
@@ -25,7 +32,8 @@ enum NativeStatusMenuChecks {
         expect(!menu.items[1].isEnabled && !menu.items[2].isEnabled)
         expect(menu.items[3].isSeparatorItem)
         expect(menu.items[2].keyEquivalent == "," && menu.items[6].keyEquivalent == "q")
-        expect(menu.items[2].image?.size == .zero)
+        expect(menu.items[2].image == nil) // No automatic gear or leading image column.
+        expect(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { $0.image == nil })
         menu.performActionForItem(at: 0)
         expect(opened == 1)
         menu.performActionForItem(at: 4)

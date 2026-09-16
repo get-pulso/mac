@@ -60,8 +60,9 @@ struct NativeSettingsChecks {
         let well = cell.subviews.compactMap { $0 as? NeutralSettingsIconWell }.first!
         precondition(well.frame.minX == 0 && well.frame.width == 20)
         precondition(NeutralSettingsIconWell.borderWidth == 0.5)
-        precondition(NeutralSettingsIconWell.borderTopAlpha > 0.3)
-        precondition(NeutralSettingsIconWell.borderBottomAlpha == 0)
+        precondition(NeutralSettingsIconWell.borderTopOpacity == 0.12)
+        precondition(NeutralSettingsIconWell.borderBottomOpacity == 0.025)
+        precondition(NativeSettingsBorderStyle.surfaceOpacity == 0.04)
         let image = cell.subviews.compactMap { $0 as? NSImageView }.first!
         precondition(image.contentTintColor == .labelColor)
         precondition(cell.constraints.contains { constraint in

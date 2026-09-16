@@ -49,11 +49,11 @@ final class StatusItemMenu: NSObject {
         let invitation = self.item("Invite a Friend", action: #selector(self.openInvite))
         invitation.isEnabled = self.canOpenSettings()
         menu.addItem(invitation)
-        let preferences = self.item("Settings…", action: #selector(self.openSettings), key: ",")
+        // `openSettings` is a private AppKit convention that injects a gear
+        // image and reserves a leading menu column. Use a neutral selector so
+        // this item aligns with the other text-only status-menu actions.
+        let preferences = self.item("Settings…", action: #selector(self.showSettings), key: ",")
         preferences.isEnabled = self.canOpenSettings()
-        // macOS can decorate a conventional Settings item even when image is
-        // nil. A zero-sized image opts out without introducing custom menu UI.
-        preferences.image = NSImage(size: .zero)
         menu.addItem(preferences)
         menu.addItem(.separator())
         let replay = self.item("Replay onboarding", action: #selector(self.replayWelcome))
@@ -100,7 +100,7 @@ final class StatusItemMenu: NSObject {
 
     @objc private func openPulso() { self.open() }
     @objc private func openInvite() { if self.canOpenSettings() { self.invite() } }
-    @objc private func openSettings() { if self.canOpenSettings() { self.settings() } }
+    @objc private func showSettings() { if self.canOpenSettings() { self.settings() } }
     @objc private func replayWelcome() { if self.canReplayOnboarding() { self.replayOnboarding() } }
     @objc private func quitPulso() { self.quit() }
 }

@@ -1,6 +1,31 @@
 import AppKit
 import SwiftUI
 
+enum NativeSettingsBorderStyle {
+    static let width: CGFloat = 0.5
+    static let topOpacity: CGFloat = 0.12
+    static let bottomOpacity: CGFloat = 0.025
+    static let surfaceOpacity: CGFloat = 0.04
+}
+
+struct NativeSettingsAvatarBorder: View {
+    var body: some View {
+        Circle().stroke(
+            LinearGradient(
+                colors: [
+                    Color.primary.opacity(NativeSettingsBorderStyle.topOpacity),
+                    Color.primary.opacity(NativeSettingsBorderStyle.bottomOpacity),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            ),
+            lineWidth: NativeSettingsBorderStyle.width
+        )
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+}
+
 /// AppKit keeps keyboard selection and accessibility; only its accent-colored
 /// selection painting is replaced. No system-wide accent preference is changed.
 struct NeutralSettingsList: NSViewRepresentable {
@@ -130,9 +155,9 @@ final class NeutralSettingsCell: NSTableCellView {
 }
 
 final class NeutralSettingsIconWell: NSView {
-    static let borderWidth: CGFloat = 0.5
-    static let borderTopAlpha: CGFloat = 0.32
-    static let borderBottomAlpha: CGFloat = 0
+    static let borderWidth = NativeSettingsBorderStyle.width
+    static let borderTopOpacity = NativeSettingsBorderStyle.topOpacity
+    static let borderBottomOpacity = NativeSettingsBorderStyle.bottomOpacity
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -146,7 +171,7 @@ final class NeutralSettingsIconWell: NSView {
             xRadius: 5 - inset,
             yRadius: 5 - inset
         )
-        NSColor.labelColor.withAlphaComponent(0.07).setFill()
+        NSColor.labelColor.withAlphaComponent(NativeSettingsBorderStyle.surfaceOpacity).setFill()
         path.fill()
 
         let outer = NSBezierPath(
@@ -167,8 +192,8 @@ final class NeutralSettingsIconWell: NSView {
         NSGraphicsContext.saveGraphicsState()
         border.addClip()
         NSGradient(
-            starting: NSColor.labelColor.withAlphaComponent(Self.borderTopAlpha),
-            ending: NSColor.labelColor.withAlphaComponent(Self.borderBottomAlpha)
+            starting: NSColor.labelColor.withAlphaComponent(Self.borderTopOpacity),
+            ending: NSColor.labelColor.withAlphaComponent(Self.borderBottomOpacity)
         )?.draw(
             from: NSPoint(x: self.bounds.midX, y: self.bounds.maxY),
             to: NSPoint(x: self.bounds.midX, y: self.bounds.minY),
