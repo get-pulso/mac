@@ -104,13 +104,13 @@ struct NativeSettingsView: View {
                     .nativeSettingsActionButton()
             }.padding(.vertical, 6)
             if ["website", "twitter", "telegram"].contains(where: { !model.metadata($0).isEmpty }) {
-                panel("Links") {
+                panel {
                     profileLink("Website", raw: model.metadata("website"))
                     profileLink("X", raw: model.metadata("twitter"), host: "x.com")
                     profileLink("Telegram", raw: model.metadata("telegram"), host: "t.me")
                 }
             }
-            panel("Account") {
+            panel {
                 info("Email", value: session.user?.primaryEmailAddress?.emailAddress ?? "")
                 LabeledContent("Friend code") {
                     HStack(spacing: 8) {
@@ -143,15 +143,13 @@ struct NativeSettingsView: View {
             .nativeSettingsActionButton()
             .disabled(model.busy)
         case .general:
-            panel("Appearance") {
-                Picker("Theme", selection: $appearance) {
-                    Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark")
-                }
-            }
-            panel("Startup") {
+            panel {
                 Toggle("Open Pulso at login", isOn: launchAtLoginBinding)
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                Picker("Theme", selection: $appearance) {
+                    Text("System").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark")
+                }
                 if launchAtLoginStatus == .requiresApproval {
                     Text("Pulso is disabled in Login Items. Allow it in System Settings to start automatically.")
                         .font(.callout)
@@ -162,7 +160,7 @@ struct NativeSettingsView: View {
                     NativeInlineError(message: launchAtLoginError)
                 }
             }
-            panel("Activity") {
+            panel {
                 Picker("Activity period", selection: activityPeriod) {
                     Text("24 hours").tag("24h")
                     Text("7 days").tag("7d")
@@ -189,7 +187,7 @@ struct NativeSettingsView: View {
             Button("Quit Pulso") { NSApp.terminate(nil) }
                 .nativeSettingsActionButton()
         case .security:
-            panel("Sign-in") {
+            panel {
                 info("Sign-in method", value: "Google")
                 if let google = session.user?.externalAccounts.first(where: {
                     $0.provider == "google" || $0.provider == "oauth_google"
@@ -240,7 +238,7 @@ struct NativeSettingsView: View {
                     .disabled(model.busy)
                 }
             }
-            panel("Account access") {
+            panel {
                 Button("Active sessions") { model.navigate(.sessions) }
                     .nativeSettingsActionButton()
             }
@@ -252,7 +250,7 @@ struct NativeSettingsView: View {
                     .nativeSettingsActionButton()
             }
         case .sessions:
-            panel("Signed-in devices", loading: model.sessionsLoading && model.sessionsLoaded) {
+            panel(loading: model.sessionsLoading && model.sessionsLoaded) {
                 if model.sessionsLoading, !model.sessionsLoaded {
                     NativeLabeledRowsSkeleton(rows: 2)
                 } else {
@@ -294,7 +292,7 @@ struct NativeSettingsView: View {
         case .groups:
             EmptyView() // Groups owns its form and navigation within this same detail pane.
         case .about:
-            panel("Pulso") {
+            panel {
                 info("Version", value: version)
                 info("API", value: AppEnvironment.baseURL.absoluteString)
                 Text("Friends and activity in your menu bar.").foregroundStyle(.secondary)
@@ -396,19 +394,23 @@ struct NativeSettingsView: View {
         )
     }
 
-    private func panel(
-        _ title: String,
+    /// Sections carry no titles: the sidebar selection already names the screen,
+    /// and rows are self-describing. A header appears only to host the refresh spinner.
+    @ViewBuilder private func panel(
         loading: Bool = false,
         @ViewBuilder content: () -> some View
     ) -> some View {
-        Section {
-            content()
-        } header: {
-            HStack {
-                Text(title)
-                Spacer()
-                NativeProgress(active: loading, label: "Refreshing \(title.lowercased())")
+        if loading {
+            Section {
+                content()
+            } header: {
+                HStack {
+                    Spacer()
+                    NativeProgress(active: true, label: "Refreshing")
+                }
             }
+        } else {
+            Section { content() }
         }
     }
 
@@ -524,8 +526,16 @@ struct NativeSettingsSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            NativeSearchField(text: $model.search).frame(height: 22)
-                .padding(.horizontal, 10).padding(.top, 10)
+            NativeSearchField(text: $model.search) {
+                if let first = sections.first { model.navigate(first) }
+            }
+            .frame(height: 22)
+            .padding(.horizontal, 10).padding(.top, 10)
+            .onChange(of: sections) { _, sections in
+                // Typing narrows the sidebar; keep the detail pane on a visible section.
+                guard let first = sections.first, !sections.contains(model.route.section) else { return }
+                model.navigate(first, keepingSearch: true)
+            }
             if sections.contains(.account) {
                 Button { model.navigate(.account) } label: {
                     HStack(spacing: 8) {
@@ -577,8 +587,6 @@ struct NativeSettingsSidebar: View {
     @ObservedObject private var session = NativeSession.shared
 
     private var sections: [NativeSettingsModel.Section] {
-        NativeSettingsModel.Section.allCases.filter {
-            model.search.isEmpty || ($0.rawValue + " " + $0.keywords).localizedCaseInsensitiveContains(model.search)
-        }
+        NativeSettingsModel.Section.allCases.filter { model.search.isEmpty || $0.matches(model.search) }
     }
 }

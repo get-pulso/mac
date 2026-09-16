@@ -140,6 +140,9 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         )
         window.contentViewController = split
         window.title = model.title
+        // The sidebar selection names the screen; the title stays only for the
+        // Window menu and accessibility, like Raycast's settings.
+        window.titleVisibility = .hidden
         window.toolbarStyle = NativeLayout.settingsToolbarStyle
         window.contentMinSize = NativeLayout.settingsMinimumSize
         window.isReleasedWhenClosed = false

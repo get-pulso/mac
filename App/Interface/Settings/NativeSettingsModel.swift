@@ -32,13 +32,21 @@ final class NativeSettingsModel: ObservableObject {
 
         var keywords: String {
             switch self {
-            case .account: "profile name username photo avatar bio location friend code"
-            case .general: "appearance theme dark light startup launch login tracking pause quit"
-            case .groups: "friends members invite create rename leaderboard"
-            case .security: "password email mfa two factor authenticator delete account"
-            case .sessions: "devices sign out revoke login"
-            case .about: "version updates"
+            case .account: "profile name username photo avatar bio location friend code website links sign out"
+            case .general: "appearance theme dark light system startup launch login activity period tracking pause history clear quit"
+            case .groups: "friends members invite link create rename leaderboard"
+            case .security: "sign-in google password email mfa two factor authenticator recovery backup codes delete account"
+            case .sessions: "devices mac active sign out revoke"
+            case .about: "version updates api"
             }
+        }
+
+        /// Every whitespace-separated word of the query must appear in the
+        /// section title or keywords, so "dark theme" finds General.
+        func matches(_ query: String) -> Bool {
+            let haystack = self.rawValue + " " + self.keywords
+            return query.split(whereSeparator: \.isWhitespace)
+                .allSatisfy { haystack.localizedCaseInsensitiveContains($0) }
         }
     }
 
@@ -119,7 +127,14 @@ final class NativeSettingsModel: ObservableObject {
         Clerk.shared.environment?.userSettings.attributes[name]?.enabled == true
     }
 
-    func navigate(_ section: Section, page: String = "", groupsPage: NativeGroupsPage = .list) {
+    /// `keepingSearch` follows the sidebar filter to its first match without
+    /// clearing the query the person is still typing.
+    func navigate(
+        _ section: Section,
+        page: String = "",
+        groupsPage: NativeGroupsPage = .list,
+        keepingSearch: Bool = false
+    ) {
         let next = Route(section: section, page: page, groupsPage: groupsPage)
         guard next != self.route else { return }
         guard self.confirmLeavingProfile() else { self.objectWillChange.send(); return }
@@ -127,7 +142,8 @@ final class NativeSettingsModel: ObservableObject {
             self.history = Array(self.history.prefix(self.historyIndex + 1)) + [next]
             self.historyIndex = self.history.count - 1
         }
-        self.route = next; self.search = ""; self.error = nil; self.notice = nil
+        self.route = next; self.error = nil; self.notice = nil
+        if !keepingSearch { self.search = "" }
         self.password = ""; self.currentPassword = ""; self.code = ""; self.confirmation = ""
         if page == "edit" { self.loadProfile() }
         if section == .sessions { self.refreshSessions() }

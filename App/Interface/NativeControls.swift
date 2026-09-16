@@ -436,13 +436,23 @@ struct NativeSearchField: NSViewRepresentable {
         func controlTextDidChange(_ notification: Notification) {
             if let field = notification.object as? NSSearchField { self.parent.text = field.stringValue }
         }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            guard selector == #selector(NSResponder.insertNewline(_:)), let onSubmit = self.parent.onSubmit
+            else { return false }
+            onSubmit()
+            return true
+        }
     }
 
     @Binding var text: String
+    /// Return in the field. Nil leaves the key to the default responder chain.
+    var onSubmit: (() -> Void)?
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
-        field.placeholderString = "Search settings"
+        // The field sits at the top of the settings sidebar; "settings" is implied.
+        field.placeholderString = "Search"
         field.controlSize = .regular
         field.font = .systemFont(ofSize: NSFont.systemFontSize)
         field.delegate = context.coordinator

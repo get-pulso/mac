@@ -49,7 +49,7 @@ struct NativeGroupsSettingsView: View {
 
     private var groupList: some View {
         Group {
-            Section("Your groups") {
+            Section {
                 if model.groups.isEmpty {
                     Text("No groups yet. Create one to get started.").foregroundStyle(.secondary)
                 } else {
@@ -78,7 +78,7 @@ struct NativeGroupsSettingsView: View {
         Group {
             Section {
                 nameField
-            } header: { Text("Group details") } footer: {
+            } footer: {
                 Text("Only members can see activity in this group.")
             }
             HStack {
@@ -94,7 +94,7 @@ struct NativeGroupsSettingsView: View {
 
     @ViewBuilder private var groupDetails: some View {
         if let members = model.members {
-            Section("Group details") {
+            Section {
                 if members.group.is_user_creator {
                     nameField
                     HStack {
@@ -106,7 +106,7 @@ struct NativeGroupsSettingsView: View {
                     LabeledContent("Group name", value: members.group.name)
                 }
             }
-            Section("Invitation") {
+            Section {
                 Picker("Link can be used", selection: $model.usageLimit) {
                     Text("Once").tag(1)
                     Text("5 times").tag(5)
@@ -202,7 +202,7 @@ struct NativeGroupsSettingsView: View {
                         }.toggleStyle(.checkbox).padding(.vertical, 2)
                     }
                 }
-            } header: { Text("Your friends") } footer: { Text("Select friends to add to this group.") }
+            } footer: { Text("Select friends to add to this group.") }
             HStack {
                 Spacer()
                 Button("Cancel") { navigate(.details(id)) }
