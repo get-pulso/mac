@@ -10,6 +10,8 @@ struct RayLogoUniforms {
     var timing: SIMD4<Float>
     /// Direction, brightness, diagnostic lamp-turn override (-1 live), collection end.
     var ending: SIMD4<Float>
+    /// Exit of the settled mark: blur progress, blur mip levels, fade, unused.
+    var exit: SIMD4<Float>
 }
 
 /// Shader seconds. The whole living field condenses into the mark between
@@ -17,22 +19,31 @@ struct RayLogoUniforms {
 enum RayLogoTiming {
     static let start = 2.05
     static let gatherEnd = 3.15
-    static let pigmentStart = 3.17
+    /// Original pigment replaces the collected light as soon as it has
+    /// settled; the crisp asset is on screen from `pigmentEnd`, well before
+    /// the welcome starts.
+    static let pigmentStart = 3.15
+    static let pigmentEnd = 3.32
     static let end = 3.60
-    static let side: CGFloat = 92
+    /// Sized to sit with the 44 pt welcome title, not above it.
+    static let side: CGFloat = 72
     /// Screen azimuth of the mark's fan. Must equal `logoMarkAzimuth` in Waves.metal.
     static let direction = 45.0
     /// Opacity of the collected light over the window surface, before pigment.
     static let brightness = 0.50
     /// Collection start, pigment end, pigment start, pigment start: the Soft finish.
-    static let soft = SIMD4<Float>(2.05, 3.60, 3.17, 3.17)
+    static let soft = SIMD4<Float>(2.05, Float(pigmentEnd), Float(pigmentStart), Float(pigmentStart))
+    /// Mip levels the settled mark softens through as it leaves (≈10 pt of blur).
+    static let exitBlurLevels: Float = 5
 
-    /// The fixed 92 pt slot above Welcome. Both hosts derive it from the panel
-    /// size, so the proxy and the native window agree on the optical root.
+    /// The fixed slot in the centre of the window, where the light becomes
+    /// the mark. Both hosts derive it from the panel size, so the proxy and
+    /// the native window agree on the optical root. The mark's exit afterwards
+    /// is OnboardingView's, on the same clock.
     static func rect(in panel: CGSize) -> CGRect {
         CGRect(
             x: (panel.width - self.side) / 2,
-            y: panel.height * 0.34 - self.side / 2,
+            y: (panel.height - self.side) / 2,
             width: self.side,
             height: self.side
         )
@@ -118,12 +129,13 @@ final class RayLogoAsset {
                 Float(rect.width), Float(rect.height)
             ),
             crop: self.crop,
-            options: SIMD4(1, state.rayLogoClipOverride, 0, Float(RayLogoTiming.end)),
+            options: SIMD4(1, state.rayLogoClipOverride, 0, Float(RayLogoTiming.pigmentEnd)),
             timing: RayLogoTiming.soft,
             ending: SIMD4(
                 Float(RayLogoTiming.direction * .pi / 180), Float(RayLogoTiming.brightness),
                 state.rayLampTurnOverride, Float(RayLogoTiming.gatherEnd)
-            )
+            ),
+            exit: SIMD4(state.rayLogoExit, RayLogoTiming.exitBlurLevels, state.rayLogoExit, 0)
         )
     }
 }

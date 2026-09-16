@@ -33,6 +33,8 @@ struct RayLogoUniforms {
     float4 options;
     float4 timing;
     float4 ending;
+    /// Exit of the settled mark: blur progress, blur mip levels, fade, unused.
+    float4 exit;
 };
 
 vertex VertexOutput fullScreenVertex(uint id [[vertex_id]]) {
@@ -639,7 +641,10 @@ fragment half4 rayCompositeFragment(VertexOutput in [[stage_in]],
         float2 extent = fit*0.60;
         float2 centered = p-u.targetOffset-logo.frame.xy;
         float2 local = (centered/fit+0.5)*logo.crop.zw+logo.crop.xy;
-        float4 ink = logoColor.sample(s,clamp(local,float2(0),float2(1)));
+        constexpr sampler lobes(coord::normalized,address::clamp_to_edge,filter::linear,mip_filter::linear);
+        // Level 0 is the untouched asset. The settled mark leaves by softening
+        // into coarser levels while it fades (see the end of this block).
+        float4 ink = logoColor.sample(lobes,clamp(local,float2(0),float2(1)),level(logo.exit.x*logo.exit.y));
         float assetMask = logoAssetMask(ink,local);
 
         // The silhouette is attached to the condensing field: while the field
@@ -653,7 +658,6 @@ fragment half4 rayCompositeFragment(VertexOutput in [[stage_in]],
         float shape = smoother(0.78,1.0,gather);
         // Seven directions first appear as soft lobes of the light's own
         // distribution (a coarse mip of the mark), sharpening as it settles.
-        constexpr sampler lobes(coord::normalized,address::clamp_to_edge,filter::linear,mip_filter::linear);
         float4 inkNow = logoColor.sample(lobes,clamp(attached,float2(0),float2(1)),level(8.0*(1.0-shape)));
         float attachedMask = logoAssetMask(inkNow,attached);
         float support = mix(1.0,attachedMask,shape);
@@ -691,6 +695,9 @@ fragment half4 rayCompositeFragment(VertexOutput in [[stage_in]],
         float cut = (1.0-smoothstep(radius*(1.0-feather),radius*(1.0+feather*0.4),distance))*(1.0-pigment);
         emitted *= 1.0-cut;
         opacity *= 1.0-cut;
+        // The settled mark's exit: everything this block emits fades together.
+        emitted *= 1.0-logo.exit.z;
+        opacity *= 1.0-logo.exit.z;
     }
     color = emitted+surface.rgb*light.a*(1.0-opacity);
     alpha = alpha*opacity+light.a*(1.0-opacity);

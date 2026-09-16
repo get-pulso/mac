@@ -10,7 +10,7 @@ enum OnboardingShaderChecks {
     static func run() throws {
         guard MemoryLayout<ShaderUniforms>.stride == 64,
               MemoryLayout<RayPaletteUniforms>.stride == 96,
-              MemoryLayout<RayLogoUniforms>.stride == 80
+              MemoryLayout<RayLogoUniforms>.stride == 96
         else { throw ShaderError.invalidPixels("Swift/Metal uniform layout mismatch") }
         guard let device = MTLCreateSystemDefaultDevice() else { throw ShaderError.unavailable }
         let renderer = try MetalRenderer(device: device)
@@ -61,7 +61,15 @@ enum OnboardingShaderChecks {
                         }
                     }
                     if time == Float(IntroTiming.logoSettled) {
-                        // The original mark: identical whatever the seed or later time.
+                        // The original mark: identical whatever the seed or later time,
+                        // and already in place at the end of pigment.
+                        var pigmented = state
+                        pigmented.elapsed = Float(RayLogoTiming.pigmentEnd)
+                        let early = try render(renderer, size: size, scale: scale, state: pigmented)
+                        count += 1
+                        guard early.bytes == frame.bytes else {
+                            throw ShaderError.invalidPixels("The mark is not final at \(RayLogoTiming.pigmentEnd) s")
+                        }
                         var later = state
                         later.elapsed = 42
                         later.variant = 9901
@@ -86,12 +94,32 @@ enum OnboardingShaderChecks {
                             }
                         }
                         guard mark > 20 else { throw ShaderError.invalidPixels("Firstlight mark is missing") }
+                        // Once the mark has left, only the plain window surface remains.
+                        var gone = state
+                        gone.rayLogoExit = 1
+                        let empty = try render(renderer, size: size, scale: scale, state: gone)
+                        count += 1
+                        for y in stride(from: 12, to: Int(panel.height) - 12, by: 5) {
+                            for x in stride(from: 12, to: Int(panel.width) - 12, by: 5) {
+                                for c in 0 ..< 3 {
+                                    guard abs(Float(empty.channel((x + 76) * scale, (y + 76) * scale, c)) - surface[2 - c] * 255) <= 2
+                                    else { throw ShaderError.invalidPixels("The mark's exit leaves light behind at \(x),\(y)") }
+                                }
+                            }
+                        }
+                        var leaving = state
+                        leaving.rayLogoExit = 0.5
+                        let half = try render(renderer, size: size, scale: scale, state: leaving)
+                        count += 1
+                        guard changed(half, frame) > 40, changed(half, empty) > 40 else {
+                            throw ShaderError.invalidPixels("The mark's exit is not gradual")
+                        }
                     }
                     if size.width == 1020, scale == 1 {
                         let image = try makeImage(frame)
                         try save(image, to: folder.appendingPathComponent("ray-\(time).png"))
                         if [1.10, 2.35, 2.95, 3.60].contains(time) {
-                            let preview = try composite(image, dim: IntroTiming.dimming(at: Double(time)))
+                            let preview = try composite(image, dim: 0)
                             previews.append(preview)
                         }
                     }
@@ -116,10 +144,10 @@ enum OnboardingShaderChecks {
             previous = frame
         }
         guard maximumDelta < 0.045 else { throw ShaderError.invalidPixels("Frame discontinuity: \(maximumDelta)") }
-        guard IntroTiming.dimming(at: 0) == 0,
-              abs(IntroTiming.dimming(at: 1.0) - IntroTiming.dimmingPeak) < 0.001,
-              IntroTiming.dimming(at: IntroTiming.handoff) == 0,
-              IntroTiming.dimming(at: IntroTiming.duration) == 0
+        guard IntroTiming.dimming(atReal: 0) == 0,
+              abs(IntroTiming.dimming(atReal: 1.5) - IntroTiming.dimmingPeak) < 0.001,
+              IntroTiming.dimming(atReal: IntroTiming.realHandoff) == 0,
+              IntroTiming.dimming(atReal: IntroTiming.realDuration) == 0
         else {
             throw ShaderError.invalidPixels("Invalid desktop dimming timeline")
         }

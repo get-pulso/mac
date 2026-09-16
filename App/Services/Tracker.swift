@@ -89,37 +89,40 @@ final class Tracker {
     private var publishingTask: Task<Void, Never>?
     private var lastExternalApplication: NSRunningApplication?
 
+    /// The app's icon as a PNG, resampled once from the largest pixels it has.
+    ///
+    /// Drawing the `NSImage` itself would leave that to AppKit, which picks a
+    /// representation by point size — Launch Services hands these out at 32 pt
+    /// — and sharpens on the way down, leaving a light rim along every edge.
+    /// Taking the pixels and resampling them once does neither, and the PNG
+    /// comes out about a third smaller for it.
     private static func iconPNGBase64(_ image: NSImage?) -> String? {
-        guard let image,
-              let bitmap = NSBitmapImageRep(
-                  bitmapDataPlanes: nil,
-                  pixelsWide: 128,
-                  pixelsHigh: 128,
-                  bitsPerSample: 8,
-                  samplesPerPixel: 4,
-                  hasAlpha: true,
-                  isPlanar: false,
-                  colorSpaceName: .deviceRGB,
+        guard let image else { return nil }
+        var proposed = NSRect(x: 0, y: 0, width: Constants.iconSide, height: Constants.iconSide)
+        let source = image.representations
+            .max { $0.pixelsWide < $1.pixelsWide }?
+            .cgImage(forProposedRect: &proposed, context: nil, hints: nil)
+            ?? image.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
+        guard let source,
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil,
+                  width: Int(Constants.iconSide),
+                  height: Int(Constants.iconSide),
+                  bitsPerComponent: 8,
                   bytesPerRow: 0,
-                  bitsPerPixel: 0
-              ),
-              let context = NSGraphicsContext(bitmapImageRep: bitmap)
+                  space: colorSpace,
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
         else { return nil }
 
-        bitmap.size = NSSize(width: 128, height: 128)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = context
-        image.draw(
-            in: NSRect(x: 0, y: 0, width: 128, height: 128),
-            from: .zero,
-            operation: .copy,
-            fraction: 1,
-            respectFlipped: true,
-            hints: [.interpolation: NSImageInterpolation.high]
-        )
-        context.flushGraphics()
-        NSGraphicsContext.restoreGraphicsState()
-        guard let data = bitmap.representation(using: .png, properties: [:]), data.count <= 256_000 else { return nil }
+        context.interpolationQuality = .high
+        context.draw(source, in: CGRect(x: 0, y: 0, width: Constants.iconSide, height: Constants.iconSide))
+        guard let resampled = context.makeImage() else { return nil }
+        let bitmap = NSBitmapImageRep(cgImage: resampled)
+        bitmap.size = NSSize(width: Constants.iconSide, height: Constants.iconSide)
+        guard let data = bitmap.representation(using: .png, properties: [:]),
+              data.count <= Constants.iconByteLimit else { return nil }
         return data.base64EncodedString()
     }
 
@@ -296,6 +299,10 @@ private extension Tracker {
     enum Constants {
         static let hearbeatInterval = 60.0
         static let idleTimeout = 60.0 * 5.0
+        /// Twice the largest size the interface draws an icon at, on a retina
+        /// screen. The server keeps one per app, so it is worth the few bytes.
+        static let iconSide = 128.0
+        static let iconByteLimit = 256_000
     }
 }
 

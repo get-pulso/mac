@@ -35,9 +35,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         if self.isPresented {
             if let nativeWindow, nativeWindow.alphaValue == 1 {
                 if nativeWindow.isMiniaturized { nativeWindow.deminiaturize(nil) }
-                nativeWindow.makeKeyAndOrderFront(nil)
+                AppActivation.bringForward(nativeWindow)
+            } else {
+                NSApp.activate(ignoringOtherApps: true)
             }
-            NSApp.activate()
             return
         }
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
@@ -102,8 +103,10 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         native.alphaValue = 0
         native.orderBack(nil)
         native.contentView?.layoutSubtreeIfNeeded()
-        carrier.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        // The intro plays in the carrier, so it is the one to bring forward;
+        // the real window takes over from it at the hand-off below, by which
+        // time the app is active and can simply take the keyboard.
+        AppActivation.bringForward(carrier)
         let animated = forceAnimation || !self.defaults.bool(forKey: Self.introSeenKey)
         let ticket = self.generation
         // Activation and the first Metal drawable settle before the clock starts.
@@ -181,7 +184,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
                 carrier.alphaValue = 1
             }
         }
-        self.dimmers.forEach { $0.alphaValue = IntroTiming.dimming(at: time) }
+        self.dimmers.forEach { $0.alphaValue = IntroTiming.dimming(atReal: self.playback.realElapsed) }
         guard presentNative, !self.handingOff, !self.playback.nativePresented else { return }
         self.removeDimmers()
         self.handingOff = true

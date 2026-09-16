@@ -39,6 +39,7 @@ struct MetalOnboardingShaderView: NSViewRepresentable {
     let nativeSurface: Bool
     let variant: Int
     var rayLogoRect: CGRect = .zero
+    var rayLogoExit: Float = 0
     var targetSize: CGSize = .zero
     var targetOffset: CGPoint = .zero
     let onFailure: (String) -> Void
@@ -55,6 +56,10 @@ struct MetalOnboardingShaderView: NSViewRepresentable {
         view.autoResizeDrawable = false
         view.enableSetNeedsDisplay = true
         view.isPaused = true
+        // The mark and the SwiftUI name move as one piece: the drawable is
+        // presented inside the same Core Animation transaction as the layout,
+        // not one display cycle later.
+        view.presentsWithTransaction = true
         do {
             guard let device = view.device else { throw ShaderError.unavailable }
             let renderer = try MetalRenderer(device: device)
@@ -71,11 +76,14 @@ struct MetalOnboardingShaderView: NSViewRepresentable {
     func updateNSView(_ view: MTKView, context: Context) {
         let state = ShaderState(
             elapsed: elapsed, inset: inset, nativeSurface: nativeSurface, variant: variant,
-            targetSize: targetSize, targetOffset: targetOffset, rayLogoRect: rayLogoRect
+            targetSize: targetSize, targetOffset: targetOffset, rayLogoRect: rayLogoRect, rayLogoExit: rayLogoExit
         )
         guard context.coordinator.renderer?.state != state else { return }
         context.coordinator.renderer?.state = state
-        view.setNeedsDisplay(view.bounds)
+        // Draw now, inside SwiftUI's own update, so the mark's new frame is
+        // committed together with the text laid out next to it. A deferred
+        // display pass would put the mark one or two frames behind the name.
+        view.draw()
     }
 }
 
@@ -90,8 +98,10 @@ struct ShaderState: Equatable {
     var variant = 0
     var targetSize: CGSize = .zero
     var targetOffset: CGPoint = .zero
-    /// The fixed 92 pt slot; empty means the panel's default slot.
+    /// The mark's slot; empty means the panel's default slot.
     var rayLogoRect: CGRect = .zero
+    /// 0 while the settled mark stays, 1 once it has softened and faded away.
+    var rayLogoExit: Float = 0
     /// Onboarding is presented in the dark appearance; the surface color follows it.
     var darkAppearance = true
     /// Verification only: freeze temporal noise while inspecting optical transport.
@@ -196,8 +206,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 DispatchQueue.main.async { self?.onFailure?(message) }
             }
         }
-        command.present(drawable)
+        // With presentsWithTransaction, present after the GPU work is scheduled
+        // so the new frame lands in this transaction together with the text.
         command.commit()
+        command.waitUntilScheduled()
+        drawable.present()
     }
 
     /// Two passes: linear radiance into a private RGBA16Float target, then

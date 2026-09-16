@@ -7,7 +7,9 @@ struct OnboardingFormExpandedKey: PreferenceKey {
 }
 
 /// Both hosts render the same light. The proxy carries only the light; the
-/// native window continues it into the original mark, then shows Welcome.
+/// native window continues it into the original mark in the centre, reveals
+/// the name beside it, lifts the pair into a header, and only then shows
+/// Welcome: who is waiting, and one button.
 struct OnboardingView: View {
     // MARK: Internal
 
@@ -21,14 +23,21 @@ struct OnboardingView: View {
             let elapsed = playback.renderTime(nativeSurface: nativeSurface)
             // Derived from the panel, not measured: both hosts must agree on
             // the optical root from the very first frame, before Welcome exists.
-            let slot = RayLogoTiming.rect(in: panel.size)
+            let frame = WelcomeLayout.frame(at: elapsed, in: panel.size)
+            let slot = frame.markRect
+            // Once the light has become the mark, a plain image of the asset
+            // takes over in the same rect; the shader then holds a static,
+            // markless frame and stops redrawing.
+            let handover = nativeSurface ? WelcomeTiming.markImageProgress(at: elapsed) : 0
+            let shaderElapsed = handover >= 1 ? WelcomeTiming.markImageVisibleAt : elapsed
+            let offPane = slot.offsetBy(dx: 0, dy: -panel.height - slot.height)
             ZStack {
                 if playback.shaderFailure == nil {
                     MetalOnboardingShaderView(
-                        elapsed: Float(elapsed), inset: 0, nativeSurface: nativeSurface,
+                        elapsed: Float(shaderElapsed), inset: 0, nativeSurface: nativeSurface,
                         variant: playback.variant,
                         // An expanded form owns the whole window; the mark leaves the pane.
-                        rayLogoRect: expandedForm ? slot.offsetBy(dx: 0, dy: -panel.height - slot.height) : slot,
+                        rayLogoRect: expandedForm || handover >= 1 ? offPane : slot,
                         targetSize: panel.size,
                         targetOffset: CGPoint(
                             x: panel.midX - proxy.size.width / 2,
@@ -42,45 +51,108 @@ struct OnboardingView: View {
                         .position(x: panel.midX, y: panel.midY)
                 }
 
+                if nativeSurface, handover > 0, !expandedForm, let mark = RayLogoImage.cropped {
+                    Image(nsImage: mark)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: slot.width, height: slot.height)
+                        .position(x: slot.midX, y: slot.midY)
+                        .opacity(handover)
+                        .accessibilityHidden(true)
+                }
+
                 if nativeSurface {
-                    welcome(size: panel.size, slot: slot)
+                    welcome(size: panel.size, frame: frame)
                         .frame(width: panel.width, height: panel.height)
                         .position(x: panel.midX, y: panel.midY)
                 }
             }
         }
+        // The intro is always dark, whatever the system appearance: one look.
         .preferredColorScheme(.dark)
         .ignoresSafeArea()
+        .task(id: session.pendingInvite) { await invite.load(session.pendingInvite) }
     }
 
     // MARK: Private
 
     @State private var expandedForm = false
+    @StateObject private var invite = WelcomeInvite()
+    @ObservedObject private var session = NativeSession.shared
 
-    private func welcome(size: CGSize, slot: CGRect) -> some View {
+    private func welcome(size: CGSize, frame: WelcomeLayout.Frame) -> some View {
         let time = self.playback.elapsed
         let compact = size.height < 538 || size.width < 748
         let titleAlpha = WelcomeTiming.titleOpacity(at: time)
+        let titleIn = WelcomeTiming.spring(time, after: WelcomeTiming.titleStart)
+        let subtitleAlpha = WelcomeTiming.subtitleOpacity(at: time)
+        let subtitleIn = WelcomeTiming.spring(time, after: WelcomeTiming.subtitleStart)
         let buttonIn = WelcomeTiming.spring(time, after: WelcomeTiming.buttonStart)
         let buttonAlpha = WelcomeTiming.buttonOpacity(at: time)
         let enabled = time >= WelcomeTiming.interactiveAt
+        let inviter = self.invite.inviter
 
-        return ZStack(alignment: .top) {
-            VStack(spacing: compact ? 17 : 22) {
-                // The mark itself is the shader's light; this only reserves its slot.
-                Color.clear.frame(width: slot.width, height: slot.height).accessibilityHidden(true)
-                Text("Welcome to Firstlight")
-                    .font(.system(size: compact ? 38 : 48, weight: .medium))
-                    .tracking(-1.8)
+        return ZStack {
+            // The name, beside the shader's mark and on the same numbers: it
+            // slides out from behind the mark through a soft transparent edge
+            // at the mark's side, last letters first, rides up with the mark
+            // and stays with it as the header.
+            ZStack {
+                Text("Firstlight")
+                    .font(.system(size: frame.nameFontSize, weight: .medium))
+                    .tracking(WelcomeLayout.nameTracking * frame.nameFontSize / WelcomeLayout.nameFontSize)
+                    .fixedSize()
+                    .position(x: frame.nameCenter.x + frame.nameSlide, y: frame.nameCenter.y)
+            }
+            .frame(width: size.width, height: size.height)
+            .mask {
+                let windowWidth = max(0, size.width - frame.nameWindowLeft)
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .white, location: min(1, frame.nameFront / max(windowWidth, 1))),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: windowWidth, height: size.height)
+                .position(x: frame.nameWindowLeft + windowWidth / 2, y: size.height / 2)
+            }
+            .opacity(expandedForm ? 0 : frame.nameOpacity)
+            .accessibilityHidden(true)
+
+            // Takes the centre once the pair has risen; they never overlap.
+            // The title arrives first, its subtitle after it, one after another.
+            VStack(spacing: compact ? 10 : 14) {
+                VStack(spacing: compact ? 10 : 14) {
+                    if let inviter {
+                        FirstlightAvatar(url: inviter.avatarURL, name: inviter.name, size: compact ? 52 : 64)
+                            .scaleEffect(0.3 + 0.7 * titleIn)
+                            .accessibilityHidden(true)
+                    }
+                    Text(self.title(for: inviter))
+                        .font(.system(size: self.titleSize(for: inviter, compact: compact), weight: .medium))
+                        .tracking(-1.2)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                .opacity(titleAlpha)
+                .blur(radius: (1 - titleAlpha) * 8)
+                .offset(y: (1 - titleIn) * 40)
+                .accessibilityHidden(titleAlpha < 1)
+                Text(self.subtitle(for: inviter))
+                    .font(.system(size: compact ? 14 : 15))
+                    .foregroundStyle(.white.opacity(0.6))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 28)
-                    .opacity(expandedForm ? 0 : titleAlpha)
-                    .blur(radius: (1 - titleAlpha) * 2)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityHidden(expandedForm || titleAlpha < 1)
+                    .opacity(subtitleAlpha)
+                    .blur(radius: (1 - subtitleAlpha) * 6)
+                    .offset(y: (1 - subtitleIn) * 18)
+                    .accessibilityHidden(subtitleAlpha < 1)
             }
-            .frame(width: size.width)
-            .offset(y: slot.minY)
+            .offset(y: -(compact ? 22 : 30))
+            .opacity(expandedForm ? 0 : 1)
+            .accessibilityHidden(expandedForm)
 
             VStack {
                 Spacer(minLength: 0)
@@ -106,5 +178,22 @@ struct OnboardingView: View {
         }
         .foregroundStyle(.white)
         .onPreferenceChange(OnboardingFormExpandedKey.self) { expandedForm = $0 }
+    }
+
+    private func title(for inviter: WelcomeInvite.Inviter?) -> String {
+        // The name is already in the header.
+        guard let inviter else { return "Welcome" }
+        return inviter.isGroup ? "\(inviter.firstName) invited you to \(inviter.destination)" :
+            "\(inviter.firstName) is waiting for you"
+    }
+
+    private func subtitle(for inviter: WelcomeInvite.Inviter?) -> String {
+        guard let inviter else { return "See what your friends are up to." }
+        return inviter.isGroup ? "Sign in to join them." : "Sign in and you'll be friends right away."
+    }
+
+    private func titleSize(for inviter: WelcomeInvite.Inviter?, compact: Bool) -> CGFloat {
+        if inviter == nil { return compact ? 36 : 44 }
+        return compact ? 26 : 32
     }
 }

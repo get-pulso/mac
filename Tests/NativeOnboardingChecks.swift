@@ -75,7 +75,7 @@ private final class OnboardingChecksDelegate: NSObject, NSApplicationDelegate {
         }
         // The window takes over at the handoff and the clock keeps running inside
         // it; check once the whole intro, in real seconds, is over.
-        self.later(IntroTiming.realSeconds(IntroTiming.duration) + 0.7) { [self] in checkNativeHandoff() }
+        self.later(IntroTiming.realDuration + 0.9) { [self] in checkNativeHandoff() }
     }
 
     func checkNativeHandoff() {
@@ -153,7 +153,7 @@ private final class OnboardingChecksDelegate: NSObject, NSApplicationDelegate {
             completed && playback.finished && playback.shaderFailure != nil,
             "Metal failure never blocks sign-in"
         )
-        self.expect(IntroTiming.dimming(at: playback.elapsed) == 0, "fallback restores desktop")
+        self.expect(IntroTiming.dimming(atReal: playback.realElapsed) == 0, "fallback restores desktop")
         self.controller.close()
         self.defaults.removePersistentDomain(forName: self.suite)
         print("PASS: \(self.assertions) onboarding lifecycle assertions; no account or network access")

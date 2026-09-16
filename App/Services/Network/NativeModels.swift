@@ -112,6 +112,7 @@ struct NativeInviteInfo: Decodable {
     struct Invite: Decodable {
         let groupName: String
         let inviterName: String
+        let inviterAvatarUrl: String?
         let memberCount: Int
         let isUniversal: Bool
     }
@@ -179,6 +180,33 @@ struct NativeAgentSummary: Decodable {
         var id: String { self.tool }
     }
 
+    /// Consecutive minutes of one tool with gaps of at most two minutes: a
+    /// shift, from the first write to the last.
+    struct Run: Decodable, Identifiable {
+        let tool: String
+        let start_time: String
+        let end_time: String
+        let minutes: Double
+        let peak_sessions: Int?
+        let unattended_minutes: Double?
+
+        var id: String { self.tool + self.start_time }
+    }
+
+    /// A stretch of the person's own presence at the Mac, clipped to a day.
+    struct Presence: Decodable {
+        let start_time: String
+        let end_time: String
+    }
+
+    /// The run in progress, when the last write was moments ago.
+    struct Now: Decodable {
+        let tool: String
+        let started_at: String
+        let minutes: Double
+        let sessions: Int?
+    }
+
     /// One local day, oldest first. Empty days are present with zeros so a
     /// week always has seven bars.
     struct Day: Decodable, Identifiable {
@@ -186,6 +214,8 @@ struct NativeAgentSummary: Decodable {
         let human_minutes: Double
         let agent_minutes: Double
         let agent_only_minutes: Double
+        let runs: [Run]?
+        let presence: [Presence]?
 
         var id: String { self.date }
     }
@@ -205,11 +235,27 @@ struct NativeAgentSummary: Decodable {
     let days: [Day]?
     let last_agent_active_at: String?
     let active_tool: String?
+    let now: Now?
+    /// Over the last thirty days whatever the period, so a record is a record.
+    let longest_run_minutes: Double?
+    let longest_run_started_at: String?
 }
 
 /// Display names and glyphs for the tools a summary can name. Unknown tools
 /// keep their raw name so a newer server never renders as nothing.
 enum NativeAgentToolLabel {
+    /// The tool an app belongs to: the Claude app is Claude Code's home,
+    /// ChatGPT is Codex's, Cursor is its own. When the app in front and the
+    /// agent writing are the same family, saying both says one thing twice.
+    static func tool(forApp bundleIdentifier: String?, name: String?) -> String? {
+        let bundle = bundleIdentifier?.lowercased() ?? ""
+        let title = name?.lowercased() ?? ""
+        if bundle.contains("anthropic") || bundle.contains("claude") || title == "claude" { return "claude_code" }
+        if bundle.contains("openai") || bundle.contains("chatgpt") || title == "chatgpt" { return "codex" }
+        if bundle.contains("cursor") || title == "cursor" { return "cursor" }
+        return nil
+    }
+
     static func name(_ tool: String) -> String {
         switch tool {
         case "claude_code": "Claude Code"
@@ -237,6 +283,9 @@ struct NativeAck: Decodable {}
 struct NativeJoinInfo: Decodable {
     struct Inviter: Decodable, Equatable {
         let code: String
+        /// Optional: an older server answers without it, and the tray then
+        /// cannot tell a friend from a stranger until the request is sent.
+        let inviterId: String?
         let inviterName: String
         let inviterAvatarUrl: String?
     }
@@ -247,12 +296,36 @@ struct NativeJoinInfo: Decodable {
 /// The answer to a friend request by code. `connected` is true when the code
 /// came from the owner's own link and the two are friends at once.
 struct NativeFriendRequestResult: Decodable {
+    struct Target: Decodable { let id: String; let name: String? }
+
     let success: Bool
     let connected: Bool?
+    let targetUser: Target?
 }
 
 struct NativeDirectFriends: Decodable {
     let directFriendIds: [String]
+}
+
+/// Who someone is, with nothing counted: what they wrote about themselves and
+/// where to find them. Shown in the invite trays for a person who has asked to
+/// be your friend, or whose code you hold, before you answer.
+struct NativePersonCard: Decodable, Equatable {
+    let id: String
+    let name: String
+    let avatar_url: String?
+    let bio: String?
+    let location: String?
+    let website: String?
+    let twitter: String?
+    let telegram: String?
+
+    /// True when the person has written nothing at all: the tray then says so
+    /// rather than showing a face over empty space.
+    var isBare: Bool {
+        [self.bio, self.location, self.website, self.twitter, self.telegram]
+            .allSatisfy { $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false }
+    }
 }
 
 enum InviteInput: Hashable {

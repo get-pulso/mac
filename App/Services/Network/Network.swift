@@ -110,6 +110,19 @@ struct Network {
         expectedUserID: String? = nil
     ) async throws -> Response {
         try Task.checkCancellation()
+        #if DEBUG
+        // Developer mode for the invite flow answers its own endpoints, so the
+        // trays can be walked through without a server or a second account.
+        // Off by default; everything else still goes out as usual.
+        if let mocked = try await InviteMocks.response(path: path, method: method.rawValue, query: query, body: body) {
+            try Task.checkCancellation()
+            guard (200 ..< 300).contains(mocked.status) else {
+                let message = (try? self.jsonDecoder.decode(APIError.self, from: mocked.data))?.error
+                throw NativeError.message(message ?? "The server could not complete this request.")
+            }
+            return try self.jsonDecoder.decode(Response.self, from: mocked.data)
+        }
+        #endif
         let baseURL = baseURL ?? Self.baseURL
         let sessionID = await NativeSession.shared.session?.id
         if let expectedUserID, Defaults[.currentUserID] != expectedUserID { throw CancellationError() }

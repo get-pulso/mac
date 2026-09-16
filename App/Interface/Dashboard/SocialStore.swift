@@ -68,7 +68,8 @@ final class SocialStore: ObservableObject {
         /// The candidate tray is identified by the kind of input, not by the
         /// text: typing the rest of a code changes the field, not the tray.
         /// What it shows is read from `inviteCandidate` as it is typed.
-        case home, incoming, candidate(InviteInput.Kind), sent, connected(String), joined(String), sentRequests
+        case home, incoming, candidate(InviteInput.Kind), about(String), connected(String), joined(String),
+             sentRequests
 
         // MARK: Internal
 
@@ -77,9 +78,9 @@ final class SocialStore: ObservableObject {
             switch self {
             case .incoming,
                  .candidate,
+                 .about,
                  .sentRequests: true
             case .home,
-                 .sent,
                  .connected,
                  .joined: false
             }
@@ -171,6 +172,10 @@ final class SocialStore: ObservableObject {
     /// Whose friend code sits in the field, once looked up. The tray shows the
     /// person, never the code: the code is the transport.
     @Published private(set) var inviter: NativeJoinInfo.Inviter?
+    /// Who the people met through invitations are, once asked. Kept for the
+    /// life of the popover, so stepping back into a card is instant.
+    @Published private(set) var personCards: [String: NativePersonCard] = [:]
+    @Published private(set) var cardLoading = false
     /// True while the code in the field is being looked up. A miss ends it
     /// with `inviter` still nil: the card then stops waiting for a face.
     @Published private(set) var checkingInviter = false
@@ -475,12 +480,15 @@ final class SocialStore: ObservableObject {
 
     /// Shrinks the tray back into the button. Nothing in flight is cancelled:
     /// closing the tray does not take back a request.
+
     func closeTray() {
         guard let current = self.tray else { return }
         self.trayNavigation = TrayNavigation(from: current, to: nil, direction: .back)
         self.trayHistory.removeAll()
         self.trayTask?.cancel()
+        self.cardTask?.cancel()
         self.trayLoading = false
+        self.cardLoading = false
         self.error = nil
         withAnimation(Self.screenTransition) {
             self.tray = nil
@@ -501,6 +509,30 @@ final class SocialStore: ObservableObject {
             }
         }
     }
+
+    /// Opens the About tray for someone met through an invitation, and asks
+    /// who they are. A card already read is shown at once and not asked for
+    /// again; the tray is pushed either way, so Back always returns here.
+    func openAbout(_ personID: String) {
+        self.pushTray(.about(personID))
+        guard self.personCards[personID] == nil else { return }
+        self.cardTask?.cancel()
+        self.cardLoading = true
+        self.cardTask = Task {
+            defer { if !Task.isCancelled { self.cardLoading = false } }
+            do {
+                let card: NativePersonCard = try await self.network
+                    .request(path: "/api/users/\(personID)/card", method: .get)
+                guard !Task.isCancelled else { return }
+                self.personCards[personID] = card
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError) else { return }
+                if self.tray == .about(personID) { self.error = error.localizedDescription }
+            }
+        }
+    }
+
+    func card(for personID: String) -> NativePersonCard? { self.personCards[personID] }
 
     func isRunning(_ key: String) -> Bool { self.busy && self.operationKey == key }
 
@@ -723,9 +755,16 @@ final class SocialStore: ObservableObject {
                     )
                 } catch { self.inviteDeparting = false; throw error }
                 if result.connected == true {
-                    self.finishInvite(notice: "You're friends now.", tray: .connected(name ?? "your friend"))
+                    let friend = name ?? result.targetUser?.name ?? "your friend"
+                    self.finishInvite(notice: "You're friends now.", tray: .connected(friend))
                 } else {
-                    self.finishInvite(notice: "Friend request sent.", tray: .sent)
+                    // A request is not a place to stand: it goes to where
+                    // sent requests wait, and the tray is back where another
+                    // one can be sent.
+                    self.finishInvite(
+                        notice: "Request sent to \(Self.firstName(name ?? result.targetUser?.name ?? "them"))",
+                        tray: .home
+                    )
                 }
                 try? await self.loadRequests()
                 await self.refresh(force: true)
@@ -767,6 +806,27 @@ final class SocialStore: ObservableObject {
         self.lookedUpToken = nil
     }
 
+    #if DEBUG
+    /// Drops every cached answer and asks again, so switching the invite
+    /// mocks on or off swaps the data without signing anyone out.
+    func reloadForMocks() {
+        self.closeTray()
+        self.listCache.removeAll(); self.groupsCache.removeAll(); self.requestsCache.removeAll()
+        self.personalInviteCache.removeAll(); self.directFriendsCache.removeAll(); self.activityCache.removeAll()
+        self.displayedListKey = ""
+        self.peopleList = .empty
+        self.personalInvite = nil
+        self.requests = NativeRequests()
+        self.directFriendIDs = []
+        self.inviter = nil
+        self.clearQuery()
+        self.error = nil
+        self.loading = true
+        self.tab = "friends"
+        Task { await self.refresh(force: true) }
+    }
+    #endif
+
     func reset() {
         self.refreshID = UUID()
         self.screenTask?.cancel(); self.screenLoading = false; self.activityCache.removeAll(); self.listFailure = nil
@@ -775,7 +835,8 @@ final class SocialStore: ObservableObject {
         self.screen = .list; self.tab = "friends"; self.groups = []; self.peopleList = .empty
         self.navigation = Navigation(); self.tabDirection = 1; self.acceptedRequestIDs = []; self
             .inviteDeparting = false
-        self.trayTask?.cancel(); self.tray = nil; self.trayLoading = false; self.trayOrigin = .none
+        self.trayTask?.cancel(); self.cardTask?.cancel(); self.tray = nil; self.trayLoading = false
+        self.cardLoading = false; self.personCards = [:]; self.trayOrigin = .none
         self.joinedGroupID = nil
         self.trayNavigation = TrayNavigation(); self.trayHistory.removeAll()
         self.loadingMore = false; self.loadMoreError = nil
@@ -817,6 +878,7 @@ final class SocialStore: ObservableObject {
     private var reachabilityWatch: AnyCancellable?
     private var screenTask: Task<Void, Never>?
     private var trayTask: Task<Void, Never>?
+    private var cardTask: Task<Void, Never>?
     private var navigationHistory = NativeNavigationHistory<Screen>()
     private var trayHistory = NativeNavigationHistory<Tray>()
     private var listCache = NativeResourceCache<String, NativePeopleList>()
@@ -857,6 +919,11 @@ final class SocialStore: ObservableObject {
             // what a person sees. Active time is the default and sends nothing.
             "metric": metric == "agent" ? "agent_minutes" : metric == "tokens" ? "tokens" : nil,
         ]
+    }
+
+    /// Enough of a name to speak to someone by.
+    private static func firstName(_ name: String) -> String {
+        name.split(separator: " ").first.map(String.init) ?? name
     }
 
     /// Asks who a friend code belongs to, as soon as the field holds one. Own
@@ -903,14 +970,16 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    /// With the tray open, the result is its own tray and needs no toast. It
-    /// is shown before the field clears, so the emptied field does not pull
-    /// Home back over it.
+    /// Where an accepted invitation leaves the tray. A result with a state of
+    /// its own gets a tray and needs no words; a sent request has no state to
+    /// show, so it returns to Home and says so in passing. Shown before the
+    /// field clears, so the emptied field does not pull Home back over it.
     private func finishInvite(notice: String, tray: Tray) {
         NativeSession.shared.pendingInvite = nil
         if self.tray != nil {
             self.trayHistory.removeAll()
-            self.present(tray, direction: .forward)
+            self.present(tray, direction: tray == .home ? .back : .forward)
+            if tray == .home { self.feedbackToast = .success(notice) }
         } else {
             self.notice = notice
         }
@@ -999,12 +1068,22 @@ final class SocialStore: ObservableObject {
             .request(path: "/api/user/invite-link", method: .get)
         async let loadedRequests: NativeRequests = self.network
             .request(path: "/api/friends/requests", method: .get)
+        // Who is already a friend, so a friend's code is recognised before
+        // anyone offers to add them. Optional: without it the server still
+        // answers the request with the reason.
+        async let loadedFriends: NativeDirectFriends? = try? self.network
+            .request(path: "/api/user/direct-friends", method: .get)
         let invite = try await loadedInvite
         let requests = try await loadedRequests
         self.personalInvite = invite
         self.personalInviteCache.insert(invite, for: "invite")
         self.requests = requests
         self.requestsCache.insert(requests, for: "requests")
+        if let friends = await loadedFriends {
+            let ids = Set(friends.directFriendIds)
+            self.directFriendIDs = ids
+            self.directFriendsCache.insert(ids, for: "friends")
+        }
     }
 
     /// The field decides the tray: a code or link long enough to be an
@@ -1047,6 +1126,7 @@ final class SocialStore: ObservableObject {
     private func restoreInviteData() {
         if let cached = self.personalInviteCache.value(for: "invite") { self.personalInvite = cached }
         if let cached = self.requestsCache.value(for: "requests") { self.requests = cached }
+        if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
     }
 
     private func isFresh(_ screen: Screen) -> Bool {

@@ -7,12 +7,16 @@ struct AnimatedDuration: View {
     // MARK: Internal
 
     let minutes: Double
+    /// How the digits turn over. The default carries a little overshoot,
+    /// which is right for a total that changes once; a number being scrubbed
+    /// with the pointer passes `.snappy` so it settles instead of bouncing.
+    var animation: Animation? = .default
 
     var body: some View {
         Text(DurationLabel.minutes(minutes))
             .monospacedDigit()
             .contentTransition(.numericText(value: Double(DurationLabel.wholeMinutes(minutes))))
-            .animation(reduceMotion ? nil : .default, value: DurationLabel.wholeMinutes(minutes))
+            .animation(reduceMotion ? nil : animation, value: DurationLabel.wholeMinutes(minutes))
     }
 
     // MARK: Private
@@ -503,6 +507,109 @@ struct NativeSearchField: NSViewRepresentable {
 
 /// One pin for every surface that shows where a person is: the people list, the
 /// popover profile and the account overview.
+/// A paper plane drawn open, with the fold across its body: what a request
+/// becomes once it has gone. Drawn rather than an asset so it strokes at the
+/// weight its size asks for, at any size.
+struct NativeSendIcon: View {
+    var size: CGFloat = 12
+
+    var body: some View {
+        NativeSendGlyph()
+            .stroke(style: StrokeStyle(lineWidth: self.size / 12, lineCap: .round, lineJoin: .round))
+            .frame(width: self.size, height: self.size)
+    }
+}
+
+struct NativeSendGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        // Authored on a 24 pt grid, scaled to whatever square it is given.
+        let scale = min(rect.width, rect.height) / 24
+        let originX = rect.minX + (rect.width - 24 * scale) / 2
+        let originY = rect.minY + (rect.height - 24 * scale) / 2
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: originX + x * scale, y: originY + y * scale)
+        }
+
+        var path = Path()
+        path.move(to: point(9.61946, 10.8613))
+        path.addLine(to: point(20.9997, 4.55422))
+
+        path.move(to: point(9.04735, 10.9043))
+        path.addLine(to: point(4.10061, 5.68812))
+        path.addCurve(
+            to: point(4.82621, 4),
+            control1: point(3.49632, 5.05091),
+            control2: point(3.94803, 4)
+        )
+        path.addLine(to: point(20.2513, 4))
+        path.addCurve(
+            to: point(21.1132, 5.50702),
+            control1: point(21.0247, 4),
+            control2: point(21.5054, 4.84039)
+        )
+        path.addLine(to: point(13.1902, 18.9762))
+        path.addCurve(
+            to: point(11.3654, 18.7393),
+            control1: point(12.7433, 19.7358),
+            control2: point(11.6035, 19.5879)
+        )
+        path.addLine(to: point(9.28458, 11.3223))
+        path.addCurve(
+            to: point(9.04735, 10.9043),
+            control1: point(9.24066, 11.1658),
+            control2: point(9.15923, 11.0223)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// A ticket, with its stub perforated: an invitation is something you hand
+/// someone. Drawn on the same 24 pt grid as the paper plane.
+struct NativeInviteIcon: View {
+    var size: CGFloat = 13
+
+    var body: some View {
+        NativeInviteGlyph()
+            .stroke(style: StrokeStyle(lineWidth: self.size / 12, lineCap: .round, lineJoin: .round))
+            .frame(width: self.size, height: self.size)
+    }
+}
+
+struct NativeInviteGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 24
+        let originX = rect.minX + (rect.width - 24 * scale) / 2
+        let originY = rect.minY + (rect.height - 24 * scale) / 2
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: originX + x * scale, y: originY + y * scale)
+        }
+
+        var path = Path()
+        path.move(to: point(19, 5))
+        path.addLine(to: point(5, 5))
+        path.addCurve(to: point(3, 7), control1: point(3.89543, 5), control2: point(3, 5.89543))
+        path.addLine(to: point(3, 9.25))
+        path.addCurve(to: point(3, 14.75), control1: point(5.5, 10.25), control2: point(5.5, 13.75))
+        path.addLine(to: point(3, 17))
+        path.addCurve(to: point(5, 19), control1: point(3, 18.1046), control2: point(3.89543, 19))
+        path.addLine(to: point(19, 19))
+        path.addCurve(to: point(21, 17), control1: point(20.1046, 19), control2: point(21, 18.1046))
+        path.addLine(to: point(21, 14.75))
+        path.addCurve(to: point(21, 9.25), control1: point(18.5, 13.75), control2: point(18.5, 10.25))
+        path.addLine(to: point(21, 7))
+        path.addCurve(to: point(19, 5), control1: point(21, 5.89543), control2: point(20.1046, 5))
+        path.closeSubpath()
+
+        // The perforation: three dots, each a stroke too short to be a line.
+        for y in [8.5, 12, 15.5] as [CGFloat] {
+            path.move(to: point(15, y))
+            path.addLine(to: point(15, y + 0.01))
+        }
+        return path
+    }
+}
+
 struct NativeLocationIcon: View {
     var size: CGFloat = 11
 

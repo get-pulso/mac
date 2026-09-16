@@ -66,9 +66,12 @@ final class WindowManager {
         OnboardingWindowController.shared.close()
         guard let targetWindowPostion, let window else { return }
         window.setFrameTopLeftPoint(targetWindowPostion)
+        // The panel takes the keyboard by itself, without waiting on the app
+        // becoming frontmost, which the system is free to refuse. Activation
+        // is still asked for, so the app comes forward when it is allowed.
         window.makeKeyAndOrderFront(nil)
-        self.statusIconAnimator?.highlight()
         NSApp.activate()
+        self.statusIconAnimator?.highlight()
         self.visibilitySubject.send(true)
     }
 

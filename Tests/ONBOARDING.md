@@ -9,10 +9,33 @@ completion is in flight.
 
 ## Flow
 
-All times below are shader seconds; the Flow clock runs 1.5× slower
-(`IntroTiming.tempo`), so the whole intro takes 6.0 real seconds.
+All times below are shader seconds. The clock plays them through
+`IntroTiming.pacing`, a monotone cubic map from real seconds: for the first real
+second only the desktop darkens, the light is then born slowly (shader 0.06–1.75 s
+over real 1.0–4.0 s), the real window appears quickly (shader 2.05 s at real 4.25 s),
+the light settles into the mark with a long soft ease (real 4.25–5.6 s), pigment is
+quick (real 5.95 s) and the welcome choreography plays at an even 0.85 shader
+seconds per real second afterwards. `IntroTiming.realDuration` is the total.
+The mark is 72 pt. Once the light has become it, the shader hands the static mark
+to a plain image of the same asset in the same rect (shader 3.40–3.55 s, a short
+cross-fade): crisp at Retina, and in the same layer as the name, so the two move
+as one piece; the shader then holds a markless frame and stops redrawing. Once
+settled in the centre, the name `Firstlight` slides out
+from behind it to the right (shader 3.70–4.25 s, ease-out) through a soft transparent
+edge at the mark's side (44 pt, closing to the gap as the last letter comes out, so
+nothing of the name stays faded), so its last letters appear first, the pair
+kept centred; the pair then rises with a quintic ease-in-out
+to the header line 44 pt from the top and shrinks to a 40 pt mark (4.35–4.95 s)
+and stays there (`WelcomeLayout`, one set of numbers for the shader's rect and the
+SwiftUI name). The title, plain `Welcome` because the name is already in the
+header, takes the centre at 5.00–5.30 s, its subtitle follows on its own at 5.38–5.68 s, the
+button arrives at 5.78–6.15 s: one after another. The
+shader's `exit` uniform (soften and fade the settled mark) exists but is unused
+by this choreography.
+The desktop dimming is authored in real seconds: 0 → 72% over 0–1.1 s, restored at
+3.3–4.05 s, before the window appears.
 
-- Fresh, signed-out launch: the desktop darkens to 62% under a floating amethyst
+- Fresh, signed-out launch: the desktop darkens to 72% under a floating amethyst
   light that opens with a few broad shafts and grows fine structure, then fills
   the window brightly. The desktop is fully restored at 1.40–2.02 s. At 1.80–2.55 s
   the 3D light cone turns towards the upper right; at 2.05 s the real titled window
@@ -20,9 +43,8 @@ All times below are shader seconds; the Flow clock runs 1.5× slower
   whole field condenses towards the root of the mark and loses power, the dark root
   disc is cut out in the window's surface color, and the seven directions of the
   mark become legible inside the already logo-sized light. Original pigment replaces
-  the collected light at 3.17–3.60 s: the exact 92 pt AppIcon mark, static from then on.
-  `Welcome to Firstlight` arrives at 3.26–3.60 s under the mark, the bottom
-  Continue / Enter button at 3.62–3.95 s; the clock stops at 4.0 s.
+  the collected light at 3.15–3.32 s: the exact AppIcon mark, static from then on.
+  The clock stops at 6.15 s.
   Both click and Return call the existing Google OAuth action directly.
   Welcome content is absent from the animation proxy and inaccessible during prewarming.
   Reduce Motion reveals the final arrangement immediately.

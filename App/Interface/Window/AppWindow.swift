@@ -1,14 +1,20 @@
 import AppKit
 import SwiftUI
 
-final class AppWindow: NSWindow {
+/// The menu bar popover's window. A panel, and a non-activating one: the app
+/// is an accessory, and `NSApp.activate()` is a request the system is free to
+/// refuse, so a window that could only take the keyboard by activating the
+/// whole app would open unfocused and need a second click. A non-activating
+/// panel becomes key on its own, the way the system's own menu bar popovers
+/// and Spotlight do, whether or not the app is frontmost.
+final class AppWindow: NSPanel {
     // MARK: Lifecycle
 
     init(appView: AppView) {
         self.appView = appView
         super.init(
             contentRect: .zero,
-            styleMask: [.borderless, .fullSizeContentView],
+            styleMask: [.borderless, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
@@ -18,6 +24,9 @@ final class AppWindow: NSWindow {
 
     // MARK: Internal
 
+    /// A borderless panel answers no by default, and a window that cannot be
+    /// key takes no typing. Main stays as a panel has it, false: a panel that
+    /// became main would be claiming the app is active, which it need not be.
     override var canBecomeKey: Bool { true }
 
     // MARK: Private
@@ -52,6 +61,13 @@ final class AppWindow: NSWindow {
         self.isReleasedWhenClosed = false
         self.animationBehavior = .none
         self.hasShadow = true
+        // A panel hides itself when its app deactivates. This one is dismissed
+        // by its own rules — a click outside, Escape, the status item again —
+        // and the app may never have been active to begin with.
+        self.hidesOnDeactivate = false
+        // Clicking anywhere in the panel gives it the keyboard, not only the
+        // text fields: a code can be pasted the moment it opens.
+        self.becomesKeyOnlyIfNeeded = false
     }
 
     private func setupLayout() {

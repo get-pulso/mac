@@ -59,6 +59,13 @@ final class StatusItemMenu: NSObject {
         let replay = self.item("Replay onboarding", action: #selector(self.replayWelcome))
         replay.isEnabled = self.canReplayOnboarding()
         menu.addItem(replay)
+        #if DEBUG
+        menu.addItem(.separator())
+        menu.addItem(self.item(
+            InviteMocks.isEnabled ? "Turn off invite mocks" : "Invite mocks…",
+            action: #selector(self.toggleInviteMocks)
+        ))
+        #endif
         menu.addItem(.separator())
         menu.addItem(self.item("Quit Firstlight", action: #selector(self.quitFirstlight), key: "q"))
         return menu
@@ -103,4 +110,13 @@ final class StatusItemMenu: NSObject {
     @objc private func showSettings() { if self.canOpenSettings() { self.settings() } }
     @objc private func replayWelcome() { if self.canReplayOnboarding() { self.replayOnboarding() } }
     @objc private func quitFirstlight() { self.quit() }
+
+    #if DEBUG
+    @objc private func toggleInviteMocks() {
+        InviteMocks.isEnabled.toggle()
+        InviteMocks.reset()
+        SocialStore.shared.reloadForMocks()
+        self.open()
+    }
+    #endif
 }

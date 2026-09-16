@@ -24,9 +24,10 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         {
             NativeLayout.sizeSettingsWindow(window)
         }
-        if let window { DockPresence.claim(window) }
-        self.window?.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+        if let window {
+            DockPresence.claim(window)
+            AppActivation.bringForward(window)
+        }
     }
 
     func close() {
