@@ -31,7 +31,7 @@ usage() {
     print -r -- ""
     print -r -- "Set and commit MARKETING_VERSION and CURRENT_PROJECT_VERSION in project.yml first."
     print -r -- "--check validates source, version, signing key, and notarization credentials only."
-    print -r -- "Without --publish, the notarized ZIP and generated appcast are written to dist/<version>."
+    print -r -- "Without --publish, the notarized ZIP, the notarized DMG and the generated appcast are written to dist/<version>."
     print -r -- "--publish creates the GitHub Release, then publishes appcast.xml as the final step."
     print -r -- "--publish-prepared publishes reviewed artifacts already present in dist/<version>."
     print -r -- "Set FIRSTLIGHT_NOTARY_PROFILE and, when needed, FIRSTLIGHT_SPARKLE_ACCOUNT."
@@ -91,6 +91,12 @@ require_command xcodebuild
 require_command xcodegen
 require_command xmllint
 require_command xcrun
+# Scripts/build-dmg.sh: background rendering, Retina TIFF packing and the Finder layout.
+require_command rsvg-convert
+require_command tiffutil
+require_command swift
+require_command osascript
+require_command SetFile
 
 [[ -f "$project_file" ]] || fail "Missing $project_file"
 [[ -f "$info_plist" ]] || fail "Missing $info_plist"
@@ -177,8 +183,10 @@ output_dir="$project_root/dist/$release_version"
 if $publish_prepared; then
     [[ -d "$output_dir" ]] || fail "Prepared output not found: $output_dir"
     release_zip="$output_dir/${release_version}.zip"
+    release_dmg="$output_dir/${release_version}.dmg"
     prepared_appcast="$output_dir/appcast.xml"
     [[ -f "$release_zip" ]] || fail "Prepared ZIP not found: $release_zip"
+    [[ -f "$release_dmg" ]] || fail "Prepared DMG not found: $release_dmg"
     [[ -f "$prepared_appcast" ]] || fail "Prepared appcast not found: $prepared_appcast"
     [[ -f "$output_dir/SHA256SUMS" ]] || fail "Prepared checksum file is missing"
     publish_notes_file="$output_dir/release-notes.txt"
@@ -200,6 +208,12 @@ if $publish_prepared; then
     grep -F "TeamIdentifier=$team_id" <<<"$signing_details" >/dev/null || fail "Prepared app has the wrong Team ID"
     xcrun stapler validate "$app_path"
     /usr/sbin/spctl -a -vv -t exec "$app_path"
+
+    codesign --verify --verbose=2 "$release_dmg"
+    dmg_signing_details=$(codesign -dv --verbose=4 "$release_dmg" 2>&1)
+    grep -F "Authority=$signing_identity" <<<"$dmg_signing_details" >/dev/null || fail "Prepared DMG has the wrong signer"
+    xcrun stapler validate "$release_dmg"
+    /usr/sbin/spctl -a -vv -t open --context context:primary-signature "$release_dmg"
 
     generated_build=$(xmllint --xpath \
         'string((//*[local-name()="item"]/*[local-name()="version"])[1])' \
@@ -273,6 +287,15 @@ else
     release_zip="$work_dir/${release_version}.zip"
     ditto -c -k --sequesterRsrc --keepParent "$app_path" "$release_zip"
 
+    # The DMG carries the same stapled app in a styled Finder window. Sparkle
+    # keeps updating from the ZIP; the DMG is what the website hands out.
+    release_dmg="$work_dir/${release_version}.dmg"
+    "$script_dir/build-dmg.sh" "$app_path" "$release_dmg" --sign
+    xcrun notarytool submit "$release_dmg" --keychain-profile "$notary_profile" --wait
+    xcrun stapler staple "$release_dmg"
+    xcrun stapler validate "$release_dmg"
+    /usr/sbin/spctl -a -vv -t open --context context:primary-signature "$release_dmg"
+
     generate_appcast=$(find "$derived_data/SourcePackages/artifacts" -type f \
         -path '*/Sparkle/bin/generate_appcast' -perm -111 -print -quit)
     generate_keys=$(find "$derived_data/SourcePackages/artifacts" -type f \
@@ -344,11 +367,12 @@ else
 
     mkdir -p "$output_dir"
     cp "$release_zip" "$output_dir/${release_version}.zip"
+    cp "$release_dmg" "$output_dir/${release_version}.dmg"
     cp "$feed_dir/appcast.xml" "$output_dir/appcast.xml"
     if [[ -n "$notes_file" ]]; then
         cp "$notes_file" "$output_dir/release-notes.txt"
     fi
-    checksum_files=("${release_version}.zip" appcast.xml)
+    checksum_files=("${release_version}.zip" "${release_version}.dmg" appcast.xml)
     if [[ -f "$output_dir/release-notes.txt" ]]; then
         checksum_files+=(release-notes.txt)
     fi
@@ -372,8 +396,10 @@ git -C "$releases_checkout" diff --quiet -- appcast.xml && \
     fail "Generated appcast does not change the published feed"
 
 source_commit=$(git -C "$project_root" rev-parse HEAD)
+dmg_length=$(stat -f '%z' "$output_dir/${release_version}.dmg")
 gh release create "$release_version" \
-    "$output_dir/${release_version}.zip#Firstlight ${release_version}" \
+    "$output_dir/${release_version}.dmg#Firstlight ${release_version} (DMG)" \
+    "$output_dir/${release_version}.zip#Firstlight ${release_version} (ZIP, used by the in-app updater)" \
     --repo "$source_repo" \
     --target "$source_commit" \
     --title "$release_version" \
@@ -383,6 +409,10 @@ published_size=$(gh release view "$release_version" --repo "$source_repo" \
     --json assets --jq ".assets[] | select(.name == \"${release_version}.zip\") | .size")
 [[ "$published_size" == "$archive_length" ]] || \
     fail "Published GitHub asset size does not match the signed archive"
+published_dmg_size=$(gh release view "$release_version" --repo "$source_repo" \
+    --json assets --jq ".assets[] | select(.name == \"${release_version}.dmg\") | .size")
+[[ "$published_dmg_size" == "$dmg_length" ]] || \
+    fail "Published GitHub DMG size does not match the signed image"
 
 git -C "$releases_checkout" add -- appcast.xml
 git -C "$releases_checkout" diff --cached --check
