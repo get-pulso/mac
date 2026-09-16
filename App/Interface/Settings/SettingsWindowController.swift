@@ -24,6 +24,7 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
         {
             NativeLayout.sizeSettingsWindow(window)
         }
+        if let window { DockPresence.claim(window) }
         self.window?.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }
@@ -36,6 +37,11 @@ final class SettingsWindowController: NSObject, NSToolbarDelegate, NSWindowDeleg
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         self.model?.confirmLeavingProfile() ?? true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        DockPresence.release(window)
     }
 
     func confirmTermination() -> Bool { self.model?.confirmLeavingProfile() ?? true }
