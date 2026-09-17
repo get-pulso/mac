@@ -386,6 +386,10 @@ struct NativeJoinInfo: Decodable {
         let inviterId: String?
         let inviterName: String
         let inviterAvatarUrl: String?
+        /// True for the landing page's own invitation, the one handed to
+        /// whoever downloads Firstlight without a friend's link. An older
+        /// server answers without it and never hands one out.
+        let isDefaultInviter: Bool?
     }
 
     let invite: Inviter
@@ -424,6 +428,18 @@ struct NativePersonCard: Decodable, Equatable {
         [self.bio, self.location, self.website, self.twitter, self.telegram]
             .allSatisfy { $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false }
     }
+}
+
+/// What a person writes about themselves, from `/api/user/profile`. It lives
+/// in the Firstlight database; Clerk keeps only the name and the photo. Every
+/// field is optional both ways: a missing one reads as empty, and a patch
+/// carries only the fields it changes, an empty string clearing one.
+struct NativeProfileAbout: Codable, Equatable {
+    var bio: String?
+    var location: String?
+    var website: String?
+    var twitter: String?
+    var telegram: String?
 }
 
 enum InviteInput: Hashable {

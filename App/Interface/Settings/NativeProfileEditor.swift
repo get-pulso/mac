@@ -15,20 +15,25 @@ struct NativeProfileEditor: View {
             if model.attributeEnabled("username") {
                 field("Username", text: $model.username, id: .username, placeholder: "Your username")
             }
-            field("Location", text: $model.location, id: .location, placeholder: "City or region · Optional")
-            ProfileAboutField(text: $model.bio, focusedField: $focusedField)
-            Divider().padding(.vertical, 4)
-            field(
-                "Website", text: $model.website, id: .website, placeholder: "example.com",
-                hint: "Optional. Shown on your profile."
-            )
-            field("X", text: $model.twitter, id: .twitter, placeholder: "@username")
-            field(
-                "Telegram", text: $model.telegram, id: .telegram, placeholder: "@username",
-                hint: "You can also paste a profile link."
-            )
+            Group {
+                field("Location", text: $model.location, id: .location, placeholder: "City or region · Optional")
+                ProfileAboutField(text: $model.bio, focusedField: $focusedField)
+                Divider().padding(.vertical, 4)
+                field(
+                    "Website", text: $model.website, id: .website, placeholder: "example.com",
+                    hint: "Optional. Shown on your profile."
+                )
+                field("X", text: $model.twitter, id: .twitter, placeholder: "@username")
+                field(
+                    "Telegram", text: $model.telegram, id: .telegram, placeholder: "@username",
+                    hint: "You can also paste a profile link."
+                )
+            }
+            // These live in the database. Until it has answered they would
+            // start empty, and nothing typed into them could be saved.
+            .disabled(model.about == nil)
         } footer: {
-            NativeFormFooter(error: model.error) {
+            NativeFormFooter(error: model.error ?? (model.about == nil ? model.aboutError : nil)) {
                 Button("Cancel") { model.navigate(.account) }
                     .nativeFormCancelButton()
                     .keyboardShortcut(.cancelAction)

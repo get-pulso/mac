@@ -98,20 +98,21 @@ struct NativeSettingsView: View {
                     if let username = session.user?.username, !username.isEmpty {
                         Text("@\(username)").foregroundStyle(.secondary)
                     }
-                    let location = model.metadata("location")
+                    let location = model.aboutText(\.location)
                     if !location.isEmpty { NativeLocationLabel(text: location, size: 13) }
                 }
                 Spacer(minLength: 8)
                 Button("Edit profile") { model.navigate(.account, page: "edit") }
                     .nativeSettingsActionButton()
             }.padding(.vertical, 6)
-            if ["website", "twitter", "telegram"].contains(where: { !model.metadata($0).isEmpty }) {
+            if [\NativeProfileAbout.website, \.twitter, \.telegram].contains(where: { !model.aboutText($0).isEmpty }) {
                 panel {
-                    profileLink("Website", raw: model.metadata("website"))
-                    profileLink("X", raw: model.metadata("twitter"), host: "x.com")
-                    profileLink("Telegram", raw: model.metadata("telegram"), host: "t.me")
+                    profileLink("Website", raw: model.aboutText(\.website))
+                    profileLink("X", raw: model.aboutText(\.twitter), host: "x.com")
+                    profileLink("Telegram", raw: model.aboutText(\.telegram), host: "t.me")
                 }
             }
+            if let error = model.aboutError { NativeInlineError(message: error) { Task { await model.loadAbout() } } }
             panel {
                 info("Email", value: session.user?.primaryEmailAddress?.emailAddress ?? "")
                 LabeledContent("Friend code") {

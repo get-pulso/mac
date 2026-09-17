@@ -41,8 +41,19 @@ struct Network {
         )
     }
 
+    /// Brings the stored name and photo in step with Clerk.
     func syncNativeProfile() async throws {
         let _: NativeAck = try await self.request(path: "/api/native/profile", method: .post)
+    }
+
+    /// What the signed-in person wrote about themselves.
+    func profileAbout() async throws -> NativeProfileAbout {
+        try await self.request(path: "/api/user/profile", method: .get)
+    }
+
+    /// Stores the fields set in `changes` and answers with the whole of it.
+    func saveProfileAbout(_ changes: NativeProfileAbout) async throws -> NativeProfileAbout {
+        try await self.request(path: "/api/user/profile", method: .patch, body: changes)
     }
 
     func publishActivity(_ activity: PendingActivity, userID: String) async throws -> UpdateResponse {

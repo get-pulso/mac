@@ -29,6 +29,32 @@ struct NativeContracts {
             do { _ = try InviteInput.parse(input); preconditionFailure("Accepted invalid invite") }
             catch { checks += 1 }
         }
+        // The landing page's link is the one clipboard invitation accepted
+        // without a press, so only an explicit true may mark it.
+        let landingInvite = try JSONDecoder().decode(
+            NativeJoinInfo.self,
+            from: Data(#"{"invite":{"code":"U8MUXZ62","inviterId":"a","inviterName":"Serafim","inviterAvatarUrl":null,"isDefaultInviter":true}}"#.utf8)
+        )
+        expect(landingInvite.invite.isDefaultInviter == true)
+        let friendInvite = try JSONDecoder().decode(
+            NativeJoinInfo.self,
+            from: Data(#"{"invite":{"code":"ABC12345","inviterId":"b","inviterName":"Anna","inviterAvatarUrl":null,"isDefaultInviter":false}}"#.utf8)
+        )
+        expect(friendInvite.invite.isDefaultInviter == false)
+        let olderServerInvite = try JSONDecoder().decode(
+            NativeJoinInfo.self,
+            from: Data(#"{"invite":{"code":"ABC12345","inviterName":"Anna"}}"#.utf8)
+        )
+        expect(olderServerInvite.invite.isDefaultInviter == nil && olderServerInvite.invite.inviterId == nil)
+        // The profile's own words: nulls and missing keys read as nothing, and
+        // a patch carries only the fields it sets, an empty string included.
+        let about = try JSONDecoder().decode(
+            NativeProfileAbout.self,
+            from: Data(#"{"bio":"Building 21st.dev and Firstlight.","location":null,"twitter":"korablev"}"#.utf8)
+        )
+        expect(about == NativeProfileAbout(bio: "Building 21st.dev and Firstlight.", twitter: "korablev"))
+        expect(String(decoding: try JSONEncoder().encode(NativeProfileAbout(twitter: "")), as: UTF8.self) == #"{"twitter":""}"#)
+        expect(String(decoding: try JSONEncoder().encode(NativeProfileAbout()), as: UTF8.self) == "{}")
         let person = try JSONDecoder().decode(NativePerson.self, from: Data(#"{"user_id":"test","name":null,"active_minutes":125.5}"#.utf8))
         expect(person.displayName == "Firstlight user")
         let activePerson = try JSONDecoder().decode(
@@ -73,6 +99,11 @@ struct NativeContracts {
         expect(NativeLoadFailure(URLError(.notConnectedToInternet), online: true).isOffline)
         let requests = try JSONDecoder().decode(NativeRequests.self, from: Data(#"{"incoming":[],"outgoing":[]}"#.utf8))
         expect(requests.incoming.isEmpty && requests.outgoing.isEmpty)
+        let personalInvite = try JSONDecoder().decode(
+            NativePersonalInvite.self,
+            from: Data(#"{"personalInviteCode":"ABC123","personalInviteLink":"https://firstlight.sh/join/ABC123"}"#.utf8)
+        )
+        expect(personalInvite.personalInviteCode == "ABC123")
         let user = try JSONDecoder().decode(UserResponse.self, from: Data(#"{"user":{"id":"id","name":null},"groups":[]}"#.utf8))
         expect(user.user.name == nil)
         let members = try JSONDecoder().decode(NativeMembers.self, from: Data(#"{"group":{"id":"g","name":"Builders","is_user_creator":true},"members":[{"id":"u","name":null,"is_creator":true}]}"#.utf8))

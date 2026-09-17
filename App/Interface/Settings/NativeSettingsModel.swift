@@ -91,6 +91,11 @@ final class NativeSettingsModel: ObservableObject {
     @Published var verificationMethod = ""
     /// `nil` until `GET /api/user/sharing` answered for this window.
     @Published var sharing: NativeSharingSettings?
+    /// What the person wrote about themselves, as the database keeps it. `nil`
+    /// until `GET /api/user/profile` answered; the editor has nothing to save
+    /// against before then.
+    @Published private(set) var about: NativeProfileAbout?
+    @Published private(set) var aboutError: String?
 
     var user: ClerkKit.User? { NativeSession.shared.user }
     var canGoBack: Bool { self.historyIndex > 0 }
@@ -178,12 +183,29 @@ final class NativeSettingsModel: ObservableObject {
         if self.route.section == .groups { self.groupSettings.open(self.route.groupsPage) }
     }
 
+    /// Fills the editor from what is known, then asks the database again.
     func loadProfile() {
-        self.firstName = self.user?.firstName ?? ""; self.lastName = self.user?.lastName ?? ""; self.username = self
-            .user?.username ?? ""
-        self.bio = self.metadata("bio"); self.location = self.metadata("location"); self.website = self
-            .metadata("website"); self.twitter = self.metadata("twitter"); self.telegram = self.metadata("telegram")
-        self.savedProfile = self.profileDraft.normalized
+        self.fillProfile()
+        Task { await self.loadAbout() }
+    }
+
+    /// Reads the profile's own words. An editor nobody has touched yet takes
+    /// the answer; one already being edited keeps what is typed in it.
+    func loadAbout() async {
+        do {
+            let about = try await self.network.profileAbout()
+            let untouched = !self.hasProfileChanges
+            self.about = about
+            self.aboutError = nil
+            if self.route.page == "edit", untouched { self.fillProfile() }
+        } catch {
+            if !(error is CancellationError) { self.aboutError = error.localizedDescription }
+        }
+    }
+
+    /// One of the profile's own fields, empty until the database has answered.
+    func aboutText(_ field: KeyPath<NativeProfileAbout, String?>) -> String {
+        self.about?[keyPath: field] ?? ""
     }
 
     func confirmLeavingProfile() -> Bool {
@@ -207,14 +229,8 @@ final class NativeSettingsModel: ObservableObject {
         alert.addButton(withTitle: "Keep Editing")
         alert.addButton(withTitle: "Discard Changes")
         guard alert.runModal() == .alertSecondButtonReturn else { return false }
-        self.loadProfile()
+        self.fillProfile()
         return true
-    }
-
-    func metadata(_ key: String) -> String {
-        guard case let .object(fields) = self.user?.unsafeMetadata,
-              case let .string(value) = fields[key] else { return "" }
-        return value
     }
 
     func isRunning(_ key: String) -> Bool { self.busy && self.operationKey == key }
@@ -243,6 +259,7 @@ final class NativeSettingsModel: ObservableObject {
             do { try await self.network.syncNativeProfile() }
             catch { self.profileReconciliationStarted = false }
         }
+        await self.loadAbout()
         guard self.inviteCode.isEmpty, !self.inviteLoading else { return }
         self.inviteLoading = true
         self.inviteError = nil
@@ -259,20 +276,25 @@ final class NativeSettingsModel: ObservableObject {
             self.error = "Check the highlighted profile fields."
             return
         }
-        guard self.hasProfileChanges else { return }
+        guard self.hasProfileChanges, let saved = self.savedProfile else { return }
         self.run("Saving profile…", key: "save-profile") {
             guard let user = self.user else { throw NativeError.message("Sign in again to save your profile.") }
-            let attributes = Clerk.shared.environment?.userSettings.attributes ?? [:]
-            _ = try await user.update(.init(
-                username: attributes["username"]?.enabled == true ? draft.username : nil,
-                firstName: attributes["first_name"]?.enabled == true ? draft.firstName : nil,
-                lastName: attributes["last_name"]?.enabled == true ? draft.lastName : nil
-            ))
-            _ = try await user.updateMetadata(unsafeMetadata: .object([
-                "bio": .string(draft.bio), "location": .string(draft.location), "website": .string(draft.website),
-                "twitter": .string(draft.twitter), "telegram": .string(draft.telegram),
-            ]))
-            try await self.syncProfile()
+            // The names belong to Clerk; everything else to the database.
+            if draft.firstName != saved.firstName || draft.lastName != saved.lastName
+                || draft.username != saved.username
+            {
+                let attributes = Clerk.shared.environment?.userSettings.attributes ?? [:]
+                _ = try await user.update(.init(
+                    username: attributes["username"]?.enabled == true ? draft.username : nil,
+                    firstName: attributes["first_name"]?.enabled == true ? draft.firstName : nil,
+                    lastName: attributes["last_name"]?.enabled == true ? draft.lastName : nil
+                ))
+                try await self.syncProfile()
+            }
+            // Only what changed is sent, so an edit made on another Mac to a
+            // different field survives this one.
+            let changes = Self.aboutChanges(from: saved, to: draft)
+            if changes != NativeProfileAbout() { self.about = try await self.network.saveProfileAbout(changes) }
             self.savedProfile = draft
             self.navigate(.account)
             self.notice = "Profile saved."
@@ -486,6 +508,8 @@ final class NativeSettingsModel: ObservableObject {
 
     private static let cacheLifetime: TimeInterval = 30
 
+    /// What was saved, as Settings last knew it. `nil` while the database has
+    /// not answered, so nothing counts as a change that could clear it.
     private var savedProfile: ProfileDraft?
     private var profileReconciliationStarted = false
     private var sessionsLoadedAt: Date?
@@ -495,6 +519,28 @@ final class NativeSettingsModel: ObservableObject {
     private var history = [Route(section: .general)]
     @Published private var historyIndex = 0
     @Dependency(\.network) private var network
+
+    /// The fields of `draft` that differ from `saved`, as a patch.
+    private static func aboutChanges(from saved: ProfileDraft, to draft: ProfileDraft) -> NativeProfileAbout {
+        NativeProfileAbout(
+            bio: draft.bio == saved.bio ? nil : draft.bio,
+            location: draft.location == saved.location ? nil : draft.location,
+            website: draft.website == saved.website ? nil : draft.website,
+            twitter: draft.twitter == saved.twitter ? nil : draft.twitter,
+            telegram: draft.telegram == saved.telegram ? nil : draft.telegram
+        )
+    }
+
+    /// The names from Clerk, the rest from the database. Without the
+    /// database's answer the saved state stays unknown and Save stays off.
+    private func fillProfile() {
+        self.firstName = self.user?.firstName ?? ""; self.lastName = self.user?.lastName ?? ""; self.username = self
+            .user?.username ?? ""
+        let about = self.about ?? NativeProfileAbout()
+        self.bio = about.bio ?? ""; self.location = about.location ?? ""; self.website = about.website ?? ""
+        self.twitter = about.twitter ?? ""; self.telegram = about.telegram ?? ""
+        self.savedProfile = self.about == nil ? nil : self.profileDraft.normalized
+    }
 
     private func advanceVerification() async throws {
         guard let session = NativeSession.shared.session, let verification else { return }
