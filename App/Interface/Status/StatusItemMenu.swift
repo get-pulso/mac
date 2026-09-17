@@ -15,7 +15,8 @@ final class StatusItemMenu: NSObject {
         replayOnboarding: @escaping () -> Void,
         canReplayOnboarding: @escaping () -> Bool,
         quit: @escaping () -> Void,
-        prefetch: @escaping () -> Void = {}
+        prefetch: @escaping () -> Void = {},
+        rehearseOnboarding: @escaping () -> Void = {}
     ) {
         self.toggle = toggle
         self.open = open
@@ -27,12 +28,23 @@ final class StatusItemMenu: NSObject {
         self.canReplayOnboarding = canReplayOnboarding
         self.quit = quit
         self.prefetch = prefetch
+        self.rehearseOnboarding = rehearseOnboarding
     }
 
     // MARK: Internal
 
     static func opensContextMenu(type: NSEvent.EventType?, modifiers: NSEvent.ModifierFlags) -> Bool {
         type == .rightMouseUp || (type == .leftMouseUp && modifiers.contains(.control))
+    }
+
+    /// Whether a mouse down at `point` fell on the item whose button is at
+    /// `button`, all in screen coordinates. The item owns the bar's full height
+    /// in its button's column: from the bar's lower edge, where the visible
+    /// frame stops, up to the top of the screen, where a pointer thrown at the
+    /// bar comes to rest.
+    static func isOnItem(_ point: NSPoint, button: NSRect, screen: NSRect, visibleFrame: NSRect) -> Bool {
+        point.x >= button.minX && point.x <= button.maxX
+            && point.y >= min(button.minY, visibleFrame.maxY) && point.y <= screen.maxY
     }
 
     func attach(to item: NSStatusItem) {
@@ -58,15 +70,25 @@ final class StatusItemMenu: NSObject {
         let preferences = self.item("Settings…", action: #selector(self.showSettings), key: ",")
         preferences.isEnabled = self.canOpenSettings()
         menu.addItem(preferences)
+        // Developer tools only: compiled out of Release, which the status
+        // menu checks are built as.
+        #if DEBUG
         menu.addItem(.separator())
         let replay = self.item("Replay onboarding", action: #selector(self.replayWelcome))
         replay.isEnabled = self.canReplayOnboarding()
         menu.addItem(replay)
-        #if DEBUG
+        // The whole path again, profile steps included, with nothing saved.
+        let rehearse = self.item("Replay onboarding with profile", action: #selector(self.rehearseWelcome))
+        rehearse.isEnabled = self.canReplayOnboarding()
+        menu.addItem(rehearse)
         menu.addItem(.separator())
         menu.addItem(self.item(
             InviteMocks.isEnabled ? "Turn off invite mocks" : "Invite mocks…",
             action: #selector(self.toggleInviteMocks)
+        ))
+        menu.addItem(self.item(
+            PerformanceHUD.isEnabled ? "Hide performance HUD" : "Show performance HUD",
+            action: #selector(self.togglePerformanceHUD)
         ))
         #endif
         menu.addItem(.separator())
@@ -89,6 +111,7 @@ final class StatusItemMenu: NSObject {
     private let replayOnboarding: () -> Void
     private let canReplayOnboarding: () -> Bool
     private let quit: () -> Void
+    private let rehearseOnboarding: () -> Void
     /// Asks for what the popover will need. The pointer reaches the menu bar
     /// before the click does, and that head start is roughly what one request
     /// costs, so the list is often already in hand by the time it opens.
@@ -132,6 +155,7 @@ final class StatusItemMenu: NSObject {
     @objc private func openInvite() { if self.canOpenSettings() { self.invite() } }
     @objc private func showSettings() { if self.canOpenSettings() { self.settings() } }
     @objc private func replayWelcome() { if self.canReplayOnboarding() { self.replayOnboarding() } }
+    @objc private func rehearseWelcome() { if self.canReplayOnboarding() { self.rehearseOnboarding() } }
     @objc private func quitFirstlight() { self.quit() }
 
     #if DEBUG
@@ -141,5 +165,7 @@ final class StatusItemMenu: NSObject {
         SocialStore.shared.reloadForMocks()
         self.open()
     }
+
+    @objc private func togglePerformanceHUD() { PerformanceHUD.isEnabled.toggle() }
     #endif
 }

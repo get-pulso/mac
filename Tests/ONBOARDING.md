@@ -3,9 +3,11 @@
 The accepted Ray / Flow light belongs to the real macOS application. It is the
 final version of `playground/onboarding-shader` (see its `RAY-TO-LOGO-HANDOFF.md`);
 the shader is kept in step with the playground minus the comparison styles.
-Right-click the menu-bar icon and choose `Replay onboarding` to run it again
-without signing out. Replay is disabled while OAuth, session restoration or profile
-completion is in flight.
+In Debug builds, right-click the menu-bar icon and choose `Replay onboarding` to run it
+again without signing out. Replay is disabled while OAuth, session restoration or profile
+completion is in flight. Replay, `Replay onboarding with profile`, invite mocks and the
+performance HUD are developer tools behind `#if DEBUG`: Release, which `Scripts/release.sh`
+archives, has none of them, and `Tests/NativeStatusMenuChecks.swift` is built the same way.
 
 ## Flow
 
@@ -42,7 +44,10 @@ nothing of the name stays faded), so its last letters appear first, the pair
 kept centred; the pair then rises with a quintic ease-in-out
 to the header line 44 pt from the top and shrinks to a 40 pt mark (4.35–4.95 s)
 and stays there (`WelcomeLayout`, one set of numbers for the shader's rect and the
-SwiftUI name). The title, plain `Welcome` because the name is already in the
+SwiftUI name). Two trackpad taps close the intro: one as the name starts to slide out
+(3.70 s, its quick departure is visible in the same frame), one as the pair lands in
+the header (4.89 s, under 1% of the rise left; the quintic ease has no visible stop at
+4.95 s, so a tap there is felt after it). The title, plain `Welcome` because the name is already in the
 header, takes the centre at 5.00–5.30 s, its subtitle follows on its own at 5.38–5.68 s, the
 button arrives at 5.78–6.15 s: one after another. The
 shader's `exit` uniform (soften and fade the settled mark) exists but is unused
@@ -83,12 +88,25 @@ The desktop dimming is authored in real seconds: 0 → 72% over 0–1.1 s, resto
   Reduce Motion reveals the final arrangement immediately.
 - The window stays open for loading, network errors, retry, code/MFA and profile completion.
   An expanded form owns the whole window; the mark leaves the pane with the title.
-- As soon as Clerk reports an active session after Google/verification, onboarding
-  closes and the real 350 pt menu-bar panel opens, before awaiting `userInfo()`.
-  No completed-account screen or profile loader is painted in the onboarding window.
-  Slow profile requests and retryable errors stay in the panel. Only a successful
-  `userInfo()` sets the account ID and replaces completion with the dashboard.
-  Dismissing the panel while it loads does not reopen it on success.
+- Signed in from the onboarding window (`OnboardingWindowController.isPresented`),
+  the window stays: the pill says `Signing in…` while `userInfo()` runs, and
+  `OnboardingFlow.continueAfterSignIn` picks what is still missing. No first name
+  from Google → the name step; an empty bio → the About step (the question is the
+  title, the placeholder an example, the field live once the step's 0.34 s spring
+  has arrived — focused 60 ms in, it froze the motion twice, 5–9 frames — a location and links
+  as chips that grow into fields where they stand, one button that says
+  `Skip for now` until something is typed). A filled profile skips both. The save
+  is the profile editor's (Clerk name, unsafe metadata, `syncNativeProfile`); then
+  `WindowManager.handoffFromOnboarding`: the step rises out, the name fades, the
+  header mark flies into the status item (`OnboardingHandoff`, 0.55 s, quintic),
+  the window fades and the panel opens on the dashboard. Reduce Motion or a
+  second screen: no flight. Signed in anywhere else (a session restored at
+  launch, a URL callback), the panel opens before `userInfo()` as before.
+  Location uses CoreLocation (`OnboardingCityLookup`; the sandbox needs
+  `com.apple.security.personal-information.location`, Info.plist the usage
+  strings); a refusal turns the chip into a field, nothing is explained.
+  Only a successful `userInfo()` sets the account ID. Dismissing the panel while
+  it loads does not reopen it on success.
 - At app launch, restored accounts stay in welcome with their avatar and a
   `Continue as Name` button. Confirmation opens the menu-bar popover without Google.
   The account is shown only after an active Clerk session and successful `userInfo()`.
@@ -183,6 +201,16 @@ xcrun swiftc -parse-as-library -O Tests/SignInHandoffContracts.swift \
 The handoff source contracts check that the menu-bar panel opens before the profile
 request suspends, account access still waits for verification, and replay preserves
 the session. The menu checks execute real NSMenu actions, including replay guards.
+
+`--preview-onboarding-flow` runs the whole path in the real windows on fixtures:
+a palette beside the window switches the invite (friend, group, none, expired,
+late), Google's name, the sign-in outcome, a filled profile, the location outcome
+(the real system prompt, or granted/denied without one), the save outcome and
+Reduce Motion; `Jump to` lands on a step. Unattended: `--flow-intro no
+--flow-invite late --flow-jump about --flow-filled`. A preview process takes its
+own instance lock, so it runs beside the user's Firstlight; build it into another
+DerivedData (for example `/tmp/firstlight-derived-flow`) with the same signing
+flags and run the binary directly, never `open`.
 
 For visual inspection of the real Debug bundle, `--preview-onboarding` displays an
 explicitly labeled, inert sign-in preview using the production Continue button.

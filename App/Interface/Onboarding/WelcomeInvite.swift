@@ -17,34 +17,60 @@ final class WelcomeInvite: ObservableObject {
     }
 
     @Published private(set) var inviter: Inviter?
+    /// The server answered and said no: the link has run its course. A
+    /// transport failure is not this; it leaves Welcome generic and the tray
+    /// still handles the link after sign-in.
+    @Published private(set) var expired = false
+
+    #if DEBUG
+    /// What a preview wants Welcome to believe, and how late it should learn it.
+    struct Fixture {
+        var inviter: Inviter?
+        var expired = false
+        var delay: Double = 0
+    }
+
+    nonisolated(unsafe) static var fixture: Fixture?
+    #endif
 
     /// Looks up the invitation in `text`, if it is one. A miss leaves Welcome
     /// as it would be without an invitation; the tray still handles the link.
     func load(_ text: String?) async {
+        #if DEBUG
+        if let fixture = Self.fixture {
+            if fixture.delay > 0 { try? await Task.sleep(for: .seconds(fixture.delay)) }
+            self.inviter = fixture.inviter
+            self.expired = fixture.expired
+            return
+        }
+        #endif
         guard let text, let input = try? InviteInput.parse(text) else {
             self.inviter = nil
             return
         }
         @Dependency(\.network) var network
-        switch input {
-        case let .friendCode(code):
-            guard let info: NativeJoinInfo = try? await network
-                .request(path: "/api/join/\(code)", method: .get, auth: false)
-            else { return }
-            self.inviter = Inviter(
-                name: info.invite.inviterName,
-                avatarURL: info.invite.inviterAvatarUrl,
-                destination: "Firstlight"
-            )
-        case let .token(token):
-            guard let info: NativeInviteInfo = try? await network
-                .request(path: "/api/invite/info", method: .get, auth: false, query: ["token": token])
-            else { return }
-            self.inviter = Inviter(
-                name: info.invite.inviterName,
-                avatarURL: info.invite.inviterAvatarUrl,
-                destination: info.invite.isUniversal ? "Firstlight" : info.invite.groupName
-            )
-        }
+        do {
+            switch input {
+            case let .friendCode(code):
+                let info: NativeJoinInfo = try await network
+                    .request(path: "/api/join/\(code)", method: .get, auth: false)
+                self.inviter = Inviter(
+                    name: info.invite.inviterName,
+                    avatarURL: info.invite.inviterAvatarUrl,
+                    destination: "Firstlight"
+                )
+            case let .token(token):
+                let info: NativeInviteInfo = try await network
+                    .request(path: "/api/invite/info", method: .get, auth: false, query: ["token": token])
+                self.inviter = Inviter(
+                    name: info.invite.inviterName,
+                    avatarURL: info.invite.inviterAvatarUrl,
+                    destination: info.invite.isUniversal ? "Firstlight" : info.invite.groupName
+                )
+            }
+        } catch is NativeError {
+            // The server itself refused the link: it is gone.
+            self.expired = true
+        } catch {}
     }
 }

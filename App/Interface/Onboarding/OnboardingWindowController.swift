@@ -128,6 +128,36 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
     /// Used by successful authentication and app termination, never signs out.
     func close() { self.tearDown(closeNative: true) }
 
+    /// The header mark, in screen coordinates: where the handoff flight starts.
+    func headerMarkScreenRect() -> CGRect? {
+        guard let native = nativeWindow else { return nil }
+        let panel = native.contentView?.bounds.size ?? native.frame.size
+        let slot = WelcomeLayout.frame(at: WelcomeTiming.interactiveAt, in: panel).markRect
+        let frame = native.frame
+        return CGRect(
+            x: frame.minX + slot.minX, y: frame.maxY - slot.maxY,
+            width: slot.width, height: slot.height
+        )
+    }
+
+    /// The window goes quietly while the mark is on its way; then it is closed.
+    func fadeOut(duration: Double, completion: @escaping () -> Void) {
+        guard let native = nativeWindow, native.alphaValue > 0 else {
+            self.close()
+            completion()
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = duration
+            native.animator().alphaValue = 0
+        }, completionHandler: {
+            Task { @MainActor in
+                self.close()
+                completion()
+            }
+        })
+    }
+
     func windowWillClose(_ notification: Notification) {
         self.tearDown(closeNative: false)
         self.onClose?()

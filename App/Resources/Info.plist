@@ -38,6 +38,10 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSLocationUsageDescription</key>
+	<string>Firstlight shows your city on your profile.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Firstlight shows your city on your profile.</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>LSMultipleInstancesProhibited</key>

@@ -51,7 +51,9 @@ struct OnboardingView: View {
                         .position(x: panel.midX, y: panel.midY)
                 }
 
-                if nativeSurface, handover > 0, !expandedForm, let mark = RayLogoImage.cropped {
+                if nativeSurface, handover > 0, !expandedForm, !stage.markInFlight,
+                   let mark = RayLogoImage.cropped
+                {
                     Image(nsImage: mark)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -80,6 +82,7 @@ struct OnboardingView: View {
     @State private var expandedForm = false
     @StateObject private var invite = WelcomeInvite()
     @ObservedObject private var session = NativeSession.shared
+    @ObservedObject private var stage = OnboardingStage.shared
 
     private func welcome(size: CGSize, frame: WelcomeLayout.Frame) -> some View {
         let time = self.playback.elapsed
@@ -118,66 +121,95 @@ struct OnboardingView: View {
                 .frame(width: windowWidth, height: size.height)
                 .position(x: frame.nameWindowLeft + windowWidth / 2, y: size.height / 2)
             }
-            .opacity(expandedForm ? 0 : frame.nameOpacity)
+            .opacity(expandedForm || stage.markInFlight ? 0 : frame.nameOpacity)
+            .animation(.easeOut(duration: 0.2), value: stage.markInFlight)
             .accessibilityHidden(true)
 
             // Takes the centre once the pair has risen; they never overlap.
             // The title arrives first, its subtitle after it, one after another.
-            VStack(spacing: compact ? 10 : 14) {
+            let title = self.title(for: inviter)
+            let subtitle = self.subtitle(for: inviter)
+            // Only while the stage is Welcome. Once it moves on, this rises
+            // out the way every step leaves and is not drawn again, so a late
+            // invitation cannot surface under a later step.
+            if stage.isWelcome { VStack(spacing: compact ? 10 : 14) {
                 VStack(spacing: compact ? 10 : 14) {
                     if let inviter {
                         FirstlightAvatar(url: inviter.avatarURL, name: inviter.name, size: compact ? 52 : 64)
                             .scaleEffect(0.3 + 0.7 * titleIn)
+                            .transition(.scale(scale: 0.3).combined(with: .opacity))
                             .accessibilityHidden(true)
                     }
-                    Text(self.title(for: inviter))
-                        .font(.system(size: self.titleSize(for: inviter, compact: compact), weight: .medium))
-                        .tracking(-1.2)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 28)
-                        .accessibilityAddTraits(.isHeader)
+                    // Keyed by its words: an invitation that arrives after the
+                    // title is already up morphs the title in place rather
+                    // than swapping it under the reader.
+                    ZStack {
+                        Text(title)
+                            .font(.system(size: self.titleSize(for: inviter, compact: compact), weight: .medium))
+                            .tracking(-1.2)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 28)
+                            .id(title)
+                            .transition(OnboardingStage.forward)
+                    }
+                    .accessibilityAddTraits(.isHeader)
                 }
                 .opacity(titleAlpha)
                 .blur(radius: (1 - titleAlpha) * 8)
                 .offset(y: (1 - titleIn) * 40)
                 .accessibilityHidden(titleAlpha < 1)
-                Text(self.subtitle(for: inviter))
-                    .font(.system(size: compact ? 14 : 15))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 28)
-                    .opacity(subtitleAlpha)
-                    .blur(radius: (1 - subtitleAlpha) * 6)
-                    .offset(y: (1 - subtitleIn) * 18)
-                    .accessibilityHidden(subtitleAlpha < 1)
+                ZStack {
+                    Text(subtitle)
+                        .font(.system(size: compact ? 14 : 15))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 28)
+                        .id(subtitle)
+                        .transition(OnboardingStage.forward)
+                }
+                .opacity(subtitleAlpha)
+                .blur(radius: (1 - subtitleAlpha) * 6)
+                .offset(y: (1 - subtitleIn) * 18)
+                .accessibilityHidden(subtitleAlpha < 1)
             }
+            .animation(OnboardingStage.stepAnimation, value: title)
+            .animation(OnboardingStage.stepAnimation, value: subtitle)
             .offset(y: -(compact ? 22 : 30))
             .opacity(expandedForm ? 0 : 1)
             .accessibilityHidden(expandedForm)
-
-            VStack {
-                Spacer(minLength: 0)
-                Group {
-                    if expandedForm {
-                        ScrollView { content.frame(maxWidth: .infinity) }
-                            .scrollIndicators(.hidden)
-                            .frame(height: max(180, size.height - 148))
-                    } else {
-                        content
-                    }
-                }
-                .frame(width: min(352, size.width - 64))
-                .opacity(buttonAlpha)
-                .blur(radius: (1 - buttonAlpha) * 5)
-                .offset(y: (1 - buttonIn) * 24)
-                .allowsHitTesting(enabled)
-                .disabled(!enabled)
-                .accessibilityHidden(!enabled)
-                .padding(.bottom, compact ? 24 : 36)
+            .transition(OnboardingStage.forward)
             }
-            .frame(width: size.width, height: size.height)
+
+            if stage.isWelcome {
+                VStack {
+                    Spacer(minLength: 0)
+                    Group {
+                        if expandedForm {
+                            ScrollView { content.frame(maxWidth: .infinity) }
+                                .scrollIndicators(.hidden)
+                                .frame(height: max(180, size.height - 148))
+                        } else {
+                            content
+                        }
+                    }
+                    .frame(width: min(352, size.width - 64))
+                    .opacity(buttonAlpha)
+                    .blur(radius: (1 - buttonAlpha) * 5)
+                    .offset(y: (1 - buttonIn) * 24)
+                    .allowsHitTesting(enabled)
+                    .disabled(!enabled)
+                    .accessibilityHidden(!enabled)
+                    .padding(.bottom, compact ? 24 : 36)
+                }
+                .frame(width: size.width, height: size.height)
+            } else {
+                // A step owns the centre and the bottom, under the same header.
+                content
+                    .frame(width: size.width, height: size.height)
+            }
         }
         .foregroundStyle(.white)
+        .animation(OnboardingStage.stepAnimation, value: self.stage.isWelcome)
         .onPreferenceChange(OnboardingFormExpandedKey.self) { expandedForm = $0 }
     }
 
@@ -190,7 +222,11 @@ struct OnboardingView: View {
 
     private func subtitle(for inviter: WelcomeInvite.Inviter?) -> String {
         // The line the site leads with, so the app and the front door agree.
-        guard let inviter else { return "Think you\u{2019}re the most productive? Prove it." }
+        guard let inviter else {
+            return self.invite.expired
+                ? "This invite link has run its course. You can still sign in."
+                : "Think you\u{2019}re the most productive? Prove it."
+        }
         return inviter.isGroup ? "Sign in to join them." : "Sign in and you'll be friends right away."
     }
 

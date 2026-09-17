@@ -7,6 +7,7 @@ enum OnboardingPreview {
     // MARK: Internal
 
     @MainActor static func showIfRequested() -> Bool {
+        if OnboardingFlowPreview.showIfRequested() { return true }
         guard CommandLine.arguments.contains("--preview-onboarding") else { return false }
         self.controller.onClose = { NSApp.terminate(nil) }
         let account: WelcomeAccount? = CommandLine.arguments.contains("--preview-signed-in")

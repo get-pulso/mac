@@ -10,8 +10,12 @@ import SwiftUI
 final class AppWindow: NSPanel {
     // MARK: Lifecycle
 
-    init(appView: AppView) {
-        self.appView = appView
+    convenience init(appView: AppView) { self.init(content: appView) }
+
+    /// Hosts the view as it is: no type erasure between the window and the
+    /// content, so the popover's own tree is exactly what it always was.
+    init(content: some View) {
+        self.hostingView = NSHostingView(rootView: content)
         super.init(
             contentRect: .zero,
             styleMask: [.borderless, .fullSizeContentView, .nonactivatingPanel],
@@ -31,8 +35,7 @@ final class AppWindow: NSPanel {
 
     // MARK: Private
 
-    private let appView: AppView
-    private lazy var hostingView = NSHostingView(rootView: self.appView)
+    private let hostingView: NSView
 
     private let blurView: NSVisualEffectView = {
         let view = NSVisualEffectView()

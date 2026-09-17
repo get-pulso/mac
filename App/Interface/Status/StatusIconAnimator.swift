@@ -30,12 +30,34 @@ final class StatusIconAnimator {
         self.statusBarItem.button
     }
 
+    /// Where the flying mark lands.
+    var iconSide: CGFloat { Self.iconSize }
+
     func highlight() {
         self.statusBarButton?.highlight(true)
     }
 
     func unhighlight() {
         self.statusBarButton?.highlight(false)
+    }
+
+    /// The icon steps aside while the mark is in flight towards it.
+    func dim(duration: Double = 0.2) {
+        guard let button = statusBarButton else { return }
+        button.wantsLayer = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            button.animator().alphaValue = 0
+        }
+    }
+
+    /// The flying mark has landed: the icon is back, and lights up for a
+    /// moment so the eye finds where the app now lives.
+    func arrive() {
+        guard let button = statusBarButton else { return }
+        button.alphaValue = 1
+        button.highlight(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.unhighlight() }
     }
 
     // MARK: Private

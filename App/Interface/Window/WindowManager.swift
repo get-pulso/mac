@@ -36,7 +36,8 @@ final class WindowManager {
             replayOnboarding: { [weak self] in self?.replayOnboarding() },
             canReplayOnboarding: { Self.canReplayOnboarding },
             quit: { NSApp.terminate(nil) },
-            prefetch: { SocialStore.shared.warm() }
+            prefetch: { SocialStore.shared.warm() },
+            rehearseOnboarding: { [weak self] in self?.rehearseOnboarding() }
         ))
         self.startMouseMonitor()
     }
@@ -44,15 +45,68 @@ final class WindowManager {
     @MainActor
     func showWelcome() {
         self.hide()
+        OnboardingStage.shared.reset()
+        OnboardingFlow.shared.reset()
         OnboardingWindowController.shared.show(content: AnyView(LoginView(onboarding: true)))
+    }
+
+    /// The profile is saved: the step rises out, the name goes, the mark flies
+    /// from the window's header into the status item, the window fades, and
+    /// the panel opens where the mark landed. The mark is in one place at a time.
+    @MainActor
+    func handoffFromOnboarding() {
+        let controller = OnboardingWindowController.shared
+        let stage = OnboardingStage.shared
+        guard controller.isPresented else {
+            self.show()
+            return
+        }
+        stage.advance(to: .handoff)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            guard let start = controller.headerMarkScreenRect(),
+                  let icon = self.statusIconAnimator, let button = icon.statusBarButton,
+                  let image = RayLogoImage.cropped
+            else {
+                controller.close()
+                stage.reset()
+                OnboardingFlow.shared.reset()
+                self.show()
+                return
+            }
+            stage.markInFlight = true
+            icon.dim()
+            OnboardingHandoff.fly(
+                image: image, from: start, to: button, iconSide: icon.iconSide, reduceMotion: reduceMotion
+            ) { [weak self] in
+                icon.arrive()
+                stage.reset()
+                OnboardingFlow.shared.reset()
+                self?.show()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                controller.fadeOut(duration: reduceMotion ? 0.12 : 0.35) {}
+            }
+        }
     }
 
     @MainActor
     func replayOnboarding() {
         guard Self.canReplayOnboarding else { return }
         self.hide()
+        OnboardingStage.shared.reset()
+        OnboardingFlow.shared.reset()
         OnboardingWindowController.shared.close()
         OnboardingWindowController.shared.show(content: AnyView(LoginView(onboarding: true)), forceAnimation: true)
+    }
+
+    /// The replay, and then the profile steps as a new account sees them: the
+    /// name and About fields empty, whatever is typed thrown away at the end.
+    @MainActor
+    func rehearseOnboarding() {
+        self.replayOnboarding()
+        OnboardingFlow.shared.rehearsal = true
     }
 
     @MainActor

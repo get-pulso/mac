@@ -92,9 +92,12 @@ final class NativeSession: ObservableObject {
         @Dependency(\.appRouter) var router
         @Dependency(\.windowManager) var window
         let sessionID = self.session?.id
-        // Move to the actual menu-bar panel before any profile request can suspend.
-        // Never paint a completed-account screen or skeleton over the Opal welcome.
-        if presentDashboard {
+        // Signed in from the onboarding window: the window stays for the
+        // profile steps, and the panel opens at the end, when the mark has
+        // flown to the menu bar. Anywhere else, move to the panel before any
+        // profile request can suspend.
+        let inOnboarding = presentDashboard && OnboardingWindowController.shared.isPresented
+        if presentDashboard, !inOnboarding {
             router.move(to: .signInCompletion)
             window.show()
         }
@@ -102,10 +105,14 @@ final class NativeSession: ObservableObject {
             let info = try await network.userInfo()
             guard self.session?.id == sessionID, self.session?.status == .active else { throw CancellationError() }
             Defaults[.currentUserID] = info.user.id
-            // Heal a prior partial save where Clerk succeeded but the Firstlight
-            // profile store was temporarily unavailable. Sign-in itself stays
-            // usable if this best-effort reconciliation fails.
+            // Heal a prior partial save where Clerk took a new name or photo but
+            // the Firstlight profile store was temporarily unavailable. Sign-in
+            // itself stays usable if this best-effort reconciliation fails.
             try? await network.syncNativeProfile()
+            // The profile steps start from what the person already wrote, which
+            // the database keeps; asked while the sign-in button still waits.
+            var about: NativeProfileAbout?
+            if inOnboarding { about = try? await network.profileAbout() }
             self.welcomeAccount = WelcomeAccount(
                 id: info.user.id, firstName: self.user?.firstName, fullName: info.user.name,
                 username: self.user?.username, avatarURL: self.user?.imageUrl
@@ -116,6 +123,7 @@ final class NativeSession: ObservableObject {
             // waiting, instead of on the first click. Both a fresh sign-in and
             // a session restored at launch arrive here.
             SocialStore.shared.warm()
+            if inOnboarding { OnboardingFlow.shared.continueAfterSignIn(about: about) }
             // The panel is already open. If the user dismissed it while loading,
             // respect that instead of reopening it when the response arrives.
         } catch {
@@ -126,6 +134,10 @@ final class NativeSession: ObservableObject {
 
     func continueFromWelcome() {
         guard self.canContinueFromWelcome else { return }
+        if OnboardingFlow.shared.rehearsal {
+            OnboardingFlow.shared.startRehearsal()
+            return
+        }
         @Dependency(\.windowManager) var window
         window.show()
     }

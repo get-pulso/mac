@@ -23,8 +23,16 @@ enum AppLaunchGuard {
 
     @MainActor
     static func acquireSingleInstanceLock() -> Bool {
+        var lockName = "sh.firstlight.mac.instance.lock"
+        #if DEBUG
+        // A preview is its own process beside the real app, never a second
+        // instance of it: it gets its own lock and leaves the user's alone.
+        if CommandLine.arguments.contains(where: { $0.hasPrefix("--preview-") }) {
+            lockName = "sh.firstlight.mac.preview.lock"
+        }
+        #endif
         let path = FileManager.default.temporaryDirectory
-            .appendingPathComponent("sh.firstlight.mac.instance.lock")
+            .appendingPathComponent(lockName)
             .path
         let descriptor = open(path, O_CREAT | O_RDWR, mode_t(S_IRUSR | S_IWUSR))
         guard descriptor >= 0 else { return false }

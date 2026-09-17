@@ -8,7 +8,10 @@ struct LoginView: View {
 
     var body: some View {
         Group {
-            if onboarding, session.canContinueFromWelcome, let account = session.welcomeAccount {
+            if onboarding, !stage.isWelcome {
+                // Google is done; the profile steps own the centre.
+                OnboardingFlowSteps()
+            } else if onboarding, session.canContinueFromWelcome, let account = session.welcomeAccount {
                 OnboardingContinueButton(
                     account: account,
                     avatar: AnyView(FirstlightAvatar(
@@ -18,13 +21,12 @@ struct LoginView: View {
                     )),
                     action: session.continueFromWelcome
                 ).padding(16)
-            } else if onboarding, isWelcomeEntry { welcomeEntry }
+            } else if onboarding, showsWelcomeEntry { welcomeEntry }
             else { form }
         }
         .preference(
             key: OnboardingFormExpandedKey.self,
-            value: onboarding && !session
-                .canContinueFromWelcome && (!isWelcomeEntry || model.error != nil || session.error != nil)
+            value: onboarding && stage.isWelcome && !session.canContinueFromWelcome && !showsWelcomeEntry
         )
     }
 
@@ -32,8 +34,19 @@ struct LoginView: View {
 
     @ObservedObject private var model = LoginViewModel.shared
     @ObservedObject private var session = NativeSession.shared
+    @ObservedObject private var stage = OnboardingStage.shared
 
     private var isWelcomeEntry: Bool { self.model.step == .email || self.model.step == .signup }
+
+    /// The pill stays through sign-in itself: once Google is done and the
+    /// profile is being fetched, its label says so. Only a failure to finish
+    /// brings the form with Retry and Sign out.
+    private var showsWelcomeEntry: Bool {
+        self.isWelcomeEntry ||
+            (self.model.step == .complete && self.model.error == nil && self.session.error == nil)
+    }
+
+    private var signingIn: Bool { self.model.step == .complete }
 
     /// The page holds one object, and it is armed from the first frame. The
     /// session coming up is not a thing to look at: it is only a reason a press
@@ -49,9 +62,10 @@ struct LoginView: View {
                 NativeInlineError(message: error).frame(maxWidth: .infinity, alignment: .leading)
             }
             OnboardingContinueButton(
-                isLoading: model.busy || model.awaitingConnection,
+                isLoading: model.busy || model.awaitingConnection || signingIn || session.isCompletingSignIn,
                 isEnabled: canContinue,
-                loadingTitle: model.awaitingConnection ? "Connecting…" : "Opening Google…",
+                loadingTitle: signingIn ? "Signing in…" :
+                    model.awaitingConnection ? "Connecting…" : "Opening Google…",
                 action: model.continueWithGoogle
             )
             if session.ready, model.providers.isEmpty {

@@ -10,6 +10,9 @@ struct OnboardingContinueButton: View {
     var isLoading = false
     var isEnabled = true
     var loadingTitle = "Opening Google…"
+    /// The one button of the onboarding keeps its place from Welcome to the
+    /// end; later steps only give it another title.
+    var title: String?
     var account: WelcomeAccount?
     var avatar: AnyView?
     var action: () -> Void
@@ -63,12 +66,13 @@ struct OnboardingContinueButton: View {
         .disabled(!isEnabled || isLoading)
         .keyboardShortcut(.defaultAction)
         .animation(.easeInOut(duration: 0.2), value: isLoading)
-        .accessibilityLabel(isLoading ? loadingTitle : account?.buttonTitle ?? "Continue with Google")
+        .accessibilityLabel(currentTitle)
         .accessibilityHint(
-            account == nil ? "Press Enter to sign in with Google." :
+            title != nil ? "Press Enter to continue." :
+                account == nil ? "Press Enter to sign in with Google." :
                 "Press Enter to open Firstlight in the menu bar."
         )
-        .help("\(account?.buttonTitle ?? "Continue with Google") (Enter)")
+        .help("\(restingTitle) (Enter)")
     }
 
     // MARK: Private
@@ -82,6 +86,9 @@ struct OnboardingContinueButton: View {
     )
 
     @FocusState private var focused: Bool
+
+    private var restingTitle: String { self.title ?? self.account?.buttonTitle ?? "Continue with Google" }
+    private var currentTitle: String { self.isLoading ? self.loadingTitle : self.restingTitle }
 
     private var label: some View {
         HStack(spacing: 10) {
@@ -100,10 +107,9 @@ struct OnboardingContinueButton: View {
                 .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
                 .accessibilityHidden(true)
             }
-            Text(isLoading ? loadingTitle : account?.buttonTitle ?? "Continue with Google")
+            // The title morphs: shared letters stay, the rest moves.
+            OnboardingMorphLabel(currentTitle)
                 .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1).truncationMode(.tail)
-                .contentTransition(.opacity)
         }
         .foregroundStyle(.white)
         // An avatar carries its own edge, so it sits closer to the rim than a
