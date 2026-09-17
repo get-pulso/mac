@@ -13,7 +13,10 @@ releases_repo_url=${FIRSTLIGHT_RELEASES_REPO_URL:-https://github.com/${releases_
 # The app polls this URL; firstlight.sh rewrites /appcast.xml to the published feed below.
 feed_url=${FIRSTLIGHT_APPCAST_URL:-https://firstlight.sh/appcast.xml}
 # Where releases are actually published, and the source of truth this script appends to.
-published_feed_url=${FIRSTLIGHT_PUBLISHED_APPCAST_URL:-https://get-pulso.github.io/mac-releases/appcast.xml}
+# Firstlight has a feed file of its own: appcast.xml next to it belongs to the last
+# Pulso build, which must never be offered an update it cannot verify.
+feed_file=${FIRSTLIGHT_FEED_FILE:-firstlight.xml}
+published_feed_url=${FIRSTLIGHT_PUBLISHED_APPCAST_URL:-https://get-pulso.github.io/mac-releases/${feed_file}}
 notary_profile=${FIRSTLIGHT_NOTARY_PROFILE:-}
 # Names the existing Sparkle EdDSA key in the Keychain. It kept its original
 # account name through the Firstlight rename; changing it breaks update signing.
@@ -153,11 +156,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
-curl -fsSL --max-time 30 "$published_feed_url" -o "$remote_appcast"
-remote_build=$(xmllint --xpath \
-    'string((//*[local-name()="item"]/*[local-name()="version"])[1])' \
-    "$remote_appcast")
-[[ "$remote_build" == <-> ]] || fail "Could not read the current build from $published_feed_url"
+# The first release starts the feed; every later one is appended to it.
+remote_status=$(curl -sSL --max-time 30 -o "$remote_appcast" -w '%{http_code}' "$published_feed_url") || \
+    remote_status=000
+case "$remote_status" in
+    200)
+        remote_build=$(xmllint --xpath \
+            'string((//*[local-name()="item"]/*[local-name()="version"])[1])' \
+            "$remote_appcast")
+        [[ "$remote_build" == <-> ]] || fail "Could not read the current build from $published_feed_url"
+        ;;
+    404)
+        rm -f "$remote_appcast"
+        remote_build=0
+        ;;
+    *)
+        fail "Could not fetch $published_feed_url (HTTP $remote_status)"
+        ;;
+esac
 (( release_build > remote_build )) || \
     fail "Build $release_build must be greater than the published build $remote_build"
 
@@ -321,7 +337,9 @@ else
 
     feed_dir="$work_dir/feed"
     mkdir -p "$feed_dir"
-    cp "$remote_appcast" "$feed_dir/appcast.xml"
+    if [[ -f "$remote_appcast" ]]; then
+        cp "$remote_appcast" "$feed_dir/appcast.xml"
+    fi
     cp "$release_zip" "$feed_dir/${release_version}.zip"
     if [[ -n "$notes_file" ]]; then
         cp "$notes_file" "$feed_dir/${release_version}.txt"
@@ -390,9 +408,9 @@ releases_checkout="$work_dir/mac-releases"
 git clone --quiet "$releases_repo_url" "$releases_checkout"
 [[ "$(git -C "$releases_checkout" branch --show-current)" == "main" ]] || \
     fail "mac-releases default branch is not main"
-cp "$output_dir/appcast.xml" "$releases_checkout/appcast.xml"
+cp "$output_dir/appcast.xml" "$releases_checkout/$feed_file"
 git -C "$releases_checkout" diff --check
-git -C "$releases_checkout" diff --quiet -- appcast.xml && \
+[[ -n "$(git -C "$releases_checkout" status --porcelain -- "$feed_file")" ]] || \
     fail "Generated appcast does not change the published feed"
 
 source_commit=$(git -C "$project_root" rev-parse HEAD)
@@ -414,12 +432,12 @@ published_dmg_size=$(gh release view "$release_version" --repo "$source_repo" \
 [[ "$published_dmg_size" == "$dmg_length" ]] || \
     fail "Published GitHub DMG size does not match the signed image"
 
-git -C "$releases_checkout" add -- appcast.xml
+git -C "$releases_checkout" add -- "$feed_file"
 git -C "$releases_checkout" diff --cached --check
 git -C "$releases_checkout" commit -m "Release $release_version"
 git -C "$releases_checkout" push origin HEAD:main
 
-raw_feed="https://raw.githubusercontent.com/${releases_repo}/main/appcast.xml"
+raw_feed="https://raw.githubusercontent.com/${releases_repo}/main/${feed_file}"
 published_appcast="$work_dir/published-appcast.xml"
 curl -fsSL --max-time 30 "${raw_feed}?release=${release_build}" -o "$published_appcast"
 published_build=$(xmllint --xpath \
