@@ -149,19 +149,23 @@ final class WindowManager {
     private var statusIconAnimator: StatusIconAnimator?
     private var mouseMonitor: Any?
 
+    /// The status item's button in screen coordinates, and the screen it is on.
     @MainActor
-    private var targetWindowPostion: NSPoint? {
+    private var statusItemPlacement: (frame: NSRect, screen: NSScreen)? {
         guard
             let button = statusIconAnimator?.statusBarButton,
             let buttonWindow = button.window,
             let screen = buttonWindow.screen
         else { return nil }
+        return (buttonWindow.convertToScreen(button.convert(button.bounds, to: nil)), screen)
+    }
 
-        // Get button frame in screen coordinates
-        let buttonFrameInWindow = button.convert(button.bounds, to: nil)
-        let buttonFrameOnScreen = buttonWindow.convertToScreen(buttonFrameInWindow)
+    @MainActor
+    private var targetWindowPostion: NSPoint? {
+        guard let placement = self.statusItemPlacement else { return nil }
 
-        let visibleFrame = screen.visibleFrame
+        let buttonFrameOnScreen = placement.frame
+        let visibleFrame = placement.screen.visibleFrame
 
         let windowWidth: CGFloat = 350
         let cornerRadius: CGFloat = 16
@@ -204,7 +208,20 @@ final class WindowManager {
                 return
             }
 
+            let location = NSEvent.mouseLocation
             DispatchQueue.main.async {
+                // Since macOS 27 the menu bar belongs to MenuBarAgent, which
+                // forwards clicks to the status item, so a click on the item
+                // reaches this monitor as a click in another app, ahead of the
+                // item's own action. Hiding here would leave that action to
+                // find the panel hidden and open it straight back; the item
+                // toggles the panel itself.
+                if let placement = self.statusItemPlacement, StatusItemMenu.isOnItem(
+                    location,
+                    button: placement.frame,
+                    screen: placement.screen.frame,
+                    visibleFrame: placement.screen.visibleFrame
+                ) { return }
                 self.hide()
             }
         }
