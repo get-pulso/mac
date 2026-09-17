@@ -42,8 +42,9 @@ final class SocialStore: ObservableObject {
 
     /// What the popover shows under the tray: the list, one profile, or that
     /// person's photograph. Adding friends and the sent requests are trays,
-    /// not screens.
-    enum Screen: Hashable { case list, person(String), photo(String), app(String) }
+    /// not screens. `.agents` is a person's agents at length: the card on
+    /// their profile, opened out into a screen of its own.
+    enum Screen: Hashable { case list, person(String), photo(String), app(String), agents(String) }
 
     /// Which way the last screen change went. Forward pushes deeper (a tap on
     /// a row, on Invite, on Sent requests); back returns (Back, Escape, a
@@ -116,6 +117,16 @@ final class SocialStore: ObservableObject {
             default: false
             }
         }
+    }
+
+    /// One day of somebody's agents, open in a tray over the Agents screen.
+    /// It grows out of the record that named the day, so it carries which
+    /// one: `source` is that tile's id, and the words are the tile's own.
+    struct AgentDayTray: Hashable {
+        let date: String
+        let title: String
+        let note: String
+        let source: String
     }
 
     /// What the tray grows out of. A deep link or the status-item menu opens
@@ -212,6 +223,9 @@ final class SocialStore: ObservableObject {
     /// The open profile's coding agents. Loaded beside `activity`; nil until
     /// it answers, or when the person has none.
     @Published var agentSummary: NativeAgentSummary?
+    private(set) var agentStreak = AgentAnalytics.streak(nil)
+    private(set) var agentRecords: [AgentAnalytics.Record] = []
+    @Published private(set) var agentDayTray: AgentDayTray?
     @Published var loading = true
     @Published var busy = false
     @Published var screenLoading = false
@@ -229,6 +243,18 @@ final class SocialStore: ObservableObject {
     /// person the profile screen is about; open a profile with `openPerson`.
     @Published private(set) var selectedPerson: NativePerson?
     @Dependency(\.network) var network
+
+    /// The same person's last thirty days, whatever the period: streaks and
+    /// records are read from it, so they do not change with the zoom.
+    @Published private(set) var agentMonth: NativeAgentSummary? {
+        didSet {
+            // Read out of the month once, when it lands. The screen's body
+            // runs on every scroll tick and every frame of a push, and going
+            // through thirty days of runs there is what made it stall.
+            self.agentStreak = AgentAnalytics.streak(self.agentMonth)
+            self.agentRecords = self.agentMonth.map(AgentAnalytics.records) ?? []
+        }
+    }
 
     /// What the field currently holds, read as an invitation. A code is only
     /// offered once it is long enough to be one, so half-typed input stays quiet.
@@ -637,6 +663,23 @@ final class SocialStore: ObservableObject {
             twitter: card?.twitter, telegram: card?.telegram, active_app: nil,
             agent: nil, agent_active_at: nil, score: nil
         ))
+    }
+
+    // MARK: Agents
+
+    /// A person's agents at length. The person stays selected: the screen is
+    /// theirs, and Back returns to the profile it was opened from.
+    func openAgents(_ id: String) { self.open(.agents(id)) }
+
+    func openAgentDay(_ day: AgentDayTray) {
+        withAnimation(Self.screenTransition) { self.agentDayTray = day }
+    }
+
+    func closeAgentDay() {
+        guard self.agentDayTray != nil else { return }
+        // The tray's own closing curve, not the panel spring: a spring holds
+        // the leaving tray in the tree until it settles. See `AgentTrayGrow`.
+        withAnimation(AgentTrayGrow.animation(opening: false, reduceMotion: false)) { self.agentDayTray = nil }
     }
 
     // MARK: Tray
@@ -1095,7 +1138,7 @@ final class SocialStore: ObservableObject {
         self.requests = NativeRequests()
         self.personalInvite = nil; self.selectedPerson = nil
         self.activity = nil
-        self.agentSummary = nil; self.agentSummaryCache.removeAll()
+        self.agentSummary = nil; self.agentMonth = nil; self.agentDayTray = nil; self.agentSummaryCache.removeAll()
         self.inviteLookup?.cancel(); self.inviterLookup?.cancel(); self.query = ""; self.inviteInfo = nil
         self.inviter = nil
         self.inviteError = nil; self.checkingInvite = false; self.lookedUpToken = nil
@@ -1276,6 +1319,8 @@ final class SocialStore: ObservableObject {
         // and the profile, so the switch itself has to carry an animation. A
         // portrait opening carries its own, quicker one.
         withAnimation(Self.navigationTransition(opening: self.navigation.isOpening)) { self.screen = next }
+        // A day's tray belongs to the screen it was opened over.
+        self.agentDayTray = nil
         self.error = nil
         self.notice = nil
         self.feedbackToast = nil
@@ -1286,6 +1331,39 @@ final class SocialStore: ObservableObject {
         self.screenLoading = true
         self.screenTask = Task {
             defer { if self.screen == next, !Task.isCancelled { self.screenLoading = false } }
+            // The period's summary for the card and the sections that follow
+            // the zoom, the month's for the streak and the records, and the
+            // person's own time for the figure beside the agents'. A miss
+            // leaves whatever the cache had.
+            if case let .agents(id) = next {
+                let period = self.period
+                async let details: NativeActivity? = try? self.network.request(
+                    path: "/api/user/activity", method: .get, query: ["user_id": id, "period": period]
+                )
+                async let current: NativeAgentSummary? = period == "30d" ? nil : try? self.network.request(
+                    path: "/api/users/\(id)/agent-summary", method: .get,
+                    query: ["period": period, "tz": TimeZone.current.identifier]
+                )
+                async let month: NativeAgentSummary? = try? self.network.request(
+                    path: "/api/users/\(id)/agent-summary", method: .get,
+                    query: ["period": "30d", "tz": TimeZone.current.identifier]
+                )
+                let (loadedActivity, loadedCurrent, loadedMonth) = await (details, current, month)
+                guard !Task.isCancelled, self.screen == next, self.period == period else { return }
+                if let loadedActivity {
+                    self.activity = loadedActivity
+                    self.activityCache.insert(loadedActivity, for: self.profileCacheKey(id, period: period))
+                }
+                if let loadedMonth {
+                    self.agentMonth = loadedMonth
+                    self.agentSummaryCache.insert(loadedMonth, for: id + "30d")
+                }
+                if let summary = period == "30d" ? loadedMonth : loadedCurrent {
+                    self.agentSummary = summary
+                    self.agentSummaryCache.insert(summary, for: id + period)
+                }
+                return
+            }
             // Both requests are optional enhancements to data the list already
             // supplied, so nothing here throws; a miss just leaves the cache.
             if case let .person(id) = next {
@@ -1409,6 +1487,12 @@ final class SocialStore: ObservableObject {
             self.activity = self.activityCache.value(for: self.profileCacheKey(id, period: self.period))
             self.agentSummary = self.agentSummaryCache.value(for: id + self.period)
             if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
+        // The person and their card are the profile's, already in hand; only
+        // the month is this screen's own.
+        case let .agents(id):
+            self.activity = self.activityCache.value(for: self.profileCacheKey(id, period: self.period))
+            self.agentSummary = self.agentSummaryCache.value(for: id + self.period)
+            self.agentMonth = self.agentSummaryCache.value(for: id + "30d")
         // The picture is the one the profile it was opened from already has.
         case .list,
              .app,
@@ -1428,6 +1512,9 @@ final class SocialStore: ObservableObject {
         case .list,
              .app,
              .photo: true
+        case let .agents(id):
+            self.agentSummaryCache.isFresh(id + self.period, for: Self.cacheLifetime) &&
+                self.agentSummaryCache.isFresh(id + "30d", for: Self.cacheLifetime)
         case let .person(id):
             self.selectedPerson?.public_apps_only != true && self.activityCache.isFresh(
                 self.profileCacheKey(id, period: self.period),

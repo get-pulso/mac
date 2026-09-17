@@ -232,8 +232,15 @@ struct NativeDashboardView: View {
             NativeTrayMorph.animation(isExpanded: self.store.tray != nil, reduceMotion: self.reduceMotion),
             value: self.store.tray != nil
         )
+        // A day of somebody's agents sits the same way over the Agents
+        // screen, grown out of the record that named it.
+        .overlay(alignment: .bottom) { self.agentDayTrayLayer }
+        .coordinateSpace(name: AgentTileFrames.space)
+        .animation(
+            AgentTrayGrow.animation(opening: self.store.agentDayTray != nil, reduceMotion: self.reduceMotion),
+            value: self.store.agentDayTray != nil
+        )
         .bumpSurface()
-        // A profile's own trays sit the same way, over the profile.
         .textFieldStyle(.roundedBorder).controlSize(.regular).font(.system(size: 13))
         .overlay(alignment: .top) {
             if let feedback = store.feedbackToast {
@@ -254,6 +261,7 @@ struct NativeDashboardView: View {
         .task(id: store.listKey) {
             await store.refresh()
             if case .person = store.screen { store.refreshCurrentScreen(force: true) }
+            if case .agents = store.screen { store.refreshCurrentScreen(force: true) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .init("FirstlightSharingChanged"))) { _ in
             self.appDirectory.clear()
@@ -288,7 +296,8 @@ struct NativeDashboardView: View {
             if BumpEffects.shared.incoming != nil { BumpEffects.shared.dismissIncoming() }
             else if BumpEffects.shared.trayOpen {
                 BumpEffects.shared.trayOpen = false
-            } else if store.tray != nil { store.trayBack() }
+            } else if store.agentDayTray != nil { store.closeAgentDay() }
+            else if store.tray != nil { store.trayBack() }
             else if store.screen == .list { windowManager.hide() }
             else { store.goBack() }
         }
@@ -407,6 +416,9 @@ struct NativeDashboardView: View {
     private static let profileAvatarSize: CGFloat = 76
     private static let avatarMorphID = "avatar"
     private static let nameMorphID = "name"
+    /// The agents card is one card on the profile and at the top of the
+    /// Agents screen, and travels between the two.
+    private static let agentsCardMorphID = "agents-card"
     /// The location sits on both screens too, right under the name, so it
     /// travels with it rather than vanishing and reappearing. The active
     /// total does not: it is a trailing note in the row and the headline of
@@ -458,6 +470,15 @@ struct NativeDashboardView: View {
     @Dependency(\.windowManager) private var windowManager
     /// The chart column the pointer is on, shared by the two numbers above it.
     @State private var agentsHovered: AgentBucket?
+    /// The open day's natural height, once it has laid itself out.
+    @State private var agentDayHeight: CGFloat?
+    /// Where the record tiles stand, and the one the open day grew out of.
+    @State private var agentTileFrames = AgentTileFrames()
+    @State private var agentDaySource: CGRect?
+    /// How far the tray's title starts from its place, over the tile's own
+    /// title, and whether it has been sent home yet.
+    @State private var agentDayTitleTravel: CGSize?
+    @State private var agentDayTitleLanded = false
     @State private var confirming = false
     @State private var confirmationTitle = ""
     @State private var confirmationAction: (() -> Void)?
@@ -556,6 +577,7 @@ struct NativeDashboardView: View {
     /// mistake.
     private var profileFillsPanel: Bool {
         if case .app = self.store.screen { return true }
+        if case .agents = self.store.screen { return true }
         guard case .person = self.store.screen, let person = self.store.selectedPerson else { return false }
         // Either board's figure counts: on the agent board a person can have
         // agent minutes and no time of their own, and the card still fills.
@@ -666,6 +688,7 @@ struct NativeDashboardView: View {
             period: self.store.period, metric: self.store.metric,
             apps: self.showingAppRanking,
             canChooseBoard: self.store.screen == .list && self.store.tab == "global",
+            periodOnly: { if case .agents = self.store.screen { true } else { false } }(),
             appScope: self.appDirectory.context(for: self.visibleAppBundle).scope,
             appGroups: self.store.groups.map { (id: $0.id, name: $0.name) },
             onPeriod: self.store.setPeriod, onMetric: self.store.setMetric,
@@ -711,6 +734,7 @@ struct NativeDashboardView: View {
 
             HStack {
                 if case .app = store.screen { periodPicker }
+                else if case .agents = store.screen { periodPicker }
                 else if case let .person(id) = store.screen {
                     if id == Defaults[.currentUserID] {
                         profileAction("Edit") {
@@ -1173,6 +1197,7 @@ struct NativeDashboardView: View {
         if case let .person(id) = store.screen { personDetail(id) }
         if case .photo = store.screen { photoDetail }
         if case let .app(bundle) = store.screen { appDetail(bundle) }
+        if case let .agents(id) = store.screen { agentsDetail(id) }
     }
 
     private var backDestinationTitle: String {
@@ -1269,6 +1294,45 @@ struct NativeDashboardView: View {
         // and a button on top of a face is a button nobody finds.
         .padding(.top, NativeLayout.popoverHeaderHeight - NativeLayout.popoverContentPadding)
         .frame(maxWidth: .infinity)
+    }
+
+    /// The day's tray and the veil under it, built the way the invite tray's
+    /// layer is: each its own conditional inside a stack that is always in
+    /// the tree, so the tray's growth out of its tile is the tray's own
+    /// transition and not a fade of the whole layer.
+    private var agentDayTrayLayer: some View {
+        ZStack(alignment: .bottom) {
+            if self.store.agentDayTray != nil {
+                Color(nsColor: .windowBackgroundColor).opacity(0.72)
+                    .contentShape(Rectangle())
+                    .onTapGesture { self.store.closeAgentDay() }
+                    .transition(.opacity.animation(.easeOut(duration: 0.14)))
+                    .accessibilityHidden(true)
+            }
+            if let tray = self.store.agentDayTray,
+               let day = self.store.agentMonth?.days?.first(where: { $0.date == tray.date })
+            {
+                self.agentDayTray(tray, day: day)
+                    .transition(.asymmetric(
+                        insertion: .modifier(
+                            active: AgentTrayGrow(
+                                progress: self.reduceMotion ? 1 : 0,
+                                source: self.reduceMotion ? nil : self.agentDaySource
+                            ),
+                            identity: AgentTrayGrow(progress: 1, source: self.agentDaySource)
+                        ),
+                        removal: .modifier(
+                            active: AgentTrayGrow(
+                                progress: self.reduceMotion ? 1 : 0,
+                                source: self.reduceMotion ? nil : self.agentDaySource, closing: true
+                            ),
+                            identity: AgentTrayGrow(progress: 1, source: self.agentDaySource, closing: true)
+                        )
+                    ).combined(with: self.reduceMotion ? .opacity : .identity))
+                    .padding(8)
+            }
+        }
+        .allowsHitTesting(self.store.agentDayTray != nil)
     }
 
     /// Where a value sits between two points, as 0 to 1. `from` is the far
@@ -1997,6 +2061,7 @@ struct NativeDashboardView: View {
         case let .person(id): self.store.profilePeople[id]?.displayName ?? "Profile"
         case .photo: "Photo"
         case let .app(bundle): self.appDirectory.cards[bundle]?.name ?? "App"
+        case .agents: "Agents"
         }
     }
 
@@ -2336,6 +2401,193 @@ struct NativeDashboardView: View {
         }
     }
 
+    // MARK: Agents screen
+
+    /// A person's agents at length. The card the profile showed is the first
+    /// thing here, the same card in the same margins, carried up rather than
+    /// drawn again; what follows it is what the card had no room for. The
+    /// sections after the card split in two: the cost, the streak and the
+    /// records are the last thirty days whatever the period, so a record
+    /// stays a record; models and tools follow the period control.
+    @ViewBuilder private func agentsDetail(_ id: String) -> some View {
+        let person = self.store.selectedPerson
+        let summary = self.store.agentSummary
+        let month = self.store.agentMonth
+        VStack(spacing: 3) {
+            self.screenHeadline("Agents")
+            Text(self.agentsRangeLabel(summary))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+        }
+        .frame(maxWidth: .infinity)
+        // Below the row of buttons, not under it: the headline shrinks into
+        // that row as it scrolls up, and has to start out of it.
+        .padding(.top, NativeLayout.popoverHeaderHeight)
+        .zIndex(self.profileTitleProgress > 0 ? 2 : 0)
+
+        AgentsPanel(
+            summary: summary,
+            period: self.store.period,
+            ownTime: self.store.activity?.active_minutes ?? (person?.id == id ? person?.active_minutes : nil),
+            loadingOwnTime: self.store.screenLoading,
+            hovered: self.$agentsHovered
+        )
+        .matchedGeometryEffect(id: Self.agentsCardMorphID, in: self.morph)
+
+        if let month, month.has_data {
+            let days = month.days ?? []
+            if days.contains(where: { $0.tokens_total != nil }) {
+                self.sectionHeading(month.cost_usd == nil ? "Tokens by day" : "Cost").padding(.top, 4)
+                AgentSpendCard(month: month)
+            }
+            self.sectionHeading("Streak").padding(.top, 4)
+            AgentStreakSection(streak: self.store.agentStreak)
+            let records = self.store.agentRecords
+            if !records.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    self.sectionHeading("Records")
+                    Text("last 30 days").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+                AgentRecordTiles(
+                    records: records,
+                    openSource: self.store.agentDayTray?.source,
+                    frames: self.agentTileFrames
+                ) { record in
+                    guard let date = record.date else { return }
+                    self.agentDaySource = self.agentTileFrames.frames[record.id]
+                    self.agentDayTitleTravel = nil
+                    self.agentDayTitleLanded = false
+                    // The tray is headed by what the tile was headed by, so
+                    // the words can travel; the day and the figure follow
+                    // under them.
+                    self.store.openAgentDay(.init(
+                        date: date, title: record.title,
+                        note: "\(NativeAgentTime.dayLabel(date)) · \(record.value)", source: record.id
+                    ))
+                }
+            }
+        } else if month == nil, self.store.screenLoading {
+            NativeSkeletonShape(width: nil, height: 132, radius: 12)
+        }
+
+        if let summary, summary.has_data {
+            if let models = summary.by_model { AgentModelsSection(models: models).padding(.top, 4) }
+            if let tools = summary.by_tool { AgentToolsSection(tools: tools).padding(.top, 4) }
+        }
+    }
+
+    /// The days the card and the period's sections are about, in words.
+    private func agentsRangeLabel(_ summary: NativeAgentSummary?) -> String {
+        if self.store.period == "24h" { return "Last 24 hours" }
+        return NativeAgentTime
+            .rangeLabel(summary?.days) ?? (self.store.period == "30d" ? "Last 30 days" : "Last 7 days")
+    }
+
+    /// A screen's own title, handed to the row of buttons the way a profile's
+    /// name is: it rides the screen up, shrinks to the row's size over the
+    /// last stretch, and is held on the row's line with the band behind it.
+    /// See `profileName`, which this is without the flight from a list row.
+    private func screenHeadline(_ title: String) -> some View {
+        let progress = self.profileTitleProgress
+        return Text(title)
+            .font(.system(size: 20, weight: .semibold))
+            .lineLimit(1)
+            .scaleEffect(1 - CGFloat(progress) * (1 - Self.profileTitleRowScale))
+            .background(alignment: .center) { profileNameBand }
+            .offset(y: self.profileTitleStick)
+            .frame(maxWidth: .infinity)
+            .background(GeometryReader { geometry in
+                Color.clear.preference(
+                    key: ProfileTitleCenter.self,
+                    value: geometry.frame(in: .named(NativeLayout.popoverScrollSpace)).midY
+                )
+            })
+            .zIndex(progress > 0 ? 2 : 0)
+    }
+
+    /// The tray's title is the tile's title, moved. It is laid out where it
+    /// belongs from the first frame; a hidden twin says where that is, and
+    /// the one that is seen starts over the tile's own title, at the tile's
+    /// size, and flies to its place while the surface opens under it. One
+    /// title on screen throughout: the tile hides its own while it is open.
+    private func agentDayTitle(_ title: String) -> some View {
+        let text = Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+        let travel = self.agentDayTitleLanded || self.reduceMotion ? .zero : (self.agentDayTitleTravel ?? .zero)
+        let scale = self.agentDayTitleLanded || self.reduceMotion ? 1 : AgentTileFrames.titleScale
+        return text.hidden()
+            .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .named(AgentTileFrames.space)).origin }) { origin in
+                guard !self.agentDayTitleLanded, self.agentDayTitleTravel == nil,
+                      let source = self.agentDaySource else { return }
+                self.agentDayTitleTravel = CGSize(
+                    width: source.minX + AgentTileFrames.titleInset - origin.x,
+                    height: source.minY + AgentTileFrames.titleInset - origin.y
+                )
+                // The start is set without animation, then the landing
+                // animates from it on the next turn of the run loop.
+                DispatchQueue.main.async {
+                    withAnimation(NativeTrayMorph.animation(isExpanded: true, reduceMotion: self.reduceMotion)) {
+                        self.agentDayTitleLanded = true
+                    }
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                text.fixedSize()
+                    .scaleEffect(scale, anchor: .topLeading)
+                    .offset(travel)
+                    .opacity(
+                        self.agentDayTitleTravel == nil && !self.reduceMotion && self
+                            .agentDaySource != nil ? 0 : 1
+                    )
+            }
+    }
+
+    /// One day in the invite tray's chrome: thick material, 16 pt corners, a
+    /// round close button. Its surface shares geometry with the record tile it
+    /// was opened from, so it grows out of that tile and returns into it. The
+    /// tile is a flat fill inside a scrolling page, not glass, so the surface
+    /// morphs as a shape rather than as a glass effect.
+    private func agentDayTray(_ tray: SocialStore.AgentDayTray, day: NativeAgentSummary.Day) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button { self.store.closeAgentDay() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 18, height: 22)
+                }
+                .modifier(NativeRoundGlassButton())
+                .help("Close")
+                .accessibilityLabel("Close")
+                VStack(alignment: .leading, spacing: 1) {
+                    self.agentDayTitle(tray.title)
+                    Text(tray.note).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        .opacity(self.agentDayTitleLanded || self.reduceMotion ? 1 : 0)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
+            // The day stands at its own height; only one with many runs
+            // reaches the tray's limit, and only then does it scroll. Built
+            // once and measured, not built twice to see which fits.
+            ScrollView {
+                AgentDayTrayContent(day: day)
+                    .padding(.horizontal, 14).padding(.bottom, 14)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                        if abs((self.agentDayHeight ?? 0) - height) > 0.5 { self.agentDayHeight = height }
+                    }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(self.agentDayHeight ?? 270, Self.trayMaximumHeight - 60))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        // The surface alone; the travel out of the tile and the shadow that
+        // comes with it are `AgentTrayGrow`'s, on the layer.
+        .modifier(NativeTraySurface(morph: nil, backgroundMaterial: .thick))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(tray.title), \(tray.note)")
+    }
+
     @ViewBuilder private func personDetail(_ id: String) -> some View {
         if let person = store.selectedPerson {
             VStack(spacing: 8) {
@@ -2398,8 +2650,10 @@ struct NativeDashboardView: View {
             if person.public_apps_only != true { self.nowLine(person) }
 
             // One surface for the whole picture: the two numbers, the chart
-            // they both read, and the shifts. Nothing here is pressed; the
-            // period control in the header is the only zoom.
+            // they both read, and the tools. The period control in the header
+            // is the zoom; a press on the card, or on More in its corner, is
+            // the depth: the same card carried to the top of a screen of its
+            // own, with the streak, the records and the tokens under it.
             if person.public_apps_only != true {
                 let ownTime = self.store.activity?.active_minutes ?? person.active_minutes
                 AgentsPanel(
@@ -2407,8 +2661,10 @@ struct NativeDashboardView: View {
                     period: self.store.period,
                     ownTime: ownTime,
                     loadingOwnTime: self.store.screenLoading,
-                    hovered: self.$agentsHovered
+                    hovered: self.$agentsHovered,
+                    onMore: { self.store.openAgents(id) }
                 )
+                .matchedGeometryEffect(id: Self.agentsCardMorphID, in: self.morph)
                 .bumpCardResponse()
             }
 
@@ -3416,7 +3672,7 @@ private struct NativeAgentGlyph: View {
 }
 
 /// A profile tile answers a press the way a tab does: it gives a little.
-private struct ProfileTileStyle: ButtonStyle {
+struct ProfileTileStyle: ButtonStyle {
     // MARK: Internal
 
     func makeBody(configuration: Configuration) -> some View {
@@ -3543,7 +3799,7 @@ enum NativeAgentTime {
 
 /// The colour a tool's minutes are drawn in. Identity, never rank: Codex is
 /// blue on a day it came first and on a day it came last.
-private enum NativeAgentToolColor {
+enum NativeAgentToolColor {
     static func color(_ tool: String) -> Color {
         switch tool {
         case "claude_code": Color(red: 0.92, green: 0.41, blue: 0.20)
@@ -3614,10 +3870,10 @@ struct AgentBucket: Identifiable, Equatable {
     let rankAgent: Int?
 }
 
-/// Everything the profile says about a person's agents, in one place: the
-/// chart at the period's own scale, the tools, what was written, and the
-/// shifts long enough to have a name. No drill-down, because the period
-/// control at the top of the popover is already the zoom.
+/// What the profile says about a person's agents, in one place: the two
+/// figures, the chart at the period's own scale, and the tools. The period
+/// control at the top of the popover is the zoom; the Agents screen, which
+/// this same card opens and then heads, is the depth.
 private struct AgentsPanel: View {
     // MARK: Internal
 
@@ -3630,6 +3886,9 @@ private struct AgentsPanel: View {
     let ownTime: Double?
     let loadingOwnTime: Bool
     @Binding var hovered: AgentBucket?
+    /// Opens the person's agents at length. Nil where the card already is
+    /// that screen's first thing.
+    var onMore: (() -> Void)?
 
     var body: some View {
         let agents = self.summary?.has_data == true ? self.summary : nil
@@ -3667,7 +3926,30 @@ private struct AgentsPanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        // More sits in the card's corner, on the line of the two titles. It
+        // is the button a keyboard and VoiceOver reach; the pointer has the
+        // whole card.
+        .overlay(alignment: .topTrailing) {
+            if let onMore = self.onMore, hasAgents {
+                Button(action: onMore) {
+                    HStack(spacing: 2) {
+                        Text("More")
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.primary.opacity(0.55))
+                    .padding(.horizontal, 12).padding(.top, 11).padding(.bottom, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(self.uncovered ? 1 : 0)
+                .help("Streak, records and tokens")
+                .accessibilityLabel("More about agents")
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .gesture(self.onMore == nil || !hasAgents ? nil : TapGesture().onEnded { self.onMore?() })
         .animation(self.reduceMotion ? nil : SocialStore.settle, value: hasAgents)
         .onAppear { self.uncovered = hasAgents }
         .onChange(of: hasAgents) { _, now in
@@ -3972,7 +4254,7 @@ private struct ToolSplitBar: View {
 /// time filling a column, so a quiet day looks quiet. The half hours still
 /// to come stand empty, and the pointer reads any one of them into the
 /// figures above and the split below, as it does on the longer periods.
-private struct ProfileDayColumns: View {
+struct ProfileDayColumns: View {
     // MARK: Internal
 
     let day: NativeAgentSummary.Day
@@ -4024,14 +4306,21 @@ private struct ProfileDayColumns: View {
                             .foregroundStyle(Color.primary.opacity(0.9))
                             .fixedSize()
                             .frame(width: pitch * 5)
-                            .offset(x: pitch * (CGFloat(peak.index) + 0.5) - pitch * 2.5, y: Self.labelRoom - 12 + Self.chartHeight - height)
+                            .offset(
+                                x: pitch * (CGFloat(peak.index) + 0.5) - pitch * 2.5,
+                                y: Self.labelRoom - 12 + Self.chartHeight - height
+                            )
                             .opacity(self.hovered == nil ? 1 : 0)
                     }
                     if let now {
                         let x = width * now / 24
                         Path { path in
                             path.move(to: CGPoint(x: x, y: Self.labelRoom - 2))
-                            path.addLine(to: CGPoint(x: x, y: Self.labelRoom + Self.chartHeight + 4 + Self.presenceHeight))
+                            path
+                                .addLine(to: CGPoint(
+                                    x: x,
+                                    y: Self.labelRoom + Self.chartHeight + 4 + Self.presenceHeight
+                                ))
                         }
                         .stroke(Color.primary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
                         Text(Self.clock(now))
@@ -4043,6 +4332,11 @@ private struct ProfileDayColumns: View {
                     }
                 }
                 .animation(self.reduceMotion ? nil : .easeOut(duration: 0.16), value: self.hovered)
+                // The columns and the presence row are placed by offsets,
+                // which move the picture and not the frame: the stack itself
+                // is only as tall as the columns' layout. Its own frame makes
+                // the target the whole chart, presence row included.
+                .frame(width: width, height: geometry.size.height, alignment: .topLeading)
                 .contentShape(Rectangle())
                 .onContinuousHover { phase in
                     // One target over the whole chart: sweeping across it
@@ -4100,6 +4394,12 @@ private struct ProfileDayColumns: View {
     /// Room above the columns for the clock and the peak's minutes.
     private static let labelRoom: CGFloat = 12
 
+    /// The last few days laid out, by what they were laid out from. The body
+    /// runs on every frame of a push and every move of the pointer, and
+    /// cutting a day into half hours reads hundreds of timestamps: it is done
+    /// once per day and per half hour of the clock, not once per frame.
+    private static var slotCache: [String: [Slot]] = [:]
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Hours into the day right now, when the day is today.
@@ -4121,8 +4421,24 @@ private struct ProfileDayColumns: View {
     }
 
     private static func slots(day: NativeAgentSummary.Day, now: Double?) -> [Slot] {
+        let runCount = day.runs?.count ?? 0, presenceCount = day.presence?.count ?? 0
+        let key = [
+            day.date, String(runCount), String(presenceCount),
+            day.runs?.last?.end_time ?? "", day.presence?.last?.end_time ?? "",
+            String(now.map { Int($0 * 2) } ?? -1),
+        ].joined(separator: "|")
+        if let cached = self.slotCache[key] { return cached }
+        let slots = self.buildSlots(day: day, now: now)
+        if self.slotCache.count >= 6 { self.slotCache.removeAll() }
+        self.slotCache[key] = slots
+        return slots
+    }
+
+    private static func buildSlots(day: NativeAgentSummary.Day, now: Double?) -> [Slot] {
         let runs = day.runs ?? []
-        let presence = day.presence ?? []
+        // Every timestamp is read once, here, not once per half hour.
+        let runSpans = runs.map { self.span($0.start_time, $0.end_time) }
+        let presenceSpans = (day.presence ?? []).compactMap { self.span($0.start_time, $0.end_time) }
         var totals: [String: Double] = [:]
         for run in runs { totals[run.tool, default: 0] += run.minutes }
         let order = totals.keys.sorted { a, b in
@@ -4133,16 +4449,15 @@ private struct ProfileDayColumns: View {
             let t0 = Double(index) / 2, t1 = t0 + 0.5
             var minutes: [String: Double] = [:]
             var sessions: [String: Int] = [:]
-            for run in runs {
-                guard let span = self.span(run.start_time, run.end_time) else { continue }
+            for (run, span) in zip(runs, runSpans) {
+                guard let span else { continue }
                 let overlap = min(span.1, t1) - max(span.0, t0)
                 guard overlap > 0 else { continue }
                 minutes[run.tool, default: 0] += overlap * 60
                 sessions[run.tool] = max(sessions[run.tool] ?? 0, run.peak_sessions ?? 1)
             }
             var here = 0.0
-            for stretch in presence {
-                guard let span = self.span(stretch.start_time, stretch.end_time) else { continue }
+            for span in presenceSpans {
                 here += max(min(span.1, t1) - max(span.0, t0), 0)
             }
             // A tool cannot run more than the half hour; a run that overlaps
@@ -4795,6 +5110,8 @@ private struct NativePeriodPicker: View {
     let metric: String
     let apps: Bool
     let canChooseBoard: Bool
+    /// On a screen that ranks nothing the menu is the three periods alone.
+    var periodOnly = false
     let appScope: String
     let appGroups: [(id: String, name: String)]
     let onPeriod: (String) -> Void
@@ -4844,7 +5161,7 @@ private struct NativePeriodPicker: View {
             add("People", "board:people", selected: !self.apps)
             add("Apps", "board:apps", selected: self.apps)
         }
-        if !self.apps {
+        if !self.apps, !self.periodOnly {
             menu.addItem(.separator())
             add("Active time", "metric:active", selected: self.metric == "active")
             add("Agent time", "metric:agent", selected: self.metric == "agent")

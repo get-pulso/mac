@@ -253,6 +253,28 @@ struct NativeAgentSummary: Decodable {
         var id: String { self.tool }
     }
 
+    /// Days in a row with agent time over everything the server has, not
+    /// just the period. Absent from an older server, where the screen counts
+    /// what the thirty days it was given can show.
+    struct Streak: Decodable {
+        let current: Int
+        let since: String?
+        let best: Int
+        let best_from: String?
+        let best_to: String?
+        let first_day: String?
+    }
+
+    struct ModelUsage: Decodable, Identifiable {
+        let tool: String
+        let model: String
+        let tokens_total: Double
+        let requests: Int?
+        let cost_usd: Double?
+
+        var id: String { self.tool + "|" + self.model }
+    }
+
     /// Consecutive minutes of one tool with gaps of at most two minutes: a
     /// shift, from the first write to the last.
     struct Run: Decodable, Identifiable {
@@ -289,6 +311,12 @@ struct NativeAgentSummary: Decodable {
         let agent_only_minutes: Double
         let runs: [Run]?
         let presence: [Presence]?
+        /// Every token the day's requests carried. Absent from an older
+        /// server, which is not the same as a day of none.
+        var tokens_total: Double? = nil
+        /// What those tokens come to at API rates: an estimate, and only at
+        /// `detail`, since it is priced from the models.
+        var cost_usd: Double? = nil
         /// Where the day placed among the viewer's friends. Absent on a day
         /// the person spent at zero: everyone there ties for last.
         let rank_active: Int?
@@ -312,6 +340,15 @@ struct NativeAgentSummary: Decodable {
     /// `active_tool`, `now`, the runs inside the days. The numbers stay.
     let shared: String?
     let by_tool: [ToolUsage]?
+    /// The models behind the tools, largest first, each with its estimate;
+    /// nil cost is a model the server has no price for. `detail` only.
+    var by_model: [ModelUsage]? = nil
+    /// The period at API rates. `cost_partial` says a model in it went
+    /// unpriced, so the figure is a floor. Both absent at `total` and from
+    /// an older server.
+    var cost_usd: Double? = nil
+    var cost_partial: Bool? = nil
+    var streak: Streak? = nil
     let top_tool: String?
     let top_model: String?
     /// An agent is writing this minute. At `total` this is all that is said
