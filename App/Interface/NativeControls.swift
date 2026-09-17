@@ -50,6 +50,44 @@ struct NativeProgress: View {
     @State private var visible = false
 }
 
+/// A button's label giving way to a spinner and taking its place back. The
+/// label stays in the layout, so the button keeps its width; the two pass each
+/// other the way the words of a `MorphingLabel` do, instead of one being cut
+/// to the other.
+struct NativeLoadingSwap<Label: View>: View {
+    // MARK: Internal
+
+    let isLoading: Bool
+    var spinner: ControlSize = .small
+    @ViewBuilder var label: () -> Label
+
+    var body: some View {
+        let travel: CGFloat = self.reduceMotion ? 0 : 8
+        ZStack {
+            self.label()
+                .opacity(self.isLoading ? 0 : 1)
+                .scaleEffect(self.isLoading && !self.reduceMotion ? 0.7 : 1)
+                .offset(y: self.isLoading ? -travel : 0)
+            if self.isLoading {
+                ProgressView().controlSize(self.spinner)
+                    .transition(
+                        .opacity
+                            .combined(with: .scale(scale: self.reduceMotion ? 1 : 0.7))
+                            .combined(with: .offset(y: travel))
+                    )
+            }
+        }
+        .animation(
+            self.reduceMotion ? .easeOut(duration: 0.12) : .spring(duration: 0.35, bounce: 0.1),
+            value: self.isLoading
+        )
+    }
+
+    // MARK: Private
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+}
+
 struct NativeAsyncButtonLabel: View {
     let title: String
     var loadingTitle: String

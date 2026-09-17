@@ -559,7 +559,14 @@ private struct BumpSurface: ViewModifier {
                         }
                         HStack(spacing: 5) {
                             if !cooling { bumpIcon }
+                            // Only the digit that changed rolls; the words
+                            // around it hold still.
                             Text(cooling ? cooldownTitle : "Bump")
+                                .contentTransition(cooling ? .numericText(countsDown: true) : .identity)
+                                .animation(
+                                    cooling ? .snappy(duration: 0.22, extraBounce: 0) : nil,
+                                    value: cooldownTitle
+                                )
                         }
                     }
                     .font(.system(size: 12, weight: .medium)).monospacedDigit().frame(minHeight: 22)

@@ -465,6 +465,9 @@ struct NativeDashboardView: View {
     @Namespace private var appMorph
     @Namespace private var inviteMorph
     @State private var appMorphSources: [String: String] = [:]
+    /// False while the skeleton stands in for the list, so the rows that
+    /// replace it have somewhere to come up from.
+    @State private var rowsRevealed = true
     @ObservedObject private var session = NativeSession.shared
     @ObservedObject private var bumps = BumpCenter.liveValue
     @Dependency(\.windowManager) private var windowManager
@@ -891,7 +894,9 @@ struct NativeDashboardView: View {
         LazyVStack(spacing: 0) {
             switch listPhase {
             case .initial:
-                NativePeopleSkeleton(rows: 5, showsPlaces: showsPlaces)
+                // The skeleton lies over the list rather than in it, so it can
+                // fade out while the rows come up in the places it held.
+                EmptyView()
             case .failedEmpty:
                 listFailureMessage
             case .empty:
@@ -914,8 +919,9 @@ struct NativeDashboardView: View {
                         // The pointer reaches a row before the click does.
                         // That is most of what the profile behind it costs.
                         .onHover { inside in if inside { store.warmPerson(person.id) } }
+                        .modifier(self.rowReveal(index))
                     if person.id != store.people.last?.id {
-                        rowDivider
+                        rowDivider.modifier(self.rowReveal(index))
                     }
                 }
                 if store.peopleList.hasMore { loadMoreRow }
@@ -926,6 +932,13 @@ struct NativeDashboardView: View {
                 }
             }
         }
+        .overlay(alignment: .top) {
+            if listPhase == .initial {
+                NativePeopleSkeleton(rows: 5, showsPlaces: showsPlaces).transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.22), value: listPhase == .initial)
+        .onChange(of: listPhase == .initial, initial: true) { _, loading in self.rowsRevealed = !loading }
     }
 
     /// The list could not be loaded and there is nothing older to show. One
@@ -1376,6 +1389,12 @@ struct NativeDashboardView: View {
 
     private static func firstName(of name: String) -> String {
         name.split(separator: " ").first.map(String.init) ?? name
+    }
+
+    /// Rows that replace the skeleton come up where its rows were, one after
+    /// another from the top. A list that was already there is simply there.
+    private func rowReveal(_ index: Int) -> SkeletonRowReveal {
+        SkeletonRowReveal(revealed: self.rowsRevealed, index: index, reduceMotion: self.reduceMotion)
     }
 
     private func inviteButtonMorph(from origin: SocialStore.TrayOrigin) -> NativeTrayMorph {
@@ -2003,14 +2022,10 @@ struct NativeDashboardView: View {
         isLoading: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        let label = ZStack {
-            if isLoading {
-                ProgressView().controlSize(.small)
-            } else {
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.primary)
-            }
+        let label = NativeLoadingSwap(isLoading: isLoading) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.primary)
         }
         .frame(minWidth: 42, minHeight: 22)
 
@@ -3214,6 +3229,31 @@ private struct TrayRowHighlight: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 }
 
+/// One row of a list taking over from its skeleton: a short rise and a fade,
+/// later for each row down the list. Only the reveal is animated, so a tab
+/// that goes back to loading drops its rows without a staggered exit.
+private struct SkeletonRowReveal: ViewModifier {
+    let revealed: Bool
+    let index: Int
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(self.revealed ? 1 : 0)
+            .offset(y: self.revealed || self.reduceMotion ? 0 : 5)
+            .animation(
+                self.revealed
+                    ? (
+                        self.reduceMotion
+                            ? .easeOut(duration: 0.12)
+                            : SocialStore.settle.delay(Double(min(self.index, 6)) * 0.06)
+                    )
+                    : nil,
+                value: self.revealed
+            )
+    }
+}
+
 /// One answer, one round button: a mark to accept, a cross to decline or take
 /// back. The shape is the tray's own dismiss button, so the two read as one
 /// family of controls.
@@ -3227,14 +3267,9 @@ private struct TrayCircleAction: View {
 
     var body: some View {
         Button(action: self.action) {
-            ZStack {
-                if self.isLoading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: self.symbol)
-                        .font(.system(size: 11, weight: .semibold))
-                        .transition(.opacity)
-                }
+            NativeLoadingSwap(isLoading: self.isLoading) {
+                Image(systemName: self.symbol)
+                    .font(.system(size: 11, weight: .semibold))
             }
             .frame(width: 18, height: 22)
         }

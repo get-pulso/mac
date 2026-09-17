@@ -721,11 +721,8 @@ private struct BumpNotchIslandView: View {
     private func acceptButton(_ content: Content) -> some View {
         let sending = self.model.acceptance == .sending
         return Button { BumpNotchIsland.shared.accept() } label: {
-            ZStack {
-                Text("Accept").opacity(sending ? 0 : 1)
-                if sending { ProgressView().controlSize(.mini) }
-            }
-            .font(.system(size: 13, weight: .medium))
+            NativeLoadingSwap(isLoading: sending, spinner: .mini) { Text("Accept") }
+                .font(.system(size: 13, weight: .medium))
         }
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.capsule)
