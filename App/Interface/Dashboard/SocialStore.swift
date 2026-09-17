@@ -1059,7 +1059,13 @@ final class SocialStore: ObservableObject {
         case let .friendCode(code):
             let fromLink = self.queryIsLink
             let name = self.inviter?.code == code ? self.inviter?.inviterName : nil
-            self.run(fromLink ? "Adding…" : "Sending request…", key: "accept-invite") {
+            let label = fromLink ? "Adding…" : "Sending request…"
+            // A link followed into the app has no tray to work in: the
+            // capsule under the header carries the waiting and becomes the
+            // answer in place, so the list is never covered to say something
+            // about a row that is in it.
+            if self.tray == nil { self.feedbackToast = .loading(label) }
+            self.run(label, key: "accept-invite") {
                 let result: NativeFriendRequestResult
                 do {
                     result = try await self.network.request(
@@ -1067,10 +1073,24 @@ final class SocialStore: ObservableObject {
                         method: .post,
                         body: ["inviteCode": code, "source": fromLink ? "link" : "code"]
                     )
-                } catch { self.inviteDeparting = false; throw error }
+                } catch {
+                    self.inviteDeparting = false
+                    self.feedbackToast = nil
+                    // The words for a failure, and the field to try again in,
+                    // both live in the tray: it opens now if it was not open.
+                    if self.tray == nil { self.openInviteTrayKeepingQuery() }
+                    throw error
+                }
                 if result.connected == true {
-                    let friend = name ?? result.targetUser?.name ?? "your friend"
-                    self.finishInvite(notice: "You're friends now.", tray: .connected(friend))
+                    let known = name ?? result.targetUser?.name
+                    // The capsule is one line at 350 pt: the first name, as
+                    // everywhere else the app says something about a person
+                    // in passing. Nameless only if the server sent none.
+                    self.finishInvite(
+                        notice: known.map { "You're friends with \(Self.firstName($0))" }
+                            ?? "You're friends now.",
+                        tray: .connected(known ?? "your friend")
+                    )
                 } else {
                     // A request is not a place to stand: it goes to where
                     // sent requests wait, and the tray is back where another
@@ -1311,9 +1331,23 @@ final class SocialStore: ObservableObject {
             self.present(tray, direction: tray == .home ? .back : .forward)
             if tray == .home { self.feedbackToast = .success(notice) }
         } else {
-            self.notice = notice
+            // Nothing was opened to say this in, so nothing has to be closed:
+            // the capsule that was waiting turns into the answer where it
+            // stands and goes on its own, over the list it is about.
+            self.feedbackToast = .success(notice)
         }
         self.clearQuery()
+    }
+
+    /// The tray, opened because an invitation failed with none on screen.
+    /// `openTray` empties the field on its way to Home, and the code that
+    /// failed is the one worth trying again, so it is kept.
+    private func openInviteTrayKeepingQuery() {
+        self.trayOrigin = .none
+        self.trayHistory.removeAll()
+        self.restoreInviteData()
+        self.present(.home, direction: .forward)
+        self.refreshTray()
     }
 
     private func copy(_ value: String, feedback: CopiedItem) {

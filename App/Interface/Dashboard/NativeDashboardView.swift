@@ -3018,23 +3018,28 @@ struct NativeDashboardView: View {
 
     private func resumeInvite() {
         guard let value = session.pendingInvite else { return }
+        self.store.query = value
+        // A friend's link opened in the app is their consent and the person's
+        // own choice to follow it, so the two are friends without another
+        // button. Nothing is asked and nothing is answered, so nothing opens
+        // over the list: the first thing after sign-in is the friend in it,
+        // and the capsule under the header says who. Only a failure brings
+        // the tray up, where the field and the message are.
+        if self.session.pendingInviteSource == .link, self.store.queryIsLink,
+           case .friendCode? = self.store.inviteCandidate
+        {
+            self.store.queryChanged()
+            self.store.addFromQuery()
+            return
+        }
         // The popover and the tray arrive together: nothing to grow from.
         self.store.openTray(.home, from: .none)
         self.store.query = value
         self.store.queryChanged()
-        // A friend's link opened in the app is their consent and the person's
-        // own choice to follow it, so the two are friends without another
-        // button: the first thing after sign-in is the friend in the list.
         // A link found in the clipboard was not followed by anyone, and a
         // group is a bigger step, so both still ask; the landing page's own
         // invitation is the one exception, below.
-        if self.session.pendingInviteSource == .link, self.store.queryIsLink,
-           case .friendCode? = self.store.inviteCandidate
-        {
-            self.store.addFromQuery()
-        } else {
-            self.acceptDefaultInvite()
-        }
+        self.acceptDefaultInvite()
     }
 
     /// The landing page hands its own invitation to whoever downloads without
