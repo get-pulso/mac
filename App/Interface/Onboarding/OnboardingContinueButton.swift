@@ -97,7 +97,7 @@ struct OnboardingContinueButton: View {
                 Group {
                     if let avatar { avatar }
                     else {
-                        AvatarLetter(letter: account.initial, size: 12)
+                        AvatarLetter(letter: account.initial, size: 24 * 0.44)
                             .frame(width: 24, height: 24)
                             .background(.white.opacity(0.18), in: Circle())
                     }

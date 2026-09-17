@@ -9,13 +9,17 @@ import SwiftUI
 struct AvatarLetter: View {
     // MARK: Internal
 
+    /// Halfway between medium and semibold: medium read thin inside a circle,
+    /// semibold a step heavier than wanted.
+    static let weight = NSFont.Weight((NSFont.Weight.medium.rawValue + NSFont.Weight.semibold.rawValue) / 2)
+
     let letter: String
     let size: CGFloat
 
     var body: some View {
         let offset = Self.inkOffset(of: self.letter, size: self.size)
         Text(self.letter)
-            .font(.system(size: self.size, weight: .medium, design: .rounded))
+            .font(Font(Self.font(size: self.size) as CTFont))
             .offset(x: offset.width, y: offset.height)
     }
 
@@ -27,8 +31,7 @@ struct AvatarLetter: View {
         let key = "\(letter) \(size)"
         if let known = self.offsets[key] { return known }
 
-        let system = NSFont.systemFont(ofSize: size, weight: .medium)
-        let font = system.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) } ?? system
+        let font = self.font(size: size)
         let line = CTLineCreateWithAttributedString(NSAttributedString(string: letter, attributes: [.font: font]))
         let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
         let advance = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
@@ -44,4 +47,15 @@ struct AvatarLetter: View {
 
     /// Rows draw the same few letters at the same few sizes over and over.
     @MainActor private static var offsets = [String: CGSize]()
+    @MainActor private static var fonts = [CGFloat: NSFont]()
+
+    /// The face the letter is both drawn and measured in, so the offset is
+    /// worked out on exactly the shape that appears.
+    @MainActor private static func font(size: CGFloat) -> NSFont {
+        if let known = self.fonts[size] { return known }
+        let system = NSFont.systemFont(ofSize: size, weight: self.weight)
+        let font = system.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) } ?? system
+        self.fonts[size] = font
+        return font
+    }
 }

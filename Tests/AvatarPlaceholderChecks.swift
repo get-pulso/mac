@@ -41,7 +41,7 @@ struct AvatarPlaceholderChecks {
         for letter in letters {
             let host = NSHostingView(rootView: ZStack {
                 Color.white
-                AvatarLetter(letter: letter, size: diameter * 0.48).foregroundStyle(.black)
+                AvatarLetter(letter: letter, size: diameter * 0.44).foregroundStyle(.black)
             }
             .frame(width: diameter, height: diameter)
             .environment(\.displayScale, 2))

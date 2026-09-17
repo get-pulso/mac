@@ -3203,10 +3203,10 @@ struct FirstlightAvatar: View {
         ZStack {
             Color.primary.opacity(0.08)
             if let letter = AvatarMonogram.letter(for: self.name) {
-                AvatarLetter(letter: letter, size: self.size * 0.48)
+                AvatarLetter(letter: letter, size: self.size * 0.44)
             } else {
                 Image(systemName: "person.fill")
-                    .font(.system(size: self.size * 0.46, weight: .medium))
+                    .font(.system(size: self.size * 0.42, weight: .medium))
                     .foregroundStyle(.secondary)
             }
         }
