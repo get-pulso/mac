@@ -15,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         MainMenu.install()
         #if DEBUG
         if OnboardingPreview.showIfRequested() { return }
+        if NotchIslandPreview.showIfRequested() { return }
         PerformanceHUD.restore()
         #endif
         LaunchAtLogin.enableByDefaultIfNeeded()

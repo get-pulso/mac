@@ -48,7 +48,10 @@ final class BumpCenter: NSObject, ObservableObject {
             .sink { [weak self] visible in
                 self?.popoverVisible = visible
                 BumpEffects.shared.setVisible(visible)
-                if visible { self?.poll() }
+                if visible {
+                    BumpNotchIsland.shared.popoverOpened()
+                    self?.poll()
+                }
             }
             .store(in: &self.subscriptions)
 
@@ -80,18 +83,32 @@ final class BumpCenter: NSObject, ObservableObject {
                 guard Defaults[.currentUserID] == userID else { return }
                 if !inbox.phrases.isEmpty { self.phrases = inbox.phrases }
                 let fresh = try BumpEffects.shared.ingest(inbox.bumps)
+                let freshEvents = Self.ingestFriendEvents(inbox.friendEvents, account: userID)
                 if self.popoverVisible { BumpEffects.shared.enqueue(fresh) }
-                if !fresh.isEmpty {
+                if !freshEvents.isEmpty { SocialStore.shared.friendEventsArrived(freshEvents) }
+                if !fresh.isEmpty || !freshEvents.isEmpty {
                     await self.requestAuthorizationIfNeeded()
                     guard Defaults[.currentUserID] == userID else { return }
                     if !self.popoverVisible {
                         let freshIDs = Set(fresh.map(\.id))
-                        await self.present(inbox.bumps.filter { freshIDs.contains($0.id) }, account: userID)
+                        let arrived = inbox.bumps.filter { freshIDs.contains($0.id) }
+                        // The notch says the newest bump out loud, after the
+                        // friend events; the inbox is newest first.
+                        BumpNotchIsland.shared.show(arrived, friendEvents: freshEvents)
+                        await self.present(friendEvents: freshEvents, account: userID)
+                        await self.present(arrived, account: userID)
                     }
                 }
                 guard Defaults[.currentUserID] == userID else { return }
-                if !inbox.bumps.isEmpty { try await self.network.acknowledgeBumps(inbox.bumps.map(\.id)) }
-                self.logger.info("Bump inbox saved: \(fresh.count) new, \(inbox.bumps.count) acknowledged")
+                if !inbox.bumps.isEmpty || !inbox.friendEvents.isEmpty {
+                    try await self.network.acknowledgeBumps(
+                        inbox.bumps.map(\.id),
+                        friendEvents: inbox.friendEvents.map(\.id)
+                    )
+                }
+                self.logger.info(
+                    "Bump inbox saved: \(fresh.count) new, \(inbox.bumps.count) acknowledged; friend events: \(freshEvents.count) new, \(inbox.friendEvents.count) acknowledged"
+                )
                 await self.writeDiagnostics(event: "poll")
             } catch {
                 guard !(error is CancellationError) else { return }
@@ -111,6 +128,7 @@ final class BumpCenter: NSObject, ObservableObject {
         if self.popoverVisible {
             BumpEffects.shared.enqueue(fresh)
         } else {
+            BumpNotchIsland.shared.show([bump])
             await self.requestAuthorizationIfNeeded()
             guard Defaults[.currentUserID] == account else { return }
             await self.post(bump, account: account)
@@ -142,6 +160,8 @@ final class BumpCenter: NSObject, ObservableObject {
     ]
 
     private nonisolated static let thread = "firstlight.bumps"
+    /// Requests and new friends are not bumps, and do not stack under them.
+    private nonisolated static let friendsThread = "firstlight.friends"
 
     private let logger = Logger(label: "firstlight.bumps")
     private let network: Network
@@ -220,6 +240,35 @@ final class BumpCenter: NSObject, ObservableObject {
         content.userInfo = ["accountID": account]
         guard Defaults[.currentUserID] == account else { return }
         await self.deliver(content, id: "bumps-overflow-\(bumps.first?.id ?? "batch")")
+    }
+
+    /// Friend events not said before, in the order to say them. Remembered
+    /// per account before the acknowledgement goes out, as bumps are, so a read
+    /// whose acknowledgement fails does not say them twice.
+    private static func ingestFriendEvents(_ events: [NativeFriendEvent], account: String) -> [NativeFriendEvent] {
+        guard !events.isEmpty else { return [] }
+        var ledger = FriendEventLedger.load(account: account)
+        let fresh = ledger.ingest(events)
+        ledger.save(account: account)
+        return fresh
+    }
+
+    /// One banner per friend event, the most a poll raises for bumps too.
+    private func present(friendEvents: [NativeFriendEvent], account: String) async {
+        for event in friendEvents.prefix(Constants.bannerLimit) {
+            guard Defaults[.currentUserID] == account else { return }
+            let content = UNMutableNotificationContent()
+            content.title = event.from.displayName
+            content.body = event.message
+            content.sound = .default
+            content.threadIdentifier = Self.friendsThread
+            content.userInfo = ["friendEventKind": event.kind, "fromID": event.from.id, "accountID": account]
+            if let attachment = await Self.avatarAttachment(event.from) {
+                content.attachments = [attachment]
+            }
+            guard Defaults[.currentUserID] == account else { return }
+            await self.deliver(content, id: "friend-event-\(event.id)")
+        }
     }
 
     private func post(_ bump: NativeBump, account: String) async {
@@ -318,9 +367,17 @@ extension BumpCenter: UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         let account = info["accountID"] as? String
         let id = info["bumpID"] as? String
+        let friendEvent = (info["friendEventKind"] as? String).flatMap(NativeFriendEvent.Kind.init(rawValue:))
         await MainActor.run {
             guard account == Defaults[.currentUserID], account != nil else { return }
             SocialStore.shared.showList()
+            // A request opens where it is answered; a new friend, the list
+            // they have just joined, for the same reason bumps do.
+            if let friendEvent {
+                if friendEvent == .request { SocialStore.shared.openTray(.incoming) }
+                WindowManager.liveValue.show()
+                return
+            }
             WindowManager.liveValue.show()
             if let moment = BumpEffects.shared.recent.first(where: { $0.id == id }) {
                 BumpEffects.shared.receive(

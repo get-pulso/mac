@@ -8,6 +8,20 @@ import os
     // MARK: Internal
 
     static func runIfRequested() async {
+        // Shows the notch island with a made-up bump, without polling or sending.
+        if CommandLine.arguments.contains("--bump-island-demo") {
+            try? await Task.sleep(for: .seconds(2))
+            BumpNotchIsland.shared.show([
+                NativeBump(
+                    id: "island-demo",
+                    kind: "on_fire",
+                    message: "says you're on fire 🔥",
+                    created_at: ISO8601DateFormatter().string(from: Date()),
+                    from: .init(id: "island-demo", name: "Alexey", avatar_url: nil)
+                ),
+            ])
+            return
+        }
         guard CommandLine.arguments.contains("--bump-test-smoke"), BumpLocalTestMode.isEnabled else { return }
         let log = OSLog(subsystem: "sh.firstlight.mac", category: "bump-e2e")
         do {

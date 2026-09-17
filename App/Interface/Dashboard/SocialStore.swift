@@ -843,6 +843,18 @@ final class SocialStore: ObservableObject {
         self.requestsCache.insert(self.requests, for: "requests")
     }
 
+    /// A friendship made out of the popover's sight — accepted in the notch,
+    /// or announced by it — goes into the direct set and its cache at once,
+    /// as `respond` does for its own.
+    func recordDirectFriend(_ id: String) {
+        self.directFriendIDs.insert(id)
+        if self.directFriendsCache.contains("friends") {
+            self.directFriendsCache.insert(self.directFriendIDs, for: "friends")
+        } else {
+            self.directFriendsCache.invalidate("friends")
+        }
+    }
+
     func respond(_ id: String, action: String) {
         let accepted = action == "accept" ? self.requests.incoming.first(where: { $0.id == id })?.requester : nil
         // Marked before the request leaves, in its own update, so the row has

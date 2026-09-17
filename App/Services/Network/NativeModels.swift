@@ -526,11 +526,60 @@ struct NativeBump: Decodable, Identifiable {
     let from: Sender
 }
 
+/// Something about a friendship, said once beside the bumps: a request that
+/// arrived, your own request said yes to, or somebody who followed your link.
+///
+/// `kind` stays a string on the wire, and `message` is composed on the server
+/// like a bump's. A kind this build does not know is skipped where events are
+/// shown; it never fails the decode of the inbox around it.
+struct NativeFriendEvent: Decodable, Identifiable {
+    enum Kind: String {
+        case request, accepted, joined
+    }
+
+    let id: String
+    let kind: String
+    let message: String
+    let created_at: String
+    /// The request to accept, for `request`.
+    let request_id: String?
+    let from: NativeBump.Sender
+
+    var knownKind: Kind? { Kind(rawValue: self.kind) }
+}
+
 /// What `/api/bumps` answers: everything this Mac has not shown yet, and the
 /// phrases it may send.
 struct NativeBumpInbox: Decodable {
+    // MARK: Lifecycle
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.bumps = try container.decode([NativeBump].self, forKey: .bumps)
+        self.phrases = try container.decode([NativeBumpPhrase].self, forKey: .phrases)
+        self.friendEvents = (try? container.decodeIfPresent([Lenient].self, forKey: .friendEvents))?
+            .compactMap(\.event) ?? []
+    }
+
+    // MARK: Internal
+
     let bumps: [NativeBump]
     let phrases: [NativeBumpPhrase]
+    /// Absent from servers that predate friend events, and read one event at
+    /// a time: a malformed event costs itself, never the bumps beside it.
+    let friendEvents: [NativeFriendEvent]
+
+    // MARK: Private
+
+    private enum CodingKeys: String, CodingKey {
+        case bumps, phrases, friendEvents
+    }
+
+    private struct Lenient: Decodable {
+        let event: NativeFriendEvent?
+
+        init(from decoder: Decoder) throws { self.event = try? NativeFriendEvent(from: decoder) }
+    }
 }
 
 /// The send endpoint's answer. `next_allowed_at` is when the same friend may

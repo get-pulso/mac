@@ -106,12 +106,15 @@ struct Network {
         try await self.request(path: "/api/bumps", method: .get)
     }
 
-    func acknowledgeBumps(_ ids: [String]) async throws {
-        struct Payload: Encodable { let ids: [String] }
+    /// Says what from one inbox read is safely shown: its bumps, and the
+    /// friend events that came with them. A server that predates friend
+    /// events ignores the second list.
+    func acknowledgeBumps(_ ids: [String], friendEvents: [String] = []) async throws {
+        struct Payload: Encodable { let ids: [String]; let friendEventIds: [String] }
         let _: NativeAck = try await self.request(
             path: "/api/bumps/ack",
             method: .post,
-            body: Payload(ids: ids)
+            body: Payload(ids: ids, friendEventIds: friendEvents)
         )
     }
 
