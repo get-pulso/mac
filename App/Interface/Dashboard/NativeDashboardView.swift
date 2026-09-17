@@ -1953,6 +1953,29 @@ struct NativeDashboardView: View {
                 }
             }
         }
+        // Only the creator adds people directly, and only direct friends. The
+        // group whose list this is already has them.
+        let addable = self.store.groups.filter { $0.is_creator == true && $0.id != self.store.tab }
+        if !addable.isEmpty, self.store.directFriendIDs.contains(person.id) {
+            Menu("Add to group") {
+                ForEach(addable) { group in
+                    Button(group.name) { self.store.addToGroup(person, group: group) }
+                }
+            }
+            .disabled(self.store.busy)
+        }
+        // On a group's own list its creator can take anyone but themselves out.
+        if let group = self.store.groups.first(where: { $0.id == self.store.tab }), group.is_creator == true,
+           person.id != Defaults[.currentUserID]
+        {
+            Divider()
+            Button("Remove from \(group.name)", role: .destructive) {
+                self.confirm("Remove \(person.displayName) from \(group.name)?") {
+                    self.store.removeFromGroup(person, group: group)
+                }
+            }
+            .disabled(self.store.busy)
+        }
     }
 
     private func removeFriend(_ person: NativePerson, id: String) {
@@ -3051,6 +3074,8 @@ private struct InvitePrompt {
 }
 
 private struct NativeFeedbackToast: View {
+    // MARK: Internal
+
     let state: SocialStore.FeedbackToast
 
     var body: some View {
@@ -3073,15 +3098,25 @@ private struct NativeFeedbackToast: View {
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 34)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+        .background {
+            if #available(macOS 26.0, *), !self.reduceTransparency {
+                Color.clear.glassEffect(.regular, in: .capsule)
+            } else {
+                RoundedRectangle(cornerRadius: 11, style: .continuous).fill(.ultraThinMaterial)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5)
+                    }
+            }
         }
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
         .animation(.easeOut(duration: 0.12), value: self.state.message)
     }
+
+    // MARK: Private
+
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 }
 
 struct FirstlightAvatar: View {

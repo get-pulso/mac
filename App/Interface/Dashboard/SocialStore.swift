@@ -915,6 +915,37 @@ final class SocialStore: ObservableObject {
         }
     }
 
+    /// Adds a direct friend to a group the account created — the same call
+    /// Settings makes, reached from the person's row.
+    func addToGroup(_ person: NativePerson, group: NativeGroup) {
+        guard !self.busy else { return }
+        self.notice = nil
+        self.feedbackToast = .loading("Adding to \(group.name)…")
+        self.run("Adding to group…", key: "add-to-group-\(group.id)-\(person.id)") {
+            do {
+                try await self.mutate("/api/groups/\(group.id)/members", body: ["userIds": [person.id]])
+                self.listCache.invalidateAll()
+                SettingsWindowController.shared.invalidateGroups()
+                self.feedbackToast = .success("Added to \(group.name)")
+            } catch {
+                self.feedbackToast = nil
+                throw error
+            }
+        }
+    }
+
+    /// Takes a member out of a group the account created, from the group's list.
+    func removeFromGroup(_ person: NativePerson, group: NativeGroup) {
+        self.notice = nil
+        self.run("Removing…", key: "remove-from-group-\(group.id)-\(person.id)") {
+            try await self.mutate("/api/groups/\(group.id)/members/\(person.id)", method: .delete)
+            self.listCache.invalidateAll()
+            SettingsWindowController.shared.invalidateGroups()
+            self.feedbackToast = .success("Removed from \(group.name)")
+            await self.refresh(force: true)
+        }
+    }
+
     func copyFriendCode(_ code: String) {
         self.copy(code, feedback: .friendCode)
     }
