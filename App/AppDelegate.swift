@@ -15,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         MainMenu.install()
         #if DEBUG
         if OnboardingPreview.showIfRequested() { return }
+        PerformanceHUD.restore()
         #endif
         LaunchAtLogin.enableByDefaultIfNeeded()
         Defaults[.currentUserID] = nil
