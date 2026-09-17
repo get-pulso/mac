@@ -44,14 +44,24 @@ final class AgentUsageCollector: ObservableObject {
         var todayAgentMinutes = 0
     }
 
-    nonisolated static let backfillDays = 30
+    /// How far back a rebuild reads. A year, because a streak or a record is
+    /// only worth the history under it; the tools decide how much of that
+    /// year still exists (Claude Code clears its own logs after thirty days,
+    /// Codex keeps its archive). Read once per counting version, not per scan.
+    nonisolated static let backfillDays = 365
+
+    /// How far back the scans between rebuilds look. A log that has not been
+    /// written to in a month was read by the rebuild and has nothing new.
+    nonisolated static let scanWindowDays = 30
 
     /// Raise this whenever the parsers or the counting rules change, so every
     /// Mac rebuilds its window once and the stored history is corrected.
     /// 2: Codex archived sessions are read, and a message copied into a
     /// resumed session's transcript is counted once rather than per file.
     /// 3: opencode's message store is read.
-    nonisolated static let countingVersion = 3
+    /// 4: the window is a year, not thirty days, so every Mac sends the
+    /// history it still has once.
+    nonisolated static let countingVersion = 4
 
     @Published private(set) var status = Status()
 
@@ -92,16 +102,22 @@ final class AgentUsageCollector: ObservableObject {
 
     /// Rescans every log in the window from scratch. Day rows inside the window
     /// are rebuilt and re-uploaded; the server replaces them per row.
-    func backfill(days: Int = AgentUsageCollector.backfillDays) async {
-        guard let userID = self.activeUserID, !self.status.backfilling else { return }
+    /// Answers whether the rebuild ran to the end for the account it began
+    /// with. A file that would not parse does not make it unfinished: the
+    /// ordinary scans come back to it, and a rebuild that repeated on every
+    /// launch over one bad log would read a year of them each time.
+    @discardableResult
+    func backfill(days: Int = AgentUsageCollector.backfillDays) async -> Bool {
+        guard let userID = self.activeUserID, !self.status.backfilling else { return false }
         self.status.backfilling = true
         self.status.lastError = nil
         defer { self.status.backfilling = false }
         let since = self.windowStart(days: days, for: userID)
         let outcome = await self.scanner.rebuild(userID: userID, since: since)
-        guard self.activeUserID == userID else { return }
+        guard self.activeUserID == userID else { return false }
         self.finish(outcome)
         self.uploadIfNeeded()
+        return true
     }
 
     /// Called by the activity reset: waits for in-flight uploads, deletes every
@@ -187,10 +203,17 @@ final class AgentUsageCollector: ObservableObject {
         let firstRun = ((try? self.storage.agentParseStates(for: userID)) ?? []).isEmpty
         let countedBy = Defaults[.agentCollectorVersion][userID] ?? 0
         if firstRun || countedBy < Self.countingVersion {
-            var versions = Defaults[.agentCollectorVersion]
-            versions[userID] = Self.countingVersion
-            Defaults[.agentCollectorVersion] = versions
-            Task { await self.backfill() }
+            // The version is written once the rebuild has read everything,
+            // not before it starts. A year of logs takes minutes, and an app
+            // quit in the middle of them used to be recorded as done: the
+            // next launch scanned only the last month and the older history
+            // was never read again.
+            Task {
+                guard await self.backfill() else { return }
+                var versions = Defaults[.agentCollectorVersion]
+                versions[userID] = Self.countingVersion
+                Defaults[.agentCollectorVersion] = versions
+            }
         } else {
             self.scheduleIncrementalScan()
             self.scheduleCursorRead(delay: .seconds(5))
@@ -244,7 +267,7 @@ final class AgentUsageCollector: ObservableObject {
             self.pendingPaths = [:]
             self.scanTask = nil
             guard !files.isEmpty else { return }
-            let since = self.windowStart(days: Self.backfillDays, for: userID)
+            let since = self.windowStart(days: Self.scanWindowDays, for: userID)
             let outcome = await self.scanner.scan(files: files, userID: userID, since: since)
             guard self.activeUserID == userID else { return }
             self.finish(outcome)
@@ -257,7 +280,7 @@ final class AgentUsageCollector: ObservableObject {
         guard let userID = self.activeUserID, !self.status.backfilling else { return }
         Task { [weak self] in
             guard let self else { return }
-            let since = self.windowStart(days: Self.backfillDays, for: userID)
+            let since = self.windowStart(days: Self.scanWindowDays, for: userID)
             let outcome = await self.scanner.scanAll(userID: userID, since: since)
             guard self.activeUserID == userID else { return }
             self.finish(outcome)
@@ -272,7 +295,7 @@ final class AgentUsageCollector: ObservableObject {
             try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
             self.cursorTask = nil
-            let since = self.windowStart(days: Self.backfillDays, for: userID)
+            let since = self.windowStart(days: Self.scanWindowDays, for: userID)
             let outcome = await self.scanner.readCursor(userID: userID, since: since, onlyIfChanged: onlyIfChanged)
             guard self.activeUserID == userID else { return }
             self.finish(outcome)
