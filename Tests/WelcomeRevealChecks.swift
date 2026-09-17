@@ -20,6 +20,9 @@ enum WelcomeRevealChecks {
         expect(WelcomeTiming.nameStart < WelcomeTiming.nameVisibleAt)
         expect(WelcomeTiming.nameVisibleAt <= WelcomeTiming.riseStart)
         expect(WelcomeTiming.riseStart < WelcomeTiming.riseEnd)
+        // The landing tap: the pair has visibly landed, before the ease is over.
+        expect(WelcomeTiming.riseStart < WelcomeTiming.riseLanded && WelcomeTiming.riseLanded < WelcomeTiming.riseEnd)
+        expect(WelcomeTiming.riseProgress(at: WelcomeTiming.riseLanded) >= 0.99)
         expect(WelcomeTiming.riseEnd <= WelcomeTiming.titleStart)
         expect(WelcomeTiming.titleStart < WelcomeTiming.titleVisibleAt)
         expect(WelcomeTiming.titleVisibleAt <= WelcomeTiming.subtitleStart)

@@ -92,6 +92,10 @@ enum WelcomeTiming {
     /// The pair rises to the header line and shrinks; it never leaves.
     static let riseStart = 4.35
     static let riseEnd = 4.95
+    /// The rise has no visible start or stop. From here under 1% of it is left
+    /// (about 2 pt): to the eye the pair has landed, so its tap goes here;
+    /// at `riseEnd` it would be felt after the stop.
+    static let riseLanded = 4.89
     /// Title, then its subtitle, then the button: one after another.
     static let titleStart = 5.00
     static let titleVisibleAt = 5.30
@@ -269,11 +273,13 @@ final class IntroPlayback: ObservableObject {
             NativeHaptics.introClimax()
         }
 
-        if previousElapsed < WelcomeTiming.riseStart, self.elapsed >= WelcomeTiming.riseStart {
-            NativeHaptics.introRiseStarted()
+        // The name leaves the mark with a quick departure, so the tap and the
+        // first visible step share a frame.
+        if previousElapsed < WelcomeTiming.nameStart, self.elapsed >= WelcomeTiming.nameStart {
+            NativeHaptics.introNameStarted()
         }
-        if previousElapsed < WelcomeTiming.riseEnd, self.elapsed >= WelcomeTiming.riseEnd {
-            NativeHaptics.introRiseEnded()
+        if previousElapsed < WelcomeTiming.riseLanded, self.elapsed >= WelcomeTiming.riseLanded {
+            NativeHaptics.introRiseLanded()
         }
     }
 }

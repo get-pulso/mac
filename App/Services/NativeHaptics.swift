@@ -11,11 +11,11 @@ enum NativeHaptics {
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .drawCompleted)
     }
 
-    static func introRiseStarted() {
+    static func introNameStarted() {
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .drawCompleted)
     }
 
-    static func introRiseEnded() {
+    static func introRiseLanded() {
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .drawCompleted)
     }
 
