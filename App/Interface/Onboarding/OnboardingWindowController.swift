@@ -84,7 +84,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         native.isReleasedWhenClosed = false
         native.isMovableByWindowBackground = true
         native.contentMinSize = NSSize(width: 620, height: 420)
-        native.collectionBehavior = [.fullScreenPrimary]
+        native.collectionBehavior = [.fullScreenPrimary, .moveToActiveSpace]
         native.delegate = self
         native.onEscape = { [weak self] in self?.nativeWindow?.performClose(nil) }
         native.contentView = self.makeHost(content: content, native: true)
@@ -123,6 +123,22 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         } else {
             self.playback.finish()
         }
+    }
+
+    /// Clerk uses NSApp.keyWindow, then mainWindow, as its browser-session
+    /// anchor. Make the real sign-in window both before its async OAuth work.
+    func prepareForAuthentication() throws {
+        guard self.isPresented, let native = self.nativeWindow else {
+            throw NativeError.message("Open the Firstlight sign-in window and try again.")
+        }
+        self.finishAnimation()
+        self.removeDimmers()
+        self.carrier?.orderOut(nil)
+        native.alphaValue = 1
+        if native.isMiniaturized { native.deminiaturize(nil) }
+        DockPresence.claim(native)
+        AppActivation.bringForward(native)
+        native.makeMain()
     }
 
     /// Used by successful authentication and app termination, never signs out.
@@ -229,6 +245,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
             guard let self, self.generation == ticket, self.isPresented else { return }
             native.alphaValue = 1
+            DockPresence.claim(native)
             if NSApp.isActive { native.makeKeyAndOrderFront(nil) }
             else { native.orderBack(nil) }
             native.invalidateShadow()
@@ -280,6 +297,7 @@ final class OnboardingWindowController: NSObject, NSWindowDelegate {
         for (center, token) in self.observers { center.removeObserver(token) }
         self.observers.removeAll()
         self.nativeWindow?.delegate = nil
+        if let native = self.nativeWindow { DockPresence.release(native) }
         if closeNative { self.nativeWindow?.close() }
         self.carrier?.close()
         self.nativeWindow = nil

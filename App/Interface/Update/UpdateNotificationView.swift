@@ -12,7 +12,7 @@ struct UpdateNotificationView: View {
             Text("New version is available")
             Spacer()
             Button("Update") {
-                self.updater.installUpdate()
+                SettingsWindowController.shared.show(section: .about)
             }
 
             Button("Skip") {

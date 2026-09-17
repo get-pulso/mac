@@ -34,6 +34,11 @@ struct NativeSettingsView: View {
     @Environment(\.openURL) private var openURL
 
     @ObservedObject private var session = NativeSession.shared
+    @ObservedObject private var updater: Updater = {
+        @Dependency(\.updater) var updater
+        return updater
+    }()
+
     @ObservedObject private var agentUsage: AgentUsageCollector = {
         @Dependency(\.agentUsage) var agentUsage
         return agentUsage
@@ -369,16 +374,7 @@ struct NativeSettingsView: View {
                 .accessibilityElement(children: .combine)
             }
             panel("Updates") {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Firstlight updates")
-                        Text(self.version).font(.callout).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 8)
-                    Button("Check now") { @Dependency(\.updater) var updater; updater.checkForUpdates() }
-                        .nativeSettingsActionButton()
-                        .disabled(AppEnvironment.isLocalBackend)
-                }
+                UpdateSettingsView(updater: self.updater)
             }
             panel("Links") {
                 aboutLink("Website", .website, "firstlight.sh")
