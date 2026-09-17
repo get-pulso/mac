@@ -309,11 +309,15 @@ struct NativeSettingsView: View {
             // into a pair of switches: the middle level is the whole point
             // of the design, and nobody discovers it by toggling. Presence
             // is not here — the time board is what everyone came for.
+            //
+            // No heading over the rows: each row's title names what is being
+            // chosen, the three answers sit beside it, and the line under
+            // them says what the chosen one means.
             let loading = model.sharing == nil
             panel {
                 sharingRow(
                     .apps,
-                    title: "Apps",
+                    title: "What friends see of your apps",
                     detail: "Others see your apps and time in app rankings. Friends also see the app you're using now.",
                     total: "Friends see total app time and count, without names. You don't appear in app rankings.",
                     off: "Your apps are hidden from others and app rankings. Your own history is untouched.",
@@ -323,7 +327,7 @@ struct NativeSettingsView: View {
             panel {
                 sharingRow(
                     .agents,
-                    title: "Agents",
+                    title: "What friends see of your agents",
                     detail: "Friends see your tools, models and the shifts they worked.",
                     total: "Friends see agent hours and tokens, never which tool ran them.",
                     off: "Friends see no agent activity, and you leave the agent boards.",
@@ -442,12 +446,14 @@ struct NativeSettingsView: View {
         )
     }
 
-    /// One channel: the switch, the switch under it, and a line that says
-    /// what the pair currently means in plain words rather than a legend
-    /// the reader has to hold in their head.
-    /// One channel: the three levels side by side, and a line that says
-    /// what the chosen one currently means in plain words, so the labels
-    /// never have to carry a legend the reader holds in their head.
+    /// One channel: a title that says what is being chosen, the three
+    /// levels beside it as its answers, and a line under them that says
+    /// what the chosen one currently means in plain words.
+    ///
+    /// The title and the track share one centred `HStack` rather than a
+    /// `LabeledContent`: in a grouped form that pins the label to the top
+    /// of any control taller than a line of text, and the title floated
+    /// above the answers instead of sitting across from them.
     ///
     /// The labels answer "what does a friend see", not "which level is
     /// this": `Detail / Total / Off` is the database's vocabulary, and a
@@ -462,22 +468,26 @@ struct NativeSettingsView: View {
     ) -> some View {
         let level = self.model.sharing?.level(channel) ?? .detail
         let busy = loading || self.model.isRunning("sharing-\(channel.rawValue)") || self.model.isRunning("sharing")
-        LabeledContent(title) {
+        HStack(alignment: .center, spacing: 12) {
+            Text(title).frame(maxWidth: .infinity, alignment: .leading)
             // `NativeTabList` is the app's own glass track: one capsule of
             // regular glass with the selection sliding inside it, rather
             // than three cells drawn side by side. It was written for this
-            // and had no caller until now.
+            // and had no caller until now. One fixed width for both rows,
+            // so the two tracks line up whatever their titles measure; 220
+            // leaves the longer title its single line in the detail pane,
+            // with the title taking the rest rather than a spacer's share.
             NativeTabList(
                 title: title,
                 options: [
                     ("Everything", NativeShareLevel.detail),
-                    ("Just the total", NativeShareLevel.total),
+                    ("Totals only", NativeShareLevel.total),
                     ("Nothing", NativeShareLevel.off),
                 ],
                 labelSize: 11,
                 selection: self.levelBinding(channel)
             )
-            .frame(maxWidth: 300)
+            .frame(width: 220)
             .disabled(busy)
         }
         Text(level == .off ? off : (level == .detail ? detail : total))
