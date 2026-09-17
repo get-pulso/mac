@@ -9,7 +9,8 @@ struct NativeTrayMorph {
     var usesGlass = true
 
     static func animation(isExpanded: Bool, reduceMotion: Bool) -> Animation {
-        reduceMotion ? .easeOut(duration: 0.12) : .spring(duration: isExpanded ? 0.24 : 0.18, bounce: 0)
+        reduceMotion ? .easeOut(duration: 0.12) :
+            .spring(duration: isExpanded ? 0.24 : 0.18, bounce: 0)
     }
 }
 
@@ -38,7 +39,10 @@ struct NativeTraySurface: ViewModifier {
             // The effect owns its foreground, so the material stays behind
             // the text while the shared glass identity changes its shape.
             content
-                .glassEffect(.regular, in: .rect(cornerRadius: 16))
+                .glassEffect(
+                    prominent ? .regular.tint(.firstlight).interactive() : .regular,
+                    in: .rect(cornerRadius: 16)
+                )
                 .glassEffectID(reduceMotion ? nil : morph.id, in: morph.namespace)
                 .glassEffectTransition(reduceMotion ? .identity : .matchedGeometry)
         } else {
@@ -84,13 +88,10 @@ struct NativeTrayMorphButton<Label: View>: View {
 
     var body: some View {
         ZStack {
-            if #available(macOS 26.0, *) {
-                nativeButton.hidden().allowsHitTesting(false).accessibilityHidden(true)
-            } else {
-                buttonLabel.hidden().accessibilityHidden(true)
-            }
+            buttonLabel.hidden().accessibilityHidden(true)
             if !morph.isExpanded {
-                restingButton
+                Button(action: action) { buttonLabel }
+                    .buttonStyle(NativeTrayMorphButtonStyle(morph: morph, prominent: prominent))
                     .transition(.opacity)
             }
         }
@@ -99,36 +100,6 @@ struct NativeTrayMorphButton<Label: View>: View {
     }
 
     // MARK: Private
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    @ViewBuilder private var restingButton: some View {
-        if #available(macOS 26.0, *), morph.usesGlass, !reduceTransparency {
-            nativeButton
-                .glassEffectID(reduceMotion ? nil : morph.id, in: morph.namespace)
-                .glassEffectTransition(reduceMotion ? .identity : .matchedGeometry)
-        } else {
-            Button(action: action) { buttonLabel }
-                .buttonStyle(NativeTrayMorphButtonStyle(morph: morph, prominent: prominent))
-        }
-    }
-
-    @available(macOS 26.0, *)
-    @ViewBuilder private var nativeButton: some View {
-        if prominent {
-            Button(action: action, label: label)
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.capsule)
-                .controlSize(.regular)
-                .tint(.firstlight)
-        } else {
-            Button(action: action, label: label)
-                .buttonStyle(.glass)
-                .buttonBorderShape(.capsule)
-                .controlSize(.regular)
-        }
-    }
 
     private var buttonLabel: some View {
         label()

@@ -89,6 +89,15 @@ struct BumpEffectRun: Identifiable {
         self.playNext()
     }
 
+    /// Seen somewhere else, the notch island: nothing left to play for them.
+    func markSeen(_ ids: some Sequence<String>) {
+        let ids = Set(ids)
+        guard !ids.isEmpty else { return }
+        self.queue.removeAll { ids.contains($0.id) }
+        self.journal.unread.subtract(ids); self.testJournal.unread.subtract(ids)
+        self.persistJournal()
+    }
+
     func enqueuePending() {
         self
             .enqueue(
@@ -468,6 +477,7 @@ private struct BumpSurface: ViewModifier {
     @ObservedObject private var store = SocialStore.shared
     @ObservedObject private var artwork = BumpEmojiLibrary.shared
     @Namespace private var trayMorph
+    @State private var trayGeneration = 0
     @Environment(\.accessibilityReduceMotion) private var systemReduced
     @Environment(\.colorScheme) private var scheme
 
@@ -477,7 +487,6 @@ private struct BumpSurface: ViewModifier {
                 Color(nsColor: .windowBackgroundColor).opacity(0.64)
                     .onTapGesture { closeTray() }
                     .accessibilityLabel("Dismiss bump choices")
-    @State private var trayGeneration = 0
                     .transition(.opacity.animation(.easeOut(duration: 0.14)))
             }
             NativeTrayMorphContainer {
@@ -493,15 +502,6 @@ private struct BumpSurface: ViewModifier {
                     }
                 }
             }
-        }
-        .transaction { if effects.reduceMotion { $0.disablesAnimations = true } }
-        .animation(
-            NativeTrayMorph.animation(
-                isExpanded: effects.trayOpen,
-                reduceMotion: systemReduced || effects.reduceMotion
-            ),
-            value: effects.trayOpen
-        )
             // Rebuilt once the tray has folded back into the button: the
             // glass container keeps the tray's footprint after it closes
             // and swallows the wheel over that part of the profile.
@@ -513,6 +513,15 @@ private struct BumpSurface: ViewModifier {
                 try? await Task.sleep(for: .milliseconds(320))
                 if !effects.trayOpen { trayGeneration += 1 }
             }
+        }
+        .transaction { if effects.reduceMotion { $0.disablesAnimations = true } }
+        .animation(
+            NativeTrayMorph.animation(
+                isExpanded: effects.trayOpen,
+                reduceMotion: systemReduced || effects.reduceMotion
+            ),
+            value: effects.trayOpen
+        )
     }
 
     private var buttonMorph: NativeTrayMorph {
@@ -541,11 +550,12 @@ private struct BumpSurface: ViewModifier {
                     effects.trayOpen = true
                 } label: {
                     ZStack {
-                        // Reserve the widest countdown before sending; digits never shift the capsule.
-                        HStack(spacing: 5) { bumpIcon; Text("Bump") }
-                            .hidden().accessibilityHidden(true)
-                        ForEach(["Next bump in 59s", "Next bump in 59m", "Next bump in 24h"], id: \.self) { title in
-                            Text(title).hidden().accessibilityHidden(true)
+                        // Hugs its label like Invite. Only a countdown reserves
+                        // its widest form, so ticking digits never shift the capsule.
+                        if cooling {
+                            ForEach(["Next bump in 59s", "Next bump in 59m", "Next bump in 24h"], id: \.self) { title in
+                                Text(title).hidden().accessibilityHidden(true)
+                            }
                         }
                         HStack(spacing: 5) {
                             if !cooling { bumpIcon }
@@ -573,41 +583,58 @@ private struct BumpSurface: ViewModifier {
             .frame(width: 16, height: 16).accessibilityHidden(true)
     }
 
-    private var tray: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("A little encouragement").font(.system(size: 15, weight: .semibold))
-                    Text("Pick a feeling. Watch it land.").font(.system(size: 12)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button(action: closeTray) { Image(systemName: "xmark").frame(width: 18, height: 18) }
-                    .buttonStyle(.borderless).accessibilityLabel("Close bump choices")
+    /// The same header as the invite tray: one round glass control, then one
+    /// title. A popover over the profile, not a page in it, so the button is
+    /// a bare chevron with no destination named.
+    private var trayHeader: some View {
+        HStack(spacing: 10) {
+            BumpGlassButton(prominent: false, circular: true, action: closeTray) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 18, height: 22)
             }
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                ForEach(BumpEffect.allCases) { effect in
-                    BumpGlassButton(prominent: false) {
-                        withAnimation(.easeOut(duration: 0.18)) { effects.trayOpen = false }
-                        effects.schedule(effect, systemReduced: systemReduced)
-                    } label: {
-                        Label { Text(effect.title) } icon: { effectIcon(effect) }
-                            .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity).frame(height: 31)
-                    }
-                    .accessibilityIdentifier("bump-\(effect.rawValue)")
-                    .onHover { hovered in
-                        if hovered { Task { await BumpEmojiLibrary.shared.prepare(effect) } }
-                    }
-                }
-            }
-            Text(
-                BumpLocalTestMode.isEnabled
-                    ? "Local test · reply in 10s · next bump in 20s"
-                    : "A little boost, once every 30 minutes."
-            )
-            .font(.system(size: 10)).foregroundStyle(.secondary)
+            .help("Back")
+            .accessibilityLabel("Back")
+            .keyboardShortcut("[", modifiers: .command)
+            Text("A little encouragement").font(.system(size: 13, weight: .medium)).lineLimit(1)
+            Spacer(minLength: 0)
         }
-        .padding(15)
+        .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 6)
+    }
+
+    private var tray: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            self.trayHeader
+            VStack(alignment: .leading, spacing: 14) {
+                self.trayChoices
+                Text(
+                    BumpLocalTestMode.isEnabled
+                        ? "Local test · reply in 10s · next bump in 20s"
+                        : "A little boost, once every 30 minutes."
+                )
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 14)
+        }
         .modifier(NativeTraySurface(morph: self.buttonMorph))
+    }
+
+    private var trayChoices: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            ForEach(BumpEffect.allCases) { effect in
+                BumpGlassButton(prominent: false) {
+                    withAnimation(.easeOut(duration: 0.18)) { effects.trayOpen = false }
+                    effects.schedule(effect, systemReduced: systemReduced)
+                } label: {
+                    Label { Text(effect.title) } icon: { effectIcon(effect) }
+                        .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity).frame(height: 31)
+                }
+                .accessibilityIdentifier("bump-\(effect.rawValue)")
+                .onHover { hovered in
+                    if hovered { Task { await BumpEmojiLibrary.shared.prepare(effect) } }
+                }
+            }
+        }
     }
 
     @ViewBuilder private func effectIcon(_ effect: BumpEffect) -> some View {

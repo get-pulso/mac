@@ -293,6 +293,7 @@ struct NativeDashboardView: View {
             else { store.goBack() }
         }
         .onChange(of: session.pendingInvite) { _, _ in resumeInvite() }
+        .onChange(of: store.inviter) { _, _ in acceptDefaultInvite() }
         .alert(confirmationTitle, isPresented: $confirming) {
             Button("Cancel", role: .cancel) { confirmationAction = nil }
             Button("Confirm", role: .destructive) { confirmationAction?(); confirmationAction = nil }
@@ -2755,12 +2756,31 @@ struct NativeDashboardView: View {
         // own choice to follow it, so the two are friends without another
         // button: the first thing after sign-in is the friend in the list.
         // A link found in the clipboard was not followed by anyone, and a
-        // group is a bigger step, so both still ask.
+        // group is a bigger step, so both still ask; the landing page's own
+        // invitation is the one exception, below.
         if self.session.pendingInviteSource == .link, self.store.queryIsLink,
            case .friendCode? = self.store.inviteCandidate
         {
             self.store.addFromQuery()
+        } else {
+            self.acceptDefaultInvite()
         }
+    }
+
+    /// The landing page hands its own invitation to whoever downloads without
+    /// a friend's link, and it reaches the app only through the clipboard.
+    /// Welcome has already said the two will be friends, so it is accepted
+    /// without a press. Only the lookup can tell it from a friend's link found
+    /// there, which still asks, so this runs again when the lookup answers.
+    private func acceptDefaultInvite() {
+        guard self.session.pendingInviteSource == .clipboard,
+              let pending = self.session.pendingInvite, self.store.query == pending,
+              let inviter = self.store.inviter, inviter.isDefaultInviter == true,
+              case .friendCode(inviter.code)? = self.store.inviteCandidate,
+              !(inviter.inviterId.map { self.store.directFriendIDs.contains($0) } ?? false),
+              !self.store.isRunning("accept-invite")
+        else { return }
+        self.store.addFromQuery()
     }
 
     private func refreshVisibleScreen() {
