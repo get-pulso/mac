@@ -27,6 +27,12 @@ struct NativeSettingsView: View {
         case recoveryCodes
     }
 
+    /// Feedback and bug reports both go to the author's direct messages:
+    /// one person makes Firstlight, and a note in X reaches him fastest.
+    private static let authorHandle = "korablev"
+
+    @Environment(\.openURL) private var openURL
+
     @ObservedObject private var session = NativeSession.shared
     @ObservedObject private var agentUsage: AgentUsageCollector = {
         @Dependency(\.agentUsage) var agentUsage
@@ -344,13 +350,44 @@ struct NativeSettingsView: View {
         case .groups:
             EmptyView() // Groups owns its form and navigation within this same detail pane.
         case .about:
-            panel {
-                info("Version", value: version)
-                info("API", value: AppEnvironment.baseURL.absoluteString)
-                Text("Friends and activity in your menu bar.").foregroundStyle(.secondary)
-                Button("Check for updates") { @Dependency(\.updater) var updater; updater.checkForUpdates() }
-                    .nativeSettingsActionButton()
-                    .disabled(AppEnvironment.isLocalBackend)
+            Section {
+                VStack(spacing: 4) {
+                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                        .resizable()
+                        .frame(width: 72, height: 72)
+                        .padding(.bottom, 4)
+                    Text("Firstlight").font(.system(size: 20, weight: .semibold))
+                    Text(self.version).foregroundStyle(.secondary)
+                    Text("Friends and activity in your menu bar.")
+                        .font(.callout).foregroundStyle(.secondary).padding(.top, 6)
+                    Text("© Serafim Korablev, 2026. All rights reserved.")
+                        .font(.callout).foregroundStyle(.tertiary)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .accessibilityElement(children: .combine)
+            }
+            panel("Updates") {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Firstlight updates")
+                        Text(self.version).font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Check now") { @Dependency(\.updater) var updater; updater.checkForUpdates() }
+                        .nativeSettingsActionButton()
+                        .disabled(AppEnvironment.isLocalBackend)
+                }
+            }
+            panel("Links") {
+                aboutLink("Website", .website, "firstlight.sh")
+                aboutLink("Send feedback", .x, Self.authorHandle, saysAddress: false)
+                aboutLink("Privacy", .website, "firstlight.sh/privacy", saysAddress: false)
+            }
+            panel("Made by Serafim") {
+                aboutLink("X", .x, Self.authorHandle)
+                aboutLink("GitHub", .website, "github.com/serafimcloud")
             }
         }
     }
@@ -436,7 +473,10 @@ struct NativeSettingsView: View {
     }
 
     private var version: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
+        guard let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String, build != short
+        else { return short }
+        return "\(short) (\(build))"
     }
 
     private var launchAtLoginBinding: Binding<Bool> {
@@ -543,6 +583,51 @@ struct NativeSettingsView: View {
                     Link(link.label, destination: link.url).lineLimit(1)
                 } else { Text(raw).foregroundStyle(.secondary).lineLimit(1) }
             }
+        }
+    }
+
+    /// About's links read the way the profile's do: the row names what it is
+    /// for, and the link itself says where it goes — an address or an @handle.
+    /// A row that is an errand rather than an address says none: writing to the
+    /// author is not "@korablev", it is leaving the app, and an arrow says so.
+    /// The whole row is the link — aiming at the address to leave was a target
+    /// the width of a handle.
+    @ViewBuilder private func aboutLink(
+        _ title: String,
+        _ kind: ProfileLink.Kind,
+        _ raw: String,
+        saysAddress: Bool = true
+    ) -> some View {
+        if let link = ProfileLink(kind, raw) {
+            Button { self.openURL(link.url) } label: {
+                LabeledContent {
+                    if saysAddress {
+                        Text(link.label).foregroundStyle(.secondary).lineLimit(1)
+                    } else {
+                        Image(systemName: "arrow.up.right").imageScale(.small).foregroundStyle(.secondary)
+                    }
+                } label: {
+                    Label {
+                        Text(title)
+                    } icon: {
+                        Image(self.glyph(kind))
+                            .renderingMode(.template)
+                            .resizable().scaledToFit()
+                            .frame(width: 14, height: 14)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+        }
+    }
+
+    private func glyph(_ kind: ProfileLink.Kind) -> String {
+        switch kind {
+        case .website: "ProfileWebsite"
+        case .x: "ProfileX"
+        case .telegram: "ProfileTelegram"
         }
     }
 
