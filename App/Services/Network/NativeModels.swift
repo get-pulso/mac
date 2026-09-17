@@ -39,6 +39,9 @@ struct NativePerson: Decodable, Identifiable {
     /// their single-tool presence must never be presented as a total count.
     var agent_live: NativeAgentLive? = nil
     var public_apps_only: Bool? = nil
+    /// Set only where a group lists who can still be invited: the open
+    /// invitation this person has not answered yet.
+    var invitation_id: String? = nil
     /// The ranking's figure when the board is not by active time: agent
     /// minutes or tokens over the period. Absent on the default board.
     let score: Double?
@@ -119,9 +122,25 @@ struct NativeFriendRequest: Decodable, Identifiable {
     let target_user: NativeContact?
 }
 
+/// Somebody asking you into a group: answered where friend requests are, and
+/// read with them.
+struct NativeGroupInvitation: Decodable, Identifiable {
+    struct Group: Decodable, Equatable { let id: String; let name: String }
+
+    let id: String
+    let inviter: NativeContact?
+    let group: Group
+}
+
 struct NativeRequests: Decodable {
     var incoming: [NativeFriendRequest] = []
     var outgoing: [NativeFriendRequest] = []
+    /// Absent from servers that predate group invitations.
+    var group_invitations: [NativeGroupInvitation]?
+
+    var groupInvitations: [NativeGroupInvitation] { self.group_invitations ?? [] }
+    /// Everything waiting on this person's answer.
+    var waitingCount: Int { self.incoming.count + self.groupInvitations.count }
 }
 
 struct NativeMembers: Decodable {
@@ -572,7 +591,15 @@ struct NativeBump: Decodable, Identifiable {
 struct NativeFriendEvent: Decodable, Identifiable {
     enum Kind: String {
         case request, accepted, joined
+        case groupInvite = "group_invite"
+
+        // MARK: Internal
+
+        /// Waits on an answer, so it is said first and carries Accept.
+        var waitsOnAnswer: Bool { self == .request || self == .groupInvite }
     }
+
+    struct Group: Decodable, Equatable { let id: String; let name: String }
 
     let id: String
     let kind: String
@@ -580,6 +607,9 @@ struct NativeFriendEvent: Decodable, Identifiable {
     let created_at: String
     /// The request to accept, for `request`.
     let request_id: String?
+    /// The invitation to accept and the group it is to, for `group_invite`.
+    let group_invitation_id: String?
+    let group: Group?
     let from: NativeBump.Sender
 
     var knownKind: Kind? { Kind(rawValue: self.kind) }

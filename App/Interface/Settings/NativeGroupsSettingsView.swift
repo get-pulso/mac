@@ -150,10 +150,10 @@ struct NativeGroupsSettingsView: View {
                     HStack {
                         NativeFormHint(text: "\(members.members.count) in this group.")
                         Spacer(minLength: 8)
-                        if owner {
-                            Button("Add friends…") { navigate(.addMembers(members.group.id)) }
-                                .nativeSettingsActionButton()
-                        }
+                        // Any member may ask a friend of their own in, as any
+                        // member may hand out the group's link.
+                        Button("Invite friends…") { navigate(.addMembers(members.group.id)) }
+                            .nativeSettingsActionButton()
                     }
                 }
                 NativeFormRow("", alignment: .center) {
@@ -201,7 +201,7 @@ struct NativeGroupsSettingsView: View {
         NativeFormScreen {
             NativeFormRow("Friends") {
                 if model.eligibleMembers.isEmpty {
-                    Text("No friends available to add. You can invite someone with a link from the group settings.")
+                    Text("No friends left to invite. You can invite someone with a link from the group settings.")
                         .foregroundStyle(.secondary).padding(.vertical, 4)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -217,9 +217,14 @@ struct NativeGroupsSettingsView: View {
                                 HStack(spacing: 10) {
                                     FirstlightAvatar(url: person.avatar_url, name: person.displayName, size: 26)
                                     Text(person.displayName).lineLimit(1)
+                                    if person.invitation_id != nil {
+                                        Spacer(minLength: 8)
+                                        Text("Invited").font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                             .toggleStyle(.checkbox)
+                            .disabled(person.invitation_id != nil)
                             .padding(.horizontal, 10).padding(.vertical, 6)
                             if index < model.eligibleMembers.count - 1 { Divider().padding(.leading, 10) }
                         }
@@ -227,7 +232,7 @@ struct NativeGroupsSettingsView: View {
                     .padding(.vertical, 2)
                     .nativeFormField()
                     .padding(.top, 2)
-                    NativeFormHint(text: "Select friends to add to this group.")
+                    NativeFormHint(text: "They join once they accept.")
                 }
             }
         } footer: {
@@ -236,7 +241,7 @@ struct NativeGroupsSettingsView: View {
                     .nativeFormCancelButton()
                     .keyboardShortcut(.cancelAction)
                 Spacer(minLength: 12)
-                submitButton("Add Friends", loading: "Adding…", key: "add-members") {
+                submitButton("Invite", loading: "Inviting…", key: "add-members") {
                     model.addMembers { navigate(.details($0)) }
                 }.disabled(model.selectedMembers.isEmpty)
             }

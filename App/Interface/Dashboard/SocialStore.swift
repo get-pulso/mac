@@ -278,7 +278,7 @@ final class SocialStore: ObservableObject {
 
     /// People waiting on an answer. Shown on the Invite button itself, so the
     /// only way to learn about a request is not to open the tray.
-    var incomingRequestCount: Int { self.requests.incoming.count }
+    var incomingRequestCount: Int { self.requests.waitingCount }
 
     var previousScreen: Screen? { self.navigationHistory.previous }
 
@@ -958,23 +958,46 @@ final class SocialStore: ObservableObject {
         }
     }
 
-    /// Adds a direct friend to a group the account created — the same call
-    /// Settings makes, reached from the person's row.
-    func addToGroup(_ person: NativePerson, group: NativeGroup) {
+    /// Asks a direct friend into a group, from the person's row. Nobody is put
+    /// into a group: joining connects them with every member, so they answer
+    /// first, where friend requests are answered.
+    func inviteToGroup(_ person: NativePerson, group: NativeGroup) {
         guard !self.busy else { return }
         self.notice = nil
-        self.feedbackToast = .loading("Adding to \(group.name)…")
-        self.run("Adding to group…", key: "add-to-group-\(group.id)-\(person.id)") {
+        self.feedbackToast = .loading("Inviting to \(group.name)…")
+        self.run("Inviting to group…", key: "invite-to-group-\(group.id)-\(person.id)") {
             do {
-                try await self.mutate("/api/groups/\(group.id)/members", body: ["userIds": [person.id]])
-                self.listCache.invalidateAll()
+                try await self.mutate("/api/groups/\(group.id)/invitations", body: ["userIds": [person.id]])
                 SettingsWindowController.shared.invalidateGroups()
-                self.feedbackToast = .success("Added to \(group.name)")
+                self.feedbackToast = .success("Invited to \(group.name)")
             } catch {
                 self.feedbackToast = nil
                 throw error
             }
         }
+    }
+
+    /// The answer to a group invitation. A yes is a join: the group arrives
+    /// with the refreshed list, and its people with it.
+    func respondToGroupInvitation(_ invitation: NativeGroupInvitation, action: String) {
+        if action == "accept" { self.acceptedRequestIDs.insert(invitation.id) }
+        self.run("Updating invitation…", key: "\(action)-group-invitation-\(invitation.id)") {
+            try await self.mutate("/api/groups/invitations/\(invitation.id)", body: ["action": action])
+            if action == "accept" { self.groupJoined() }
+            try await self.loadRequests()
+            if action == "accept" {
+                self.feedbackToast = .success("Joined \(invitation.group.name)")
+                await self.refresh(force: true)
+            }
+        }
+    }
+
+    /// Joining a group changes who is in every list and what Settings knows.
+    func groupJoined() {
+        self.listCache.invalidateAll()
+        self.groupsCache.invalidate("groups")
+        self.directFriendsCache.invalidate("friends")
+        SettingsWindowController.shared.invalidateGroups()
     }
 
     /// Takes a member out of a group the account created, from the group's list.

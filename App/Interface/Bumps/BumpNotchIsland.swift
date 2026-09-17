@@ -34,6 +34,11 @@ final class BumpNotchIsland {
         try await SocialStore.shared.acceptFromNotch(requestID: requestID, requesterID: requesterID)
     }
 
+    /// The same for an invitation into a group.
+    var acceptGroupInvitation: (_ invitationID: String) async throws -> Void = { invitationID in
+        try await SocialStore.shared.acceptGroupInvitationFromNotch(invitationID)
+    }
+
     /// Whose face joins a new friend's: yours, read as each island opens. A
     /// preview has no account to read it from.
     var me: () -> Face = {
@@ -89,6 +94,15 @@ final class BumpNotchIsland {
             if let person = store.people.first(where: { $0.id == content.personID }) {
                 store.openPerson(person)
             }
+        case .request where content.group != nil:
+            // Answered: the group itself. Not yet: where it is answered.
+            if accepted, let group = content.group {
+                store.openJoinedGroup(group.id)
+            } else {
+                store.openFriendEvent(
+                    .groupInvite, personID: content.personID, name: content.name, avatarURL: content.avatarURL
+                )
+            }
         case .request,
              .newFriend:
             store.openFriendEvent(
@@ -125,9 +139,12 @@ final class BumpNotchIsland {
         self.model.pausedFraction = self.model.remainingFraction(at: Date())
         withAnimation(.easeOut(duration: 0.15)) { self.model.acceptance = .sending }
         let send = self.acceptRequest
+        let join = self.acceptGroupInvitation
         self.acceptTask = Task { [weak self] in
             do {
-                try await send(requestID, content.personID)
+                if content.group != nil { try await join(requestID) } else {
+                    try await send(requestID, content.personID)
+                }
                 // Clicked away meanwhile: the friendship stands, there is just
                 // nobody left to tell.
                 guard let self, self.model.content == content, self.model.expanded else { return }
@@ -333,13 +350,17 @@ private struct Content: Equatable {
         self.clip = Self.clip(forBump: bump.kind)
         self.glyph = nil
         self.requestID = nil
+        self.group = nil
         self.bumpIDs = bumps.map(\.id)
     }
 
     init?(event: NativeFriendEvent) {
         guard let kind = event.knownKind else { return nil }
         self.id = "friend-\(event.id)"
-        self.kind = kind == .request ? .request : .newFriend
+        // An invitation into a group waits on the same answer a request does,
+        // and is no news at all without the group it is to.
+        if kind == .groupInvite, event.group == nil || event.group_invitation_id == nil { return nil }
+        self.kind = kind.waitsOnAnswer ? .request : .newFriend
         self.personID = event.from.id
         self.name = event.from.displayName
         self.message = event.message
@@ -349,7 +370,8 @@ private struct Content: Equatable {
         // until `handshake.webp` joins the others in BumpEmoji.
         self.clip = "handshake"
         self.glyph = "🤝"
-        self.requestID = event.request_id
+        self.requestID = kind == .groupInvite ? event.group_invitation_id : event.request_id
+        self.group = kind == .groupInvite ? event.group : nil
         self.bumpIDs = []
     }
 
@@ -372,6 +394,8 @@ private struct Content: Equatable {
     /// The system emoji shown when there is no clip.
     let glyph: String?
     let requestID: String?
+    /// The group an invitation is to; nil for a friend request.
+    let group: NativeFriendEvent.Group?
     let bumpIDs: [String]
 
     /// The words without their trailing emoji, for when the animated one is shown.
@@ -620,7 +644,7 @@ private struct BumpNotchIslandView: View {
             let words = self.model.clip != nil ? content.words : content.message
             return content.more > 0 ? "\(words) · and \(content.more) more" : words
         case .request where self.model.acceptance == .accepted:
-            return "you’re friends now"
+            return content.group.map { "you joined \($0.name)" } ?? "you’re friends now"
         case .request where self.model.acceptance == .failed:
             return "Couldn’t accept. Open it in Firstlight"
         case .request,

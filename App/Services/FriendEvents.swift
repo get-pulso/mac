@@ -51,8 +51,8 @@ extension NativeFriendEvent {
     static func spoken(_ events: [NativeFriendEvent]) -> [NativeFriendEvent] {
         events.enumerated()
             .sorted { lhs, rhs in
-                let left = lhs.element.knownKind == .request ? 0 : 1
-                let right = rhs.element.knownKind == .request ? 0 : 1
+                let left = lhs.element.knownKind?.waitsOnAnswer == true ? 0 : 1
+                let right = rhs.element.knownKind?.waitsOnAnswer == true ? 0 : 1
                 return left == right ? lhs.offset < rhs.offset : left < right
             }
             .map(\.element)

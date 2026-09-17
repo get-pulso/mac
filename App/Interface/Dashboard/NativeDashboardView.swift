@@ -1134,6 +1134,29 @@ struct NativeDashboardView: View {
         }
     }
 
+    @ViewBuilder private var groupInvitationRows: some View {
+        ForEach(self.store.requests.groupInvitations) { invitation in
+            if let person = invitation.inviter {
+                self.requestRow(person, detail: "Invited you to \(invitation.group.name)") {
+                    TrayCircleAction(
+                        symbol: "xmark",
+                        help: "Decline \(invitation.group.name)",
+                        isLoading: self.store.isRunning("decline-group-invitation-\(invitation.id)"),
+                        disabled: self.store.busy
+                    ) { self.store.respondToGroupInvitation(invitation, action: "decline") }
+                    TrayCircleAction(
+                        symbol: "checkmark",
+                        help: "Join \(invitation.group.name)",
+                        prominent: true,
+                        isLoading: self.store.isRunning("accept-group-invitation-\(invitation.id)"),
+                        disabled: self.store.busy
+                    ) { self.store.respondToGroupInvitation(invitation, action: "accept") }
+                }
+                .transition(self.store.acceptedRequestIDs.contains(invitation.id) ? .acceptedRequest : .opacity)
+            }
+        }
+    }
+
     @ViewBuilder private var yourInviteBlock: some View {
         if let invite = store.personalInvite {
             VStack(alignment: .leading, spacing: 8) {
@@ -1801,7 +1824,7 @@ struct NativeDashboardView: View {
     private func trayAutoReturnKey(_ tray: SocialStore.Tray) -> String? {
         guard !self.store.trayLoading, !self.store.busy else { return nil }
         switch tray {
-        case .incoming where self.store.requests.incoming.isEmpty: return "incoming-empty"
+        case .incoming where self.store.requests.waitingCount == 0: return "incoming-empty"
         case .sentRequests where self.store.requests.outgoing.isEmpty: return "sent-empty"
         default: return nil
         }
@@ -1851,7 +1874,7 @@ struct NativeDashboardView: View {
     private func trayTitle(_ tray: SocialStore.Tray) -> String {
         switch tray {
         case .home: "Add a friend"
-        case .incoming: "Wants to be friends"
+        case .incoming: self.store.requests.groupInvitations.isEmpty ? "Wants to be friends" : "Requests"
         case let .candidate(kind):
             switch kind {
             case .token: "Group invitation"
@@ -1880,19 +1903,17 @@ struct NativeDashboardView: View {
             if let error = store.error, !store.trayLoading {
                 NativeInlineError(message: error) { self.store.refreshTray(force: true) }
             }
-            if !self.store.requests.incoming.isEmpty {
+            if self.store.requests.waitingCount > 0 {
                 Divider()
-                self.navigationRow(
-                    self.store.requests.incoming.count == 1 ? "1 wants to be friends" :
-                        "\(self.store.requests.incoming.count) want to be friends",
-                    detail: "Accept or decline"
-                ) { self.store.pushTray(.incoming) }
+                self.navigationRow(self.waitingTitle, detail: "Accept or decline") {
+                    self.store.pushTray(.incoming)
+                }
             }
         case .incoming:
             // Rows carry their own air now, so they stack close: one list, not
             // a column of separate blocks.
-            VStack(spacing: 2) { self.incomingRequestRows }
-            if self.store.requests.incoming.isEmpty { self.quiet("That's everyone.") }
+            VStack(spacing: 2) { self.incomingRequestRows; self.groupInvitationRows }
+            if self.store.requests.waitingCount == 0 { self.quiet("That's everyone.") }
             if let error = store.error { NativeInlineError(message: error) }
         case .candidate:
             // The field may have just emptied; the tray is on its way back.
@@ -1908,6 +1929,15 @@ struct NativeDashboardView: View {
             if let error = store.error { NativeInlineError(message: error) }
             VStack(spacing: 2) { self.sentRequestRows }
         }
+    }
+
+    /// What is waiting, in the words of what it is: friends, groups, or both.
+    private var waitingTitle: String {
+        let friends = self.store.requests.incoming.count
+        let groups = self.store.requests.groupInvitations.count
+        if groups == 0 { return friends == 1 ? "1 wants to be friends" : "\(friends) want to be friends" }
+        if friends == 0 { return groups == 1 ? "1 group invitation" : "\(groups) group invitations" }
+        return "\(friends + groups) requests"
     }
 
     /// The tray a finished flow ends on: a mark, one line, one quiet line.
@@ -2017,13 +2047,15 @@ struct NativeDashboardView: View {
                 }
             }
         }
-        // Only the creator adds people directly, and only direct friends. The
-        // group whose list this is already has them.
-        let addable = self.store.groups.filter { $0.is_creator == true && $0.id != self.store.tab }
-        if !addable.isEmpty, self.store.directFriendIDs.contains(person.id) {
-            Menu("Add to group") {
-                ForEach(addable) { group in
-                    Button(group.name) { self.store.addToGroup(person, group: group) }
+        // Any member may ask their own direct friend. The group whose list
+        // this is already has them.
+        let invitable = self.store.groups.filter { $0.id != self.store.tab }
+        if !invitable.isEmpty, person.id != Defaults[.currentUserID],
+           self.store.directFriendIDs.contains(person.id)
+        {
+            Menu("Invite to group") {
+                ForEach(invitable) { group in
+                    Button(group.name) { self.store.inviteToGroup(person, group: group) }
                 }
             }
             .disabled(self.store.busy)

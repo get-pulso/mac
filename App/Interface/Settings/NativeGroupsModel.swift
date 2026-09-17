@@ -78,7 +78,7 @@ final class NativeGroupsModel: ObservableObject {
         switch self.page {
         case .list: "Groups"
         case .create: "New Group"
-        case .addMembers: "Add Friends"
+        case .addMembers: "Invite Friends"
         case let .details(id): self.members?.group.name ?? self.groups.first { $0.id == id }?.name ?? "Group"
         }
     }
@@ -195,15 +195,15 @@ final class NativeGroupsModel: ObservableObject {
         guard case let .addMembers(id) = self.page, !self.selectedMembers.isEmpty else { return }
         let selected = Array(selectedMembers)
         self.run("add-members") {
+            // An invitation, not a membership: the roster is as it was, and the
+            // people asked stay in this list, marked as waiting.
             try await self.client.addMembers(id, selected)
-            if let snapshot = try? await self.client.members(id) {
-                self.membersCache.insert(snapshot, for: id)
+            if let waiting = try? await self.client.eligibleMembers(id) {
+                self.eligibleMembers = waiting
+                self.eligibleMembersCache.insert(waiting, for: id)
             } else {
-                self.membersCache.removeValue(for: id)
+                self.eligibleMembersCache.invalidate(id)
             }
-            let remaining = self.eligibleMembers.filter { !self.selectedMembers.contains($0.id) }
-            self.eligibleMembers = remaining
-            self.eligibleMembersCache.insert(remaining, for: id)
             self.selectedMembers = []
             self.client.didChange(self.groups)
             self.operation = nil
@@ -311,10 +311,9 @@ final class NativeGroupsModel: ObservableObject {
                 }
             }
         case let .details(id):
-            // Add Friends, from the group that is open. Only its creator has
-            // that button, so only its creator is worth fetching for.
-            guard self.members?.group.is_user_creator == true,
-                  !self.eligibleMembersCache.isFresh(id, for: Self.cacheLifetime) else { return }
+            // Invite Friends, from the group that is open. Every member has
+            // that button.
+            guard !self.eligibleMembersCache.isFresh(id, for: Self.cacheLifetime) else { return }
             self.prefetch(key: "eligible-" + id) { [client] in
                 guard let people = try? await client.eligibleMembers(id) else { return }
                 self.eligibleMembersCache.insert(people, for: id)

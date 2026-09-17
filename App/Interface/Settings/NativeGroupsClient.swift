@@ -26,7 +26,7 @@ extension NativeGroupsClient {
             },
             addMembers: { id, people in
                 let _: NativeAck = try await network.request(
-                    path: "/api/groups/\(id)/members", method: .post, body: ["userIds": people]
+                    path: "/api/groups/\(id)/invitations", method: .post, body: ["userIds": people]
                 )
             },
             // Who can still be added is one question. It used to be asked as

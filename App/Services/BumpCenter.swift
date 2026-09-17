@@ -377,7 +377,7 @@ extension BumpCenter: UNUserNotificationCenterDelegate {
             // A request opens where it is answered; a new friend, the list
             // they have just joined, for the same reason bumps do.
             if let friendEvent {
-                if friendEvent == .request { SocialStore.shared.openTray(.incoming) }
+                if friendEvent.waitsOnAnswer { SocialStore.shared.openTray(.incoming) }
                 WindowManager.liveValue.show()
                 return
             }

@@ -10,7 +10,7 @@ extension SocialStore {
         for event in newFriends {
             self.recordDirectFriend(event.from.id)
         }
-        let requests = events.contains { $0.knownKind == .request }
+        let requests = events.contains { $0.knownKind?.waitsOnAnswer == true }
         Task {
             if requests { try? await self.loadRequests() }
             if !newFriends.isEmpty { await self.refresh(force: true) }
@@ -27,13 +27,28 @@ extension SocialStore {
         await self.refresh(force: true)
     }
 
+    /// Accepts a group invitation from the notch, heard the same way.
+    func acceptGroupInvitationFromNotch(_ invitationID: String) async throws {
+        try await self.mutate("/api/groups/invitations/\(invitationID)", body: ["action": "accept"])
+        self.groupJoined()
+        try? await self.loadRequests()
+        await self.refresh(force: true)
+    }
+
+    /// A group joined from the notch opens on its own tab once it has arrived.
+    func openJoinedGroup(_ groupID: String) {
+        self.showList()
+        if self.groups.contains(where: { $0.id == groupID }) { self.selectTab(groupID) }
+    }
+
     /// Where a friend event leads, from the notch or from Notification Centre.
     /// A request goes to the requests, where it is answered; a new friend to
     /// their profile, which is open to you now.
     func openFriendEvent(_ kind: NativeFriendEvent.Kind, personID: String, name: String?, avatarURL: String?) {
         self.showList()
         switch kind {
-        case .request:
+        case .request,
+             .groupInvite:
             self.openTray(.incoming)
         case .accepted,
              .joined:
