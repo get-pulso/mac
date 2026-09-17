@@ -18,7 +18,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if NotchIslandPreview.showIfRequested() { return }
         PerformanceHUD.restore()
         #endif
+        // A local build lives in /tmp and is gone after a restart: it never
+        // enrolls itself at login, where only the installed application belongs.
+        #if !DEBUG
         LaunchAtLogin.enableByDefaultIfNeeded()
+        #endif
         Defaults[.currentUserID] = nil
         self.tracker.activate()
         self.agentUsage.activate()

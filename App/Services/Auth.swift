@@ -67,6 +67,8 @@ actor Auth {
         case refreshToken
     }
 
-    private let keychain = Keychain(service: "sh.firstlight.mac.auth")
+    /// Named after the running build, so a local build signing in against the
+    /// local API never overwrites the installed application's tokens.
+    private let keychain = Keychain(service: "\(Bundle.main.bundleIdentifier ?? "sh.firstlight.mac").auth")
     private let invalidationSubject = PassthroughSubject<Void, Never>()
 }

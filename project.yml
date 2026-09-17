@@ -114,6 +114,11 @@ targets:
     settings:
       configs:
         Debug:
+          # The local build is its own application beside the installed one.
+          # A separate identifier gives it a separate Clerk session, keychain,
+          # defaults and container, so starting it never signs the installed
+          # Firstlight out, and both can run at the same time.
+          PRODUCT_BUNDLE_IDENTIFIER: sh.firstlight.mac.dev
           FIRSTLIGHT_API_BASE_URL: http://localhost:3001
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: "Developer ID Application: 21st Labs Inc. (25UG4QYN9F)"
