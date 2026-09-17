@@ -20,7 +20,7 @@ import os
             else {
                 throw Failure.failed("No person available in the loaded list")
             }
-            store.open(.person(person.id))
+            store.openPerson(person)
             await effects.loadState(for: person.id)
             for _ in 0 ..< 50 {
                 if !effects.stateLoading.contains(person.id) { break }
@@ -59,7 +59,7 @@ import os
                 "Reopening presents the sender and original effect"
             )
             try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow) + 0.25))
-            store.open(.person(person.id))
+            store.openPerson(person)
             effects.send(.onFire, to: person, systemReduced: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
             try self.check(
                 effects.run?.effect == .onFire && effects.run?.id != firstRun,

@@ -885,7 +885,7 @@ struct NativeDashboardView: View {
                             morphSource: source
                         )
                     }.buttonStyle(.plain)
-                        .contextMenu { bumpMenuItems(person) }
+                        .contextMenu { bumpMenuItems(person, from: source) }
                         // The pointer reaches a row before the click does.
                         // That is most of what the profile behind it costs.
                         .onHover { inside in if inside { store.warmPerson(person.id) } }
@@ -1452,7 +1452,9 @@ struct NativeDashboardView: View {
         if let friendID {
             self.trayActionButton("View profile", isLoading: false) {
                 self.store.closeTray()
-                self.store.open(.person(friendID))
+                // No row was tapped, so no portrait in the list flies into it.
+                self.morphSource = nil
+                self.store.openFriend(friendID)
             }
         } else {
             self.trayActionButton(
@@ -1884,10 +1886,7 @@ struct NativeDashboardView: View {
     /// profile avatar knows where to fly from and, on Back, where to return.
     private func openPerson(_ person: NativePerson, from source: String) {
         self.morphSource = source
-        if let current = self.store.selectedPerson { self.store.profilePeople[current.id] = current }
-        self.store.profilePeople[person.id] = person
-        self.store.selectedPerson = person
-        self.store.open(.person(person.id))
+        self.store.openPerson(person)
     }
 
     @ViewBuilder private func profileAction(
@@ -1923,14 +1922,17 @@ struct NativeDashboardView: View {
         }
     }
 
-    @ViewBuilder private func bumpMenuItems(_ person: NativePerson) -> some View {
+    /// A bump from the row opens the profile the way a click on the row does.
+    /// The profile is drawn from `selectedPerson`, so opening the screen alone
+    /// would show whoever was opened last, flying out of their row.
+    @ViewBuilder private func bumpMenuItems(_ person: NativePerson, from source: String) -> some View {
         if person.id != Defaults[.currentUserID], person.public_apps_only != true,
            self.store.directFriendIDs.contains(person.id) || self.store.tab != "global"
         {
             Menu("Bump") {
                 ForEach(BumpEffect.allCases) { effect in
                     Button(effect.title) {
-                        store.open(.person(person.id))
+                        openPerson(person, from: source)
                         BumpEffects.shared.send(effect, to: person, systemReduced: reduceMotion)
                     }
                 }

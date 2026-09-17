@@ -181,7 +181,7 @@ final class SocialStore: ObservableObject {
     @Published var screen: Screen = .list
     @Published var tab = "friends"
     @Published var showsApps = false
-    var profilePeople: [String: NativePerson] = [:]
+    private(set) var profilePeople: [String: NativePerson] = [:]
     var detailScrollOffsets: [Screen: CGFloat] = [:]
     @Published private(set) var period = SocialStore.storedPeriod
     /// `active` or `agent`; see `setMetric`.
@@ -225,7 +225,9 @@ final class SocialStore: ObservableObject {
     @Published var feedbackToast: FeedbackToast?
     @Published var query = ""
     @Published private(set) var copiedItem: CopiedItem?
-    @Published var selectedPerson: NativePerson?
+    /// Whose profile is open. Only the store writes it, and only with the
+    /// person the profile screen is about; open a profile with `openPerson`.
+    @Published private(set) var selectedPerson: NativePerson?
     @Dependency(\.network) var network
 
     /// What the field currently holds, read as an invitation. A code is only
@@ -547,10 +549,7 @@ final class SocialStore: ObservableObject {
         if let newPeople {
             self.peopleList = self.peopleList.refreshed(with: newPeople)
             self.listCache.insert(self.peopleList, for: key)
-            if let selectedID = self.selectedPerson?.id,
-               let refreshedPerson = self.peopleList.items.first(where: { $0.id == selectedID })
-               ?? (self.peopleList.me?.id == selectedID ? self.peopleList.me : nil)
-            {
+            if let selectedID = self.selectedPerson?.id, let refreshedPerson = self.loadedPerson(selectedID) {
                 self.selectedPerson = refreshedPerson
             }
         }
@@ -613,6 +612,31 @@ final class SocialStore: ObservableObject {
             self.navigationHistory.record(self.screen, before: next)
             self.navigate(to: next)
         }
+    }
+
+    /// Opens someone's profile. The profile is drawn from `selectedPerson`, so
+    /// the person goes in with the screen: one opened by id alone can only be
+    /// someone already opened or in the list, and is empty otherwise.
+    func openPerson(_ person: NativePerson) {
+        if let current = self.selectedPerson { self.profilePeople[current.id] = current }
+        self.profilePeople[person.id] = person
+        self.selectedPerson = person
+        self.open(.person(person.id))
+    }
+
+    /// The profile of a friend whose code is in the field. Their row when the
+    /// list has one; otherwise who the code and their card say they are, and
+    /// the profile asks for the rest by id, as it does for anyone.
+    func openFriend(_ id: String) {
+        let inviter = self.inviter?.inviterId == id ? self.inviter : nil
+        let card = self.personCards[id]
+        self.openPerson(self.loadedPerson(id) ?? NativePerson(
+            user_id: id, name: inviter?.inviterName ?? card?.name,
+            avatar_url: inviter?.inviterAvatarUrl ?? card?.avatar_url, rank: nil, active_minutes: nil,
+            last_active_at: nil, bio: card?.bio, location: card?.location, website: card?.website,
+            twitter: card?.twitter, telegram: card?.telegram, active_app: nil,
+            agent: nil, agent_active_at: nil, score: nil
+        ))
     }
 
     // MARK: Tray
@@ -1328,10 +1352,19 @@ final class SocialStore: ObservableObject {
         id + period + (self.profilePeople[id]?.public_apps_only == true ? "|public-apps" : "")
     }
 
+    /// The person with this id in the loaded ranking, the caller's own row
+    /// included.
+    private func loadedPerson(_ id: String) -> NativePerson? {
+        self.people.first(where: { $0.id == id }) ?? (self.peopleList.me?.id == id ? self.peopleList.me : nil)
+    }
+
     private func restoreCachedValue(for screen: Screen) {
         switch screen {
         case let .person(id):
-            if let person = self.profilePeople[id] { self.selectedPerson = person }
+            // Never left holding someone else: a person not opened before is
+            // taken from the list, and one found nowhere leaves it empty.
+            self.profilePeople[id] = self.profilePeople[id] ?? self.loadedPerson(id)
+            self.selectedPerson = self.profilePeople[id]
             self.activity = self.activityCache.value(for: self.profileCacheKey(id, period: self.period))
             self.agentSummary = self.agentSummaryCache.value(for: id + self.period)
             if let cached = self.directFriendsCache.value(for: "friends") { self.directFriendIDs = cached }
