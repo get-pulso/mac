@@ -1,8 +1,8 @@
-# Telegram animation artwork for Bump reactions
+# Telegram animation artwork for Bump reactions and new friends
 
 Source: https://github.com/saeedtahmtan/telemoji
 Revision: 4f45fca016c71de9d2a9e15c07ae1fe3d8327a28
-Retrieved: 2026-09-16
+Retrieved: 2026-09-16; handshake 2026-09-17 from the same revision
 
 Original Telegram TGS vectors are preserved in Sources/. Each is rendered at 60 frames per second, 192 × 192, with 16/17 ms WebP frame delays (exactly 60 frames per second averaged over each second). No interpolation of low-fps raster images. ImageIO decodes at 160 px for the 350 pt popover. Only the current effect's two animations are retained.
 
@@ -15,6 +15,9 @@ Original Telegram TGS vectors are preserved in Sources/. Each is rendered at 60 
 | seedling | tgs/animated/U+1F331_1.tgs | 120 |
 | star | tgs/animated/U+1F31F_1.tgs | 180 |
 | herb | tgs/animated/U+1F33F_1.tgs | 180 |
+| handshake | tgs/animated/U+1F91D_1.tgs | 180 |
+
+The handshake belongs to no bump effect: the notch island plays it for a friend request answered and for a new friend, and decodes it on its own. It is the one clip absent from `BumpEmojiLibrary.names`, which the popover's fan draws from.
 
 Renderer: @lottiefiles/dotlottie-web 0.80.0, @napi-rs/canvas, sharp; offline asset preparation only. No new runtime dependency.
 

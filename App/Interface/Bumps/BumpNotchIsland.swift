@@ -198,6 +198,7 @@ final class BumpNotchIsland {
         self.model.pausedFraction = nil
         self.model.clip = nil
         self.model.emojiShown = false
+        self.model.clipSettled = false
         self.model.paired = false
         self.model.acceptance = .idle
         self.model.reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -272,6 +273,15 @@ final class BumpNotchIsland {
             do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
             guard self.model.expanded else { return }
             withAnimation(self.model.pop) { self.model.emojiShown = true }
+            // Held from its end, not looped. Reduce Motion is already holding
+            // a single frame and has nothing to finish.
+            guard content.clipPlaysOnce, let clip, !self.model.reduceMotion else { return }
+            let remaining = clip.duration - Date().timeIntervalSince(self.model.clipStart)
+            if remaining > 0 {
+                do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+            }
+            guard self.model.content == content, self.model.expanded else { return }
+            self.model.clipSettled = true
         }
     }
 
@@ -348,6 +358,7 @@ private struct Content: Equatable {
         self.avatarURL = bump.from.avatar_url
         self.more = bumps.count - 1
         self.clip = Self.clip(forBump: bump.kind)
+        self.clipPlaysOnce = false
         self.glyph = nil
         self.requestID = nil
         self.group = nil
@@ -366,9 +377,12 @@ private struct Content: Equatable {
         self.message = event.message
         self.avatarURL = event.from.avatar_url
         self.more = 0
-        // No Telegram handshake is rendered yet: the system one stands in
-        // until `handshake.webp` joins the others in BumpEmoji.
+        // The Telegram handshake, the one clip no bump effect asks for. The
+        // system emoji is kept behind it for a decode that fails.
         self.clip = "handshake"
+        // Hands meet once. Looped, they would come apart at the seam to shake
+        // again, which reads as the deal coming undone.
+        self.clipPlaysOnce = true
         self.glyph = "🤝"
         self.requestID = kind == .groupInvite ? event.group_invitation_id : event.request_id
         self.group = kind == .groupInvite ? event.group : nil
@@ -391,6 +405,9 @@ private struct Content: Equatable {
     let more: Int
     /// A pre-rendered clip in BumpEmoji, when there is one.
     let clip: String?
+    /// The clip runs through once and holds its last frame, rather than
+    /// looping the way a reaction does.
+    let clipPlaysOnce: Bool
     /// The system emoji shown when there is no clip.
     let glyph: String?
     let requestID: String?
@@ -489,6 +506,9 @@ private final class BumpNotchIslandModel: ObservableObject {
     @Published var pausedFraction: Double?
     @Published var clip: BumpEmojiClip?
     @Published var emojiShown = false
+    /// A play-once clip has reached its end: the last frame is held and the
+    /// 60 fps timeline stops rather than ticking on over a still image.
+    @Published var clipSettled = false
     /// Your face beside a new friend's.
     @Published var paired = false
     @Published var acceptance = Acceptance.idle
@@ -574,14 +594,20 @@ private struct BumpNotchIslandView: View {
 
     @ViewBuilder private var emojiArt: some View {
         if let clip = self.model.clip {
-            let paused = !self.model.emojiShown || self.model.reduceMotion
-            TimelineView(.animation(minimumInterval: 1 / 60, paused: paused)) { context in
-                // Reduce Motion holds one full-bodied frame instead of looping.
-                let time = self.model.reduceMotion
-                    ? clip.duration * 0.5
-                    : context.date.timeIntervalSince(self.model.clipStart)
-                if let frame = clip.frame(at: time) {
-                    Image(decorative: frame, scale: 1).resizable().interpolation(.high).scaledToFit()
+            // Run out, and the clip stays where it ended: `frame(at:)` would
+            // wrap a whole duration back round to the first frame.
+            if self.model.clipSettled, let settled = clip.frames.last {
+                Image(decorative: settled, scale: 1).resizable().interpolation(.high).scaledToFit()
+            } else {
+                let paused = !self.model.emojiShown || self.model.reduceMotion
+                TimelineView(.animation(minimumInterval: 1 / 60, paused: paused)) { context in
+                    // Reduce Motion holds one full-bodied frame instead of looping.
+                    let time = self.model.reduceMotion
+                        ? clip.duration * 0.5
+                        : context.date.timeIntervalSince(self.model.clipStart)
+                    if let frame = clip.frame(at: time) {
+                        Image(decorative: frame, scale: 1).resizable().interpolation(.high).scaledToFit()
+                    }
                 }
             }
         } else if let glyph = self.model.content?.glyph {
