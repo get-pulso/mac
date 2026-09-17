@@ -3562,6 +3562,9 @@ struct AgentBucket: Identifiable, Equatable {
     let label: String
     /// The letter under the column, where there is room for one.
     let tick: String
+    /// What the letter becomes under the pointer: the day's date, or the
+    /// week's span.
+    let hoverTick: String
     let agent: Double
     let human: Double
     /// The bucket's agent minutes by tool, taken from the runs inside it, so
@@ -3655,6 +3658,7 @@ private struct AgentsPanel: View {
                     id: day.date,
                     label: NativeAgentTime.dayLabel(day.date),
                     tick: NativeAgentTime.weekdayLetter(day.date),
+                    hoverTick: NativeAgentTime.shortDate(day.date),
                     agent: day.agent_minutes,
                     human: day.human_minutes,
                     tools: Self.split([day]),
@@ -3678,7 +3682,12 @@ private struct AgentsPanel: View {
             return AgentBucket(
                 id: first.date,
                 label: NativeAgentTime.spanLabel(from: first.date, to: last.date),
-                tick: "",
+                // A week stands under its first day, and under the pointer
+                // says the whole stretch, the way a day says its date.
+                tick: NativeAgentTime.shortDate(first.date),
+                hoverTick: group.count == 1
+                    ? NativeAgentTime.shortDate(first.date)
+                    : NativeAgentTime.spanLabel(from: first.date, to: last.date),
                 agent: group.reduce(0) { $0 + $1.agent_minutes },
                 human: group.reduce(0) { $0 + $1.human_minutes },
                 tools: Self.split(group),
@@ -3708,7 +3717,7 @@ private struct AgentsPanel: View {
             // hours, with the person's presence under them. Longer periods
             // are columns, one per day or per week.
             if self.period == "24h", let today = days.last, today.runs?.isEmpty == false {
-                ProfileDayStrip(day: today, live: summary.now)
+                ProfileDayColumns(day: today, hovered: self.$hovered)
             } else {
                 AgentBucketBars(buckets: buckets, hovered: self.$hovered)
             }
@@ -3833,7 +3842,7 @@ private struct AgentBucketBars: View {
                 HStack(spacing: self.buckets.count > 8 ? 3 : 6) {
                     ForEach(self.buckets) { bucket in
                         let named = self.hovered?.id == bucket.id
-                        Text(named ? NativeAgentTime.shortDate(bucket.id) : bucket.tick)
+                        Text(named ? bucket.hoverTick : bucket.tick)
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(Color.primary.opacity(named ? 0.9 : 0.55))
                             .opacity(self.hovered == nil || named ? 1 : 0.45)
@@ -3922,90 +3931,97 @@ private struct ToolSplitBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 }
 
-/// One day as a strip: twenty-four hours across, runs as bars in their
-/// tool's colour, thicker the more sessions ran at once, and the person's
-/// own presence as a light band beneath. The pointer reads any moment.
-private struct ProfileDayStrip: View {
+/// One day as columns: forty-eight half hours across, each the agent
+/// minutes that fell inside it stacked by tool, and the person's own
+/// presence as a row of marks beneath. The scale is fixed, an hour of agent
+/// time filling a column, so a quiet day looks quiet. The half hours still
+/// to come stand empty, and the pointer reads any one of them into the
+/// figures above and the split below, as it does on the longer periods.
+private struct ProfileDayColumns: View {
     // MARK: Internal
 
     let day: NativeAgentSummary.Day
-    let live: NativeAgentSummary.Now?
+    @Binding var hovered: AgentBucket?
 
     var body: some View {
         let runs = self.day.runs ?? []
-        let presence = self.day.presence ?? []
+        let now = self.now
+        let slots = Self.slots(day: self.day, now: now)
+        let peak = slots.filter { !$0.future && $0.bucket.agent > 0 }.max { $0.bucket.agent < $1.bucket.agent }
         VStack(spacing: 4) {
             GeometryReader { geometry in
                 let width = geometry.size.width
-                ZStack(alignment: .bottomLeading) {
-                    // Presence band, with the day's floor under it.
-                    Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 8)
-                    ForEach(Array(presence.enumerated()), id: \.offset) { _, stretch in
-                        if let a = NativeAgentTime.hour(stretch.start_time),
-                           let b = NativeAgentTime.hour(stretch.end_time)
-                        {
-                            let end = b < a ? 24 : b
-                            RoundedRectangle(cornerRadius: 2, style: .continuous)
-                                .fill(Color.primary.opacity(0.34))
-                                .frame(width: max(width * (end - a) / 24, 2), height: 8)
-                                .offset(x: width * a / 24)
+                let pitch = width / CGFloat(Self.count)
+                ZStack(alignment: .topLeading) {
+                    // The scale, drawn once: half an hour, and the whole
+                    // hour that two tools running together would fill.
+                    ForEach([0.5, 1.0], id: \.self) { share in
+                        let y = Self.labelRoom + Self.chartHeight * (1 - share)
+                        Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1).offset(y: y)
+                        Text(share == 1 ? "60m" : "30m")
+                            .font(.system(size: 9)).foregroundStyle(Color.primary.opacity(0.4))
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .offset(y: y + 2)
+                    }
+                    HStack(alignment: .bottom, spacing: Self.gap) {
+                        ForEach(slots) { slot in self.column(slot) }
+                    }
+                    .frame(height: Self.chartHeight)
+                    .offset(y: Self.labelRoom)
+                    HStack(spacing: Self.gap) {
+                        ForEach(slots) { slot in
+                            let tint = slot.future ? 0.04 : 0.06 + 0.6 * slot.presence
+                            RoundedRectangle(cornerRadius: 1, style: .continuous)
+                                .fill(Color.primary.opacity(tint))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: Self.presenceHeight)
+                                .opacity(self.dimmed(slot) ? 0.4 : 1)
                         }
                     }
-                    // Runs, standing on the band.
-                    ForEach(Array(runs.enumerated()), id: \.element.id) { index, run in
-                        if let a = NativeAgentTime.hour(run.start_time), let b = NativeAgentTime.hour(run.end_time) {
-                            let end = b < a ? 24 : b
-                            let thickness = 4 + CGFloat(min(run.peak_sessions ?? 1, 20)) / 20 * 20
-                            let isLive = self.live != nil && index == runs.count - 1
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(NativeAgentToolColor.color(run.tool))
-                                .frame(width: max(width * (end - a) / 24, 3), height: thickness)
-                                .overlay(alignment: .trailing) {
-                                    if isLive {
-                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                            .fill(NativeAgentToolColor.color(run.tool))
-                                            .frame(width: 6)
-                                            .opacity(self.reduceMotion ? 1 : (self.breathing ? 1 : 0.3))
-                                            .animation(
-                                                self.reduceMotion ? nil : .easeInOut(duration: 1.1)
-                                                    .repeatForever(autoreverses: true),
-                                                value: self.breathing
-                                            )
-                                            .offset(x: 3)
-                                    }
-                                }
-                                .offset(x: width * a / 24, y: -10)
-                                .opacity(self.hover.map { h in h.runIndex == index ? 1 : 0.55 } ?? 1)
-                        }
+                    .offset(y: Self.labelRoom + Self.chartHeight + 4)
+                    .accessibilityHidden(true)
+                    // The busiest half hour says how much it held, until the
+                    // pointer is reading the columns itself.
+                    if let peak {
+                        let height = Self.chartHeight * min(peak.bucket.agent / 60, 1)
+                        Text("\(Int(peak.bucket.agent.rounded()))m")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.primary.opacity(0.9))
+                            .fixedSize()
+                            .frame(width: pitch * 5)
+                            .offset(x: pitch * (CGFloat(peak.index) + 0.5) - pitch * 2.5, y: Self.labelRoom - 12 + Self.chartHeight - height)
+                            .opacity(self.hovered == nil ? 1 : 0)
                     }
-                    if let hover = self.hover {
-                        Rectangle().fill(Color.primary.opacity(0.35)).frame(width: 1)
-                            .offset(x: width * hover.hour / 24)
+                    if let now {
+                        let x = width * now / 24
+                        Path { path in
+                            path.move(to: CGPoint(x: x, y: Self.labelRoom - 2))
+                            path.addLine(to: CGPoint(x: x, y: Self.labelRoom + Self.chartHeight + 4 + Self.presenceHeight))
+                        }
+                        .stroke(Color.primary.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                        Text(Self.clock(now))
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Color.primary.opacity(0.9))
+                            .fixedSize()
+                            .frame(width: 40)
+                            .offset(x: min(max(x - 20, -4), width - 36), y: -1)
                     }
                 }
-                .frame(width: width, height: geometry.size.height, alignment: .bottomLeading)
+                .animation(self.reduceMotion ? nil : .easeOut(duration: 0.16), value: self.hovered)
                 .contentShape(Rectangle())
                 .onContinuousHover { phase in
+                    // One target over the whole chart: sweeping across it
+                    // never falls into a gap between columns.
                     switch phase {
                     case let .active(point):
-                        let hour = min(max(point.x / max(width, 1) * 24, 0), 24)
-                        let runIndex = runs.firstIndex { run in
-                            guard let a = NativeAgentTime.hour(run.start_time),
-                                  let b = NativeAgentTime.hour(run.end_time) else { return false }
-                            return hour >= a && hour <= (b < a ? 24 : b)
-                        }
-                        let here = presence.contains { stretch in
-                            guard let a = NativeAgentTime.hour(stretch.start_time),
-                                  let b = NativeAgentTime.hour(stretch.end_time) else { return false }
-                            return hour >= a && hour <= (b < a ? 24 : b)
-                        }
-                        self.hover = Hover(hour: hour, runIndex: runIndex, here: here)
+                        let index = min(max(Int(point.x / max(pitch, 1)), 0), Self.count - 1)
+                        self.hovered = slots[safe: index]?.bucket
                     case .ended:
-                        self.hover = nil
+                        self.hovered = nil
                     }
                 }
             }
-            .frame(height: 44)
+            .frame(height: Self.labelRoom + Self.chartHeight + 4 + Self.presenceHeight)
             HStack {
                 ForEach(["00", "06", "12", "18", "24"], id: \.self) { mark in
                     Text(mark).font(.system(size: 9, weight: .medium))
@@ -4014,44 +4030,168 @@ private struct ProfileDayStrip: View {
                 }
             }
             .accessibilityHidden(true)
-            Text(self.readout(runs: runs))
+            Text(self.readout(slots: slots, runs: runs))
                 .font(.system(size: 11)).foregroundStyle(Color.primary.opacity(0.75))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentTransition(.opacity)
-                .animation(.easeOut(duration: 0.12), value: self.hover?.runIndex)
+                .animation(.easeOut(duration: 0.12), value: self.hovered?.id)
         }
-        .onAppear { self.breathing = true }
     }
 
     // MARK: Private
 
-    private struct Hover: Equatable {
-        let hour: Double
-        let runIndex: Int?
-        let here: Bool
+    /// One half hour of the day, with what the column needs beyond the
+    /// bucket the figures read.
+    private struct Slot: Identifiable {
+        let index: Int
+        let bucket: AgentBucket
+        /// Minutes by tool, the tool with most of the day first: the order
+        /// they stack in, bottom up, the same in every column.
+        let stack: [(tool: String, minutes: Double)]
+        /// The most sessions any run of each tool had while inside it.
+        let sessions: [(tool: String, peak: Int)]
+        /// How much of the half hour the person was at the Mac, 0 to 1.
+        let presence: Double
+        /// Still to come today.
+        let future: Bool
+
+        var id: String { self.bucket.id }
     }
 
-    @State private var hover: Hover?
-    @State private var breathing = false
+    private static let count = 48
+    private static let gap: CGFloat = 2
+    private static let chartHeight: CGFloat = 56
+    private static let presenceHeight: CGFloat = 5
+    /// Room above the columns for the clock and the peak's minutes.
+    private static let labelRoom: CGFloat = 12
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private func readout(runs: [NativeAgentSummary.Run]) -> String {
-        guard let hover = self.hover else {
+    /// Hours into the day right now, when the day is today.
+    private var now: Double? {
+        guard NativeAgentTime.isToday(self.day.date) else { return nil }
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: .now)
+        return Double(parts.hour ?? 0) + Double(parts.minute ?? 0) / 60
+    }
+
+    private static func clock(_ hour: Double) -> String {
+        String(format: "%02d:%02d", Int(hour), Int((hour - hour.rounded(.down)) * 60))
+    }
+
+    /// Start and end as hours into the day; a stretch that crosses midnight
+    /// runs to the end of this one.
+    private static func span(_ start: String, _ end: String) -> (Double, Double)? {
+        guard let a = NativeAgentTime.hour(start), let b = NativeAgentTime.hour(end) else { return nil }
+        return (a, b < a ? 24 : b)
+    }
+
+    private static func slots(day: NativeAgentSummary.Day, now: Double?) -> [Slot] {
+        let runs = day.runs ?? []
+        let presence = day.presence ?? []
+        var totals: [String: Double] = [:]
+        for run in runs { totals[run.tool, default: 0] += run.minutes }
+        let order = totals.keys.sorted { a, b in
+            let ta = totals[a] ?? 0, tb = totals[b] ?? 0
+            return ta != tb ? ta > tb : a < b
+        }
+        return (0 ..< self.count).map { index in
+            let t0 = Double(index) / 2, t1 = t0 + 0.5
+            var minutes: [String: Double] = [:]
+            var sessions: [String: Int] = [:]
+            for run in runs {
+                guard let span = self.span(run.start_time, run.end_time) else { continue }
+                let overlap = min(span.1, t1) - max(span.0, t0)
+                guard overlap > 0 else { continue }
+                minutes[run.tool, default: 0] += overlap * 60
+                sessions[run.tool] = max(sessions[run.tool] ?? 0, run.peak_sessions ?? 1)
+            }
+            var here = 0.0
+            for stretch in presence {
+                guard let span = self.span(stretch.start_time, stretch.end_time) else { continue }
+                here += max(min(span.1, t1) - max(span.0, t0), 0)
+            }
+            // A tool cannot run more than the half hour; a run that overlaps
+            // itself in the data is not worth a column past the scale.
+            let stack = order.compactMap { tool in
+                minutes[tool].map { (tool: tool, minutes: min($0, 30)) }
+            }
+            return Slot(
+                index: index,
+                bucket: AgentBucket(
+                    id: "\(day.date) \(self.clock(t0))",
+                    label: "\(self.clock(t0)) – \(self.clock(t1))",
+                    tick: "",
+                    hoverTick: "",
+                    agent: stack.reduce(0) { $0 + $1.minutes },
+                    human: here * 60,
+                    tools: Dictionary(uniqueKeysWithValues: stack.map { ($0.tool, $0.minutes) }),
+                    dayIndex: nil,
+                    rankHuman: nil,
+                    rankAgent: nil
+                ),
+                stack: stack,
+                sessions: order.compactMap { tool in sessions[tool].map { (tool: tool, peak: $0) } },
+                presence: min(here / 0.5, 1),
+                future: now.map { t0 >= $0 } ?? false
+            )
+        }
+    }
+
+    private func dimmed(_ slot: Slot) -> Bool {
+        self.hovered.map { $0.id != slot.bucket.id } ?? false
+    }
+
+    @ViewBuilder private func column(_ slot: Slot) -> some View {
+        let room = Self.chartHeight
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            if slot.future {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(Color.primary.opacity(0.035))
+                    .frame(height: room)
+            } else {
+                // Drawn top down, so the stack's first tool lands at the
+                // bottom, where the eye reads the base.
+                ForEach(Array(slot.stack.reversed()), id: \.tool) { part in
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(NativeAgentToolColor.color(part.tool))
+                        .frame(height: min(max(room * part.minutes / 60, 2), room))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: room, alignment: .bottom)
+        .clipped()
+        .background(alignment: .bottom) {
+            if !slot.future {
+                Rectangle().fill(Color.primary.opacity(0.14)).frame(height: 1)
+            }
+        }
+        .opacity(self.dimmed(slot) ? 0.4 : 1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "\(slot.bucket.label): \(DurationLabel.minutes(slot.bucket.agent)) agents, \(DurationLabel.minutes(slot.bucket.human)) at the Mac"
+        )
+    }
+
+    /// The day's count of runs and its peak, until the pointer names a half
+    /// hour: then which tools ran in it, and how many sessions each had at
+    /// once.
+    private func readout(slots: [Slot], runs: [NativeAgentSummary.Run]) -> String {
+        guard let hovered = self.hovered, let slot = slots.first(where: { $0.bucket.id == hovered.id }) else {
             let peak = runs.map { $0.peak_sessions ?? 1 }.max() ?? 0
             return runs.isEmpty ? "No agents this day." : "\(runs.count) runs · \(peak) sessions at the peak"
         }
-        let clock = String(
-            format: "%02d:%02d",
-            Int(hover.hour),
-            Int(hover.hour.truncatingRemainder(dividingBy: 1) * 60)
-        )
-        var parts = [clock]
-        if let index = hover.runIndex, let run = runs[safe: index] {
-            parts.append("\(NativeAgentToolLabel.name(run.tool)) · \(run.peak_sessions ?? 1) sessions")
+        var parts = [slot.bucket.label]
+        if slot.future {
+            parts.append("still to come")
+        } else if slot.sessions.isEmpty {
+            parts.append("no agents")
         } else {
-            parts.append("no agent")
+            // "×6" is the sessions the tool had going at once, kept this
+            // short so two tools still fit on the caption's one line.
+            parts += slot.sessions.map { entry in "\(NativeAgentToolLabel.name(entry.tool)) ×\(entry.peak)" }
         }
-        parts.append(hover.here ? "at the Mac" : "away")
         return parts.joined(separator: " · ")
     }
 }
