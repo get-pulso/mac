@@ -18,7 +18,7 @@ struct ProfilePhotoChecks {
         the room a photo has in the popover, fit and centring for square, portrait, panorama and tiny \
         photographs, the scale ceiling, pixel alignment at 1x and 2x, degenerate sizes, the corner on \
         the way out of the avatar, what a pull down is worth and when letting go of one closes the \
-        picture, and Clerk sizing and placeholder detection.
+        picture, Clerk sizing and placeholder detection, and which pictures came from Google.
         """)
     }
 
@@ -288,7 +288,26 @@ struct ProfilePhotoChecks {
         // there is nothing inside that worth a screen.
         let initials = "https://img.clerk.com/\(self.token(#"{"type":"default","initials":"SK"}"#))?width=96"
         precondition(ProfilePhotoURL.isPlaceholder(initials), "A drawn placeholder was offered as a photograph")
-        checks += 1
+        precondition(!ProfilePhotoURL.isFromGoogle(initials), "Clerk's own tile was taken for Google's picture")
+        checks += 2
+
+        // Where a picture came from decides whether it is looked into for
+        // Google's letter: Clerk's copy made at sign-in, or Google's own
+        // address, and never an upload.
+        let copied = "https://img.clerk.com/\(self.token(#"{"type":"proxy","src":"https://images.clerk.dev/oauth_google/img_2yjf"}"#))"
+        let hotlinked = "https://img.clerk.com/\(self.token(#"{"type":"proxy","src":"https://lh3.googleusercontent.com/a/ACg8oc=s1000-c"}"#))"
+        let uploaded = "https://img.clerk.com/\(self.token(#"{"type":"proxy","src":"https://images.clerk.dev/uploaded/img_2yjf"}"#))"
+        precondition(ProfilePhotoURL.isFromGoogle(copied), "Clerk's copy of a Google picture was not recognised")
+        precondition(ProfilePhotoURL.isFromGoogle(hotlinked), "A Google address behind Clerk was not recognised")
+        precondition(
+            ProfilePhotoURL.isFromGoogle("https://lh3.googleusercontent.com/a/ACg8oc=s96-c"),
+            "Google's own address was not recognised"
+        )
+        precondition(!ProfilePhotoURL.isFromGoogle(uploaded), "An upload was taken for Google's picture")
+        precondition(!ProfilePhotoURL.isFromGoogle(plain), "A picture from elsewhere was taken for Google's")
+        precondition(!ProfilePhotoURL.isFromGoogle(nil), "Nothing was taken for Google's picture")
+        precondition(!ProfilePhotoURL.isPlaceholder(copied), "Google's picture was taken for Clerk's tile")
+        checks += 7
 
         return checks
     }

@@ -187,7 +187,7 @@ xcrun swiftc -O App/Interface/Onboarding/OnboardingSound.swift \
 xcrun swiftc App/Interface/Onboarding/OnboardingSound.swift \
   Tests/OnboardingSoundChecks.swift -o /tmp/firstlight-sound-checks
 /tmp/firstlight-sound-checks /tmp/firstlight-derived-local/Build/Products/Debug/Firstlight.app
-xcrun swiftc -O App/Helpers/WelcomeAccount.swift \
+xcrun swiftc -O App/Helpers/WelcomeAccount.swift App/Helpers/AvatarMonogram.swift \
   Tests/WelcomeAccountChecks.swift -o /tmp/firstlight-welcome-account-checks
 /tmp/firstlight-welcome-account-checks
 xcrun swiftc -O App/Interface/Status/StatusItemMenu.swift \

@@ -3115,7 +3115,11 @@ struct FirstlightAvatar: View {
     var opensPhoto: (() -> Void)?
 
     var body: some View {
-        self.portrait
+        // The portrait first: drawing it is what looks at a loaded picture, and
+        // only a photograph is something to open.
+        let portrait = self.portrait
+        let opensPhoto = self.isPhotograph ? self.opensPhoto : nil
+        portrait
             .mask { Circle() }
             .overlay {
                 // A ring says "here" about the whole person, where a dot in the
@@ -3139,15 +3143,20 @@ struct FirstlightAvatar: View {
             // A portrait says nothing a screen reader needs, until it is a
             // photograph that can be opened.
             .accessibilityElement(children: .ignore)
-            .accessibilityHidden(self.opensPhoto == nil)
-            .accessibilityLabel(self.accessibilityText)
-            .opensPhoto(url: self.url, action: self.opensPhoto)
+            .accessibilityHidden(opensPhoto == nil)
+            .accessibilityLabel(opensPhoto == nil ? "" : "Photo of \(self.name)")
+            .opensPhoto(url: self.url, action: opensPhoto)
     }
 
     // MARK: Private
 
     @Namespace private var unmatched
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The address whose picture turned out, once loaded, to be one a service
+    /// drew. Read by `body`, so the photo stops being offered the moment that
+    /// is known, and kept by address, so a reused portrait for somebody else
+    /// is not taken for it.
+    @State private var drawnURL: String?
 
     /// The face, drawn from memory when it is already there and loaded when it
     /// is not. `LazyImage` asks for its picture from `onAppear`, which is a
@@ -3156,30 +3165,51 @@ struct FirstlightAvatar: View {
     /// placeholder and the rest of the change catching up — a circle filling in
     /// while the row is already sliding. The memory cache answers inside `body`,
     /// so a face that has been seen is on the first frame, and only a face that
-    /// has not is loaded.
+    /// has not is loaded. Clerk's own tile is known from its address and never
+    /// fetched at all.
     @ViewBuilder private var portrait: some View {
         let link = self.url.flatMap(URL.init(string:))
-        if let link, let cached = ImagePipeline.shared.cache[link]?.image {
-            self.fill(Image(nsImage: cached))
-        } else {
-            LazyImage(url: link) { state in
-                if let image = state.image { self.fill(image) } else { self.initial }
+        if let link, !ProfilePhotoURL.isPlaceholder(self.url) {
+            if let cached = ImagePipeline.shared.cache[link]?.image {
+                self.face(cached)
+            } else {
+                LazyImage(url: link) { state in
+                    if let image = state.imageContainer?.image { self.face(image) } else { self.monogram }
+                }
+                .onCompletion { result in
+                    if case let .success(response) = result, AvatarTile.isDrawn(self.url, image: response.image) {
+                        self.drawnURL = self.url
+                    }
+                }
             }
+        } else {
+            self.monogram
         }
     }
 
-    private var initial: some View {
+    /// Whether the portrait is somebody's photograph, as far as is known: there
+    /// is an address, and nothing has shown it to be a tile a service drew.
+    private var isPhotograph: Bool {
+        guard let url = self.url, !url.isEmpty else { return false }
+        return self.drawnURL != url && !AvatarTile.isKnownDrawn(url)
+    }
+
+    /// Nobody's photograph: the first letter of the name in the app's rounded
+    /// face, on the faint fill every empty portrait here has, or a figure when
+    /// the name has no letter to give. A tile a service drew in place of a
+    /// photo — Clerk's blue one, Google's coloured squares — is shown as this
+    /// too.
+    private var monogram: some View {
         ZStack {
             Color.primary.opacity(0.08)
-            Text(String(self.name.prefix(1)).uppercased())
-                .font(.system(size: self.size * 0.35, weight: .medium))
+            if let letter = AvatarMonogram.letter(for: self.name) {
+                AvatarLetter(letter: letter, size: self.size * 0.48)
+            } else {
+                Image(systemName: "person.fill")
+                    .font(.system(size: self.size * 0.46, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
         }
-    }
-
-    /// The portrait itself has nothing a screen reader needs, until it is a
-    /// photograph that can be opened.
-    private var accessibilityText: String {
-        self.opensPhoto == nil ? "" : "Photo of \(self.name)"
     }
 
     /// The ring sits outside the portrait with a hairline of room, so it reads as
@@ -3187,6 +3217,16 @@ struct FirstlightAvatar: View {
     private var presenceRingWidth: CGFloat { self.size <= 48 ? 1.5 : 2 }
 
     private var presenceRingGap: CGFloat { self.size <= 48 ? 2 : 3 }
+
+    /// A loaded picture, unless it is one a service drew for someone without a
+    /// photograph.
+    @ViewBuilder private func face(_ image: NSImage) -> some View {
+        if AvatarTile.isDrawn(self.url, image: image) {
+            self.monogram
+        } else {
+            self.fill(Image(nsImage: image))
+        }
+    }
 
     /// The circle decides how big the portrait is, not the photo's own
     /// proportions. scaledToFill alone hands back a frame in the photo's

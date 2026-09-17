@@ -181,15 +181,18 @@ final class BumpCenter: NSObject, ObservableObject {
 
     /// The sender's face beside their words. Written to a temporary file
     /// because that is the only thing an attachment accepts; a miss, a slow
-    /// network or an unreadable image simply leaves the banner plain.
+    /// network or an unreadable image simply leaves the banner plain, and so
+    /// does a tile Clerk or Google drew for someone with no photograph.
     private static func avatarAttachment(_ sender: NativeBump.Sender) async -> UNNotificationAttachment? {
-        guard let raw = sender.avatar_url, let url = URL(string: raw), url.scheme?.hasPrefix("http") == true
+        guard let raw = sender.avatar_url, let url = URL(string: raw), url.scheme?.hasPrefix("http") == true,
+              !ProfilePhotoURL.isPlaceholder(raw)
         else { return nil }
         do {
             var request = URLRequest(url: url)
             request.timeoutInterval = 5
             let (data, _) = try await URLSession.shared.data(for: request)
-            guard let image = NSImage(data: data), let tiff = image.tiffRepresentation,
+            guard let image = NSImage(data: data), !AvatarTile.isDrawn(raw, image: image),
+                  let tiff = image.tiffRepresentation,
                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
             else { return nil }
             let file = FileManager.default.temporaryDirectory

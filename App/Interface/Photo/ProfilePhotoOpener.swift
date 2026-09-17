@@ -16,7 +16,7 @@ private struct ProfilePhotoOpener: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if let action, self.url?.isEmpty == false, !ProfilePhotoURL.isPlaceholder(self.url) {
+        if let action, self.url?.isEmpty == false, !AvatarTile.isKnownDrawn(self.url) {
             content
                 .contentShape(Circle())
                 .onTapGesture(perform: action)

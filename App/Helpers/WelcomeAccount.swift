@@ -19,5 +19,7 @@ struct WelcomeAccount: Equatable {
     let avatarURL: String?
 
     var buttonTitle: String { self.name.map { "Continue as \($0)" } ?? "Continue to Firstlight" }
-    var initial: String { self.name.map { String($0.prefix(1)).uppercased() } ?? "P" }
+    /// The letter the sign-in button's portrait falls back on, the same one
+    /// the portrait itself draws when there is no name: Firstlight's.
+    var initial: String { AvatarMonogram.letter(for: self.name ?? "") ?? "F" }
 }

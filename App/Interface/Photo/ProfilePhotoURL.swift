@@ -29,22 +29,22 @@ enum ProfilePhotoURL {
     /// screen — so the portrait is not offered as something to open. The marker
     /// is in the payload Clerk signs into the path, the way the web reads it.
     static func isPlaceholder(_ raw: String?) -> Bool {
-        guard let raw, self.isClerk(raw) else { return false }
-        guard let token = raw
-            .split(whereSeparator: { "/?&=".contains($0) })
-            .first(where: { $0.hasPrefix("eyJ") })
-        else { return false }
+        self.payload(raw)?["type"] as? String == "default"
+    }
 
-        var encoded = String(token)
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        while encoded.count % 4 != 0 { encoded += "=" }
+    /// Whether this is the picture Google had for the account, as Clerk copied
+    /// it at sign-in. Google draws one of its own for an account with no
+    /// photograph — a coloured square and a white letter — and hands it over
+    /// like any photo, so a picture from here is the only kind worth looking
+    /// into for one. An upload that happens to look like a letter stays a photo.
+    static func isFromGoogle(_ raw: String?) -> Bool {
+        if let raw, self.isGoogle(URL(string: raw)) { return true }
         guard
-            let data = Data(base64Encoded: encoded, options: [.ignoreUnknownCharacters]),
-            let payload = String(data: data, encoding: .utf8)
+            let payload = self.payload(raw),
+            payload["type"] as? String == "proxy",
+            let source = (payload["src"] as? String).flatMap(URL.init(string:))
         else { return false }
-
-        return payload.filter { !$0.isWhitespace }.contains("\"type\":\"default\"")
+        return self.isGoogle(source) || source.path.hasPrefix("/oauth_google/")
     }
 
     // MARK: Private
@@ -53,5 +53,26 @@ enum ProfilePhotoURL {
 
     private static func isClerk(_ raw: String) -> Bool {
         URL(string: raw)?.host?.hasSuffix("clerk.com") == true
+    }
+
+    private static func isGoogle(_ url: URL?) -> Bool {
+        url?.host?.hasSuffix("googleusercontent.com") == true
+    }
+
+    /// What Clerk signed into the path of a picture it serves: base64url JSON
+    /// naming what the picture is and where it came from.
+    private static func payload(_ raw: String?) -> [String: Any]? {
+        guard let raw, self.isClerk(raw) else { return nil }
+        guard let token = raw
+            .split(whereSeparator: { "/?&=".contains($0) })
+            .first(where: { $0.hasPrefix("eyJ") })
+        else { return nil }
+
+        var encoded = String(token)
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        while encoded.count % 4 != 0 { encoded += "=" }
+        guard let data = Data(base64Encoded: encoded, options: [.ignoreUnknownCharacters]) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 }

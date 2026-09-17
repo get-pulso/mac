@@ -162,12 +162,19 @@ final class StatusIconAnimator {
         }
     }
 
+    /// The icon holds faces, and a tile Clerk or Google drew for someone with no
+    /// photograph is not one: it is passed over like a missing photo, and the
+    /// next person online takes the place. Google's are only known once loaded,
+    /// so one can take a place for a single refresh and give it up at the next.
     private func updateAvatarURLs(now: Date) {
-        self.setAvatarURLs(StatusPresenceSelection.avatarURLs(
+        let online = StatusPresenceSelection.avatarURLs(
             from: self.presenceCandidates,
             excluding: Defaults[.currentUserID],
             now: now,
-            limit: Self.maxAvatars
+            limit: .max
+        )
+        self.setAvatarURLs(Array(
+            online.filter { !AvatarTile.isKnownDrawn($0.absoluteString) }.prefix(Self.maxAvatars)
         ))
     }
 
@@ -213,7 +220,7 @@ final class StatusIconAnimator {
             let request = ImageRequest(url: url)
             return pipeline.imagePublisher(with: request)
                 .map { response -> (Int, NSImage?) in
-                    (index, response.image)
+                    (index, AvatarTile.isDrawn(url.absoluteString, image: response.image) ? nil : response.image)
                 }
                 .replaceError(with: (index, nil))
                 .eraseToAnyPublisher()
