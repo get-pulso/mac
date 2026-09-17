@@ -124,7 +124,7 @@ final class WindowManager {
         // The panel takes the keyboard by itself, without waiting on the app
         // becoming frontmost, which the system is free to refuse. Activation
         // is still asked for, so the app comes forward when it is allowed.
-        window.makeKeyAndOrderFront(nil)
+        window.present(fromScreenX: self.statusItemPlacement?.frame.midX ?? window.frame.midX)
         NSApp.activate()
         self.statusIconAnimator?.highlight()
         self.visibilitySubject.send(true)
@@ -133,7 +133,7 @@ final class WindowManager {
     @MainActor
     func hide() {
         self.statusIconAnimator?.unhighlight()
-        self.window?.orderOut(nil)
+        self.window?.dismiss(towardScreenX: self.statusItemPlacement?.frame.midX)
         self.visibilitySubject.send(false)
     }
 

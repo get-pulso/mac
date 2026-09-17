@@ -11,16 +11,20 @@ struct StatusIcon: View {
     /// a glance when both sit in the menu bar. With friends online the tile
     /// leads the avatars, which are otherwise the same row in both.
     var inverted = false
+    /// How far each face has arrived, 0 to 1, while the row is changing: a
+    /// face coming online grows into its place and the ones after it move
+    /// over; one going offline gives the place back. Empty means all here.
+    var presence: [CGFloat] = []
+    /// The plain mark on its way out as the first face arrives, or back in
+    /// as the last one leaves. Only the released build's mark ever leaves.
+    var markPresence: CGFloat = 0
 
     var body: some View {
         if self.avatars.isEmpty {
             if self.inverted {
                 self.invertedMark
             } else {
-                FirstlightMark()
-                    .fill(self.markColor)
-                    .frame(width: self.iconSize, height: self.iconSize)
-                    .background(Color.clear)
+                self.plainMark
             }
         } else if self.inverted {
             HStack(spacing: Self.invertedGap) {
@@ -28,21 +32,33 @@ struct StatusIcon: View {
                 self.avatarRow
             }
         } else {
-            self.avatarRow
+            ZStack(alignment: .leading) {
+                self.avatarRow
+                if self.markPresence > 0 {
+                    self.plainMark
+                        .scaleEffect(0.6 + 0.4 * self.markPresence)
+                        .opacity(self.markPresence)
+                }
+            }
         }
     }
 
-    static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat, inverted: Bool) -> CGFloat {
-        let row = self.totalWidth(forAvatarCount: count, iconSize: iconSize)
-        return inverted && count > 0 ? iconSize + self.invertedGap + row : row
+    static func totalWidth(presence: [CGFloat], markPresence: CGFloat, iconSize: CGFloat, inverted: Bool) -> CGFloat {
+        let row = self.rowWidth(presence: presence, iconSize: iconSize)
+        if inverted {
+            return presence.isEmpty ? iconSize : iconSize + self.invertedGap * min(1, presence.reduce(0, +)) + row
+        }
+        return max(row, iconSize * markPresence)
     }
 
-    static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat) -> CGFloat {
-        guard count > 0 else { return iconSize }
+    static func rowWidth(presence: [CGFloat], iconSize: CGFloat) -> CGFloat {
+        guard !presence.isEmpty else { return iconSize }
         let avatarDiameter = iconSize * 0.9
-        let overlap = avatarDiameter * Self.avatarOverlapRatio
-        let count = min(count, 3)
-        return avatarDiameter + CGFloat(count - 1) * (avatarDiameter - overlap)
+        let step = avatarDiameter * (1 - Self.avatarOverlapRatio)
+        let here = presence.reduce(0, +)
+        // Whole faces stand a step apart and the last one shows in full:
+        // n steps and one overlap, which a lone arriving face grows into.
+        return here * step + (avatarDiameter - step) * min(1, here)
     }
 
     // MARK: Private
@@ -67,31 +83,41 @@ struct StatusIcon: View {
         .frame(width: self.iconSize, height: self.iconSize)
     }
 
-    private var avatarRow: some View {
-        Group {
-            let avatarDiameter = self.iconSize * 0.9
-            let overlap = avatarDiameter * Self.avatarOverlapRatio
-            let count = min(self.avatars.count, 3)
-            let totalWidth = StatusIcon.totalWidth(forAvatarCount: count, iconSize: self.iconSize)
-            ZStack(alignment: .leading) {
-                ForEach(Array(self.avatars.prefix(3).enumerated()), id: \ .offset) { index, image in
-                    ZStack {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: avatarDiameter, height: avatarDiameter)
-                            .clipShape(Circle())
-                        Circle()
-                            .stroke(self.markColor.opacity(0.26), lineWidth: Self.avatarBorderWidth)
-                            .frame(width: avatarDiameter, height: avatarDiameter)
-                    }
-                    .offset(x: CGFloat(index) * (avatarDiameter - overlap))
-                    .zIndex(Double(index))
-                }
-            }
-            .frame(width: totalWidth, height: self.iconSize, alignment: .leading)
+    private var plainMark: some View {
+        FirstlightMark()
+            .fill(self.markColor)
+            .frame(width: self.iconSize, height: self.iconSize)
             .background(Color.clear)
+    }
+
+    private var avatarRow: some View {
+        let avatarDiameter = self.iconSize * 0.9
+        let step = avatarDiameter * (1 - Self.avatarOverlapRatio)
+        // The animator decides how many faces the row holds; while two trade
+        // places the row is briefly longer than it ever is at rest.
+        let faces = self.avatars
+        let presence = faces.indices.map { self.presence.indices.contains($0) ? self.presence[$0] : 1 }
+        let totalWidth = StatusIcon.rowWidth(presence: presence, iconSize: self.iconSize)
+        return ZStack(alignment: .leading) {
+            ForEach(Array(faces.enumerated()), id: \.offset) { index, image in
+                ZStack {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: avatarDiameter, height: avatarDiameter)
+                        .clipShape(Circle())
+                    Circle()
+                        .stroke(self.markColor.opacity(0.26), lineWidth: Self.avatarBorderWidth)
+                        .frame(width: avatarDiameter, height: avatarDiameter)
+                }
+                .scaleEffect(0.3 + 0.7 * presence[index], anchor: .leading)
+                .opacity(presence[index])
+                .offset(x: presence.prefix(index).reduce(0, +) * step)
+                .zIndex(Double(index))
+            }
         }
+        .frame(width: max(totalWidth, 1), height: self.iconSize, alignment: .leading)
+        .background(Color.clear)
     }
 }
 

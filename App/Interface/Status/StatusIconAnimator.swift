@@ -22,6 +22,7 @@ final class StatusIconAnimator {
 
     deinit {
         self.presenceTask?.cancel()
+        self.rowTimer?.invalidate()
         NSStatusBar.system.removeStatusItem(self.statusBarItem)
         self.appearanceObservation?.invalidate()
     }
@@ -66,6 +67,7 @@ final class StatusIconAnimator {
 
     private static let iconSize: CGFloat = 20
     private static let maxAvatars = 3
+    private static let rowChange: TimeInterval = 0.32
 
     /// The name the bar files our place under. It never changes: rename it and
     /// everyone who has dragged the icon somewhere loses where they put it.
@@ -75,7 +77,10 @@ final class StatusIconAnimator {
     private let menu: StatusItemMenu
     private var presenceCandidates: [StatusPresenceCandidate] = []
     private var avatarURLs: [URL] = []
-    private var avatarImages: [NSImage] = []
+    /// The faces the row holds at rest, each with the address it came from,
+    /// so a change can tell who arrived and who left from who merely moved.
+    private var faces: [Face] = []
+    private var rowTimer: Timer?
     private var avatarRequest: AnyCancellable?
     private var presenceTask: Task<Void, Never>?
     private var subscriptions = Set<AnyCancellable>()
@@ -204,21 +209,19 @@ final class StatusIconAnimator {
     }
 
     private func setAvatarURLs(_ urls: [URL]) {
-        guard urls != self.avatarURLs || self.avatarImages.count != urls.count else { return }
+        guard urls != self.avatarURLs || self.faces.count != urls.count else { return }
         self.avatarURLs = urls
         self.avatarRequest?.cancel()
 
         guard !urls.isEmpty else {
-            self.avatarImages = []
-            self.renderIcon()
+            self.changeRow(to: [])
             return
         }
 
         self.avatarRequest = self.fetchAvatars(for: urls)
-            .sink { [weak self] images in
+            .sink { [weak self] faces in
                 guard let self, self.avatarURLs == urls else { return }
-                self.avatarImages = images
-                self.renderIcon()
+                self.changeRow(to: faces)
             }
     }
 
@@ -232,14 +235,14 @@ final class StatusIconAnimator {
                     // A template mark follows the bar by itself; only the
                     // avatar row is drawn in the bar's colour, and only a
                     // colour that actually flipped is worth drawing again.
-                    guard !self.avatarImages.isEmpty, self.menuBarAppearance != self.renderedAppearance
+                    guard !self.faces.isEmpty, self.rowTimer == nil, self.menuBarAppearance != self.renderedAppearance
                     else { return }
                     self.renderIcon()
                 }
             }
     }
 
-    private func fetchAvatars(for urls: [URL]) -> AnyPublisher<[NSImage], Never> {
+    private func fetchAvatars(for urls: [URL]) -> AnyPublisher<[Face], Never> {
         let pipeline = ImagePipeline.shared
         let publishers = urls.enumerated().map { index, url -> AnyPublisher<(Int, NSImage?), Never> in
             let request = ImageRequest(url: url)
@@ -253,41 +256,103 @@ final class StatusIconAnimator {
         return Publishers.MergeMany(publishers)
             .collect()
             .map { results in
-                results.sorted { $0.0 < $1.0 }.compactMap(\.1)
+                results.sorted { $0.0 < $1.0 }.compactMap { index, image in
+                    image.map { Face(url: urls[index], image: $0) }
+                }
             }
             .eraseToAnyPublisher()
     }
 
+    /// The row changes the way a list does: whoever came online grows into
+    /// their place and the faces after them move over, whoever left gives the
+    /// place back. The bar only shows bitmaps, so the change is drawn a frame
+    /// at a time, and briefly: it happens in the corner of the eye, all day.
+    private func changeRow(to faces: [Face]) {
+        let old = self.faces
+        self.rowTimer?.invalidate()
+        self.rowTimer = nil
+        self.faces = faces
+        let before = old.map(\.url), after = faces.map(\.url)
+        guard Set(before) != Set(after),
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              self.statusBarItem.button?.window != nil
+        else {
+            self.renderIcon()
+            return
+        }
+        // The new order, with everyone leaving kept where they stood.
+        var row = faces.map { (face: $0, arriving: !before.contains($0.url), leaving: false) }
+        for (index, face) in old.enumerated() where !after.contains(face.url) {
+            row.insert((face: face, arriving: false, leaving: true), at: min(index, row.count))
+        }
+        let inverted = AppEnvironment.isLocalBackend
+        let started = Date.now
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { return timer.invalidate() }
+                let linear = min(1, Date.now.timeIntervalSince(started) / Self.rowChange)
+                guard linear < 1 else {
+                    timer.invalidate()
+                    self.rowTimer = nil
+                    self.renderIcon()
+                    return
+                }
+                let eased = 1 - pow(1 - linear, 3)
+                self.render(
+                    faces: row.map(\.face.image),
+                    presence: row.map { $0.arriving ? eased : $0.leaving ? 1 - eased : 1 },
+                    markPresence: inverted ? 0 : old.isEmpty ? 1 - eased : faces.isEmpty ? eased : 0
+                )
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.rowTimer = timer
+    }
+
     private func renderIcon() {
-        let avatars = self.avatarImages
+        self.render(faces: self.faces.map(\.image), presence: [], markPresence: 0)
+        let count = self.faces.count
+        let label = if count == 1 {
+            "Firstlight, 1 friend online"
+        } else if count == 0 {
+            AppEnvironment.isLocalBackend ? "Firstlight, development build" : "Firstlight"
+        } else {
+            "Firstlight, \(count) friends online"
+        }
+        self.statusBarItem.button?.setAccessibilityLabel(label)
+        self.statusBarItem.button?.toolTip = "\(label) · Right-click for options"
+    }
+
+    private func render(faces avatars: [NSImage], presence: [CGFloat], markPresence: CGFloat) {
         let asTemplate = avatars.isEmpty
         self.renderedAppearance = self.menuBarAppearance
         // The build on the local API wears the mark inverted; see `StatusIcon`.
         let inverted = AppEnvironment.isLocalBackend
         let width = StatusIcon.totalWidth(
-            forAvatarCount: avatars.count, iconSize: Self.iconSize, inverted: inverted
+            presence: presence.isEmpty ? avatars.map { _ in 1 } : presence,
+            markPresence: markPresence,
+            iconSize: Self.iconSize,
+            inverted: inverted
         )
         let view = StatusIcon(
             avatars: avatars,
             iconSize: Self.iconSize,
             markColor: asTemplate ? .black : self.menuBarMarkColor,
-            inverted: inverted
+            inverted: inverted,
+            presence: presence,
+            markPresence: markPresence
         )
-        .frame(width: width, height: Self.iconSize)
+        .frame(width: width, height: Self.iconSize, alignment: .leading)
         let renderer = ImageRenderer(content: view)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         guard let image = renderer.nsImage else { return }
         image.isTemplate = asTemplate
         self.statusBarItem.length = asTemplate ? NSStatusItem.squareLength : width
-        let label = if avatars.count == 1 {
-            "Firstlight, 1 friend online"
-        } else if avatars.isEmpty {
-            inverted ? "Firstlight, development build" : "Firstlight"
-        } else {
-            "Firstlight, \(avatars.count) friends online"
-        }
         self.statusBarItem.button?.image = image
-        self.statusBarItem.button?.setAccessibilityLabel(label)
-        self.statusBarItem.button?.toolTip = "\(label) · Right-click for options"
     }
+}
+
+private struct Face {
+    let url: URL
+    let image: NSImage
 }

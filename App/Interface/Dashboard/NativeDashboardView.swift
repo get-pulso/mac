@@ -511,6 +511,9 @@ struct NativeDashboardView: View {
     /// towards the arriving step's natural height. Nil until the first step
     /// has laid itself out; the frame is then whatever it needs.
     @State private var trayStepHeight: CGFloat?
+    @State private var inviteFieldShakes: CGFloat = 0
+    @State private var friendCodeWaves: CGFloat = 0
+    @State private var friendCodeWaving = false
     /// Natural heights as the steps reported them, one per tray.
     @State private var trayStepNatural: [SocialStore.Tray: CGFloat] = [:]
     #if DEBUG
@@ -1094,18 +1097,36 @@ struct NativeDashboardView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(
-                    self.inviteFieldFocused ? Color.firstlight.opacity(0.7) : Color.primary.opacity(0.09),
-                    lineWidth: self.inviteFieldFocused ? 1.5 : 0.5
+                    self.inviteFieldRefusal != nil ? Color.red.opacity(0.7) :
+                        self.inviteFieldFocused ? Color.firstlight.opacity(0.7) : Color.primary.opacity(0.09),
+                    lineWidth: self.inviteFieldFocused || self.inviteFieldRefusal != nil ? 1.5 : 0.5
                 )
                 .animation(.easeOut(duration: 0.15), value: self.inviteFieldFocused)
+                .animation(.easeOut(duration: 0.15), value: self.inviteFieldRefusal)
         }
         .contentShape(Rectangle())
         .onTapGesture { self.inviteFieldFocused = true }
+        // What was typed cannot be used: the field shakes its head, once for
+        // each new reason, and says nothing more than that.
+        .modifier(NativeShake(shakes: self.inviteFieldShakes))
+        .onChange(of: self.inviteFieldRefusal) { _, refusal in
+            guard refusal != nil, !self.reduceMotion else { return }
+            withAnimation(.linear(duration: 0.4)) { self.inviteFieldShakes += 1 }
+        }
         // Last, so the fill and the border are inset as one object: between
         // them it would widen the border past the fill. The 8 pt is what the
         // step insets its own content by, which puts the field on the tray's
         // 14 pt line with everything else.
         .padding(.horizontal, 8)
+    }
+
+    /// Why the field's contents cannot be acted on, if they cannot: your own
+    /// code, a link that does not open, a request the server turned down.
+    private var inviteFieldRefusal: String? {
+        if case let .friendCode(code)? = self.store.inviteCandidate,
+           code.caseInsensitiveCompare(self.store.personalInvite?.personalInviteCode ?? "") == .orderedSame
+        { return "own" }
+        return self.store.inviteError ?? self.store.error
     }
 
     @ViewBuilder private var sentRequestRows: some View {
@@ -1174,9 +1195,33 @@ struct NativeDashboardView: View {
         if let invite = store.personalInvite {
             VStack(alignment: .leading, spacing: 8) {
                 Text("YOUR FRIEND CODE").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                // Selectable text is drawn by AppKit, which knows nothing of
+                // text renderers, so the wave runs on a copy laid over the
+                // code for as long as it lasts and the code itself steps out.
                 Text(self.displayFriendCode(invite.personalInviteCode))
                     .font(.system(size: 24, weight: .medium, design: .monospaced))
                     .tracking(1.5).lineLimit(1).minimumScaleFactor(0.68).textSelection(.enabled)
+                    .opacity(self.friendCodeWaving ? 0 : 1)
+                    .overlay(alignment: .leading) {
+                        // Always there, so the wave has a value to move from.
+                        Text(self.displayFriendCode(invite.personalInviteCode))
+                            .font(.system(size: 24, weight: .medium, design: .monospaced))
+                            .tracking(1.5).lineLimit(1).minimumScaleFactor(0.68)
+                            .textRenderer(NativeGlyphWave(waves: self.friendCodeWaves))
+                            .opacity(self.friendCodeWaving ? 1 : 0)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                    // Copied: a wave runs along the code, the thing just taken.
+                    .onChange(of: self.store.copiedItem == .friendCode) { _, copied in
+                        guard copied, !self.reduceMotion else { return }
+                        var still = Transaction()
+                        still.disablesAnimations = true
+                        withTransaction(still) { self.friendCodeWaving = true }
+                        withAnimation(.easeOut(duration: 0.55)) { self.friendCodeWaves += 1 } completion: {
+                            self.friendCodeWaving = false
+                        }
+                    }
                     .accessibilityLabel("Your friend code \(invite.personalInviteCode)")
                 // Two equal buttons across the card: the code is the thing
                 // people act on here, so its actions get room, not a footnote.
@@ -1559,6 +1604,7 @@ struct NativeDashboardView: View {
         if let error = store.error {
             Text(error).font(.system(size: 11)).foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
+                .transition(.opacity.combined(with: .offset(y: -4)))
         }
         // "Add friend" from the first moment; the name arrives into the last
         // word once it is known. A code nobody answers to still sends: the
@@ -1620,6 +1666,7 @@ struct NativeDashboardView: View {
         if let error = store.error {
             Text(error).font(.system(size: 11)).foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
+                .transition(.opacity.combined(with: .offset(y: -4)))
         }
         // The button is there from the first moment, dimmed while the link
         // is read, so the tray is its final height at once; then the group's
@@ -1770,6 +1817,7 @@ struct NativeDashboardView: View {
                 ZStack(alignment: .top) {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) { self.trayStep(tray) }
+                            .animation(self.reduceMotion ? nil : .easeOut(duration: 0.2), value: self.store.error)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 8)
                             .fixedSize(horizontal: false, vertical: true)

@@ -144,8 +144,7 @@ struct NativeCopyButtonLabel: View {
 
     var body: some View {
         ZStack {
-            stateText(title, visible: !copied && !isLoading)
-            stateText("Copied", visible: copied && !isLoading)
+            self.words.modifier(CopyLabelStateModifier(visible: !isLoading))
             if let loadingTitle {
                 HStack(spacing: 6) {
                     NativeProgress(active: isLoading, label: loadingTitle, delay: .milliseconds(180))
@@ -162,10 +161,35 @@ struct NativeCopyButtonLabel: View {
 
     // MARK: Private
 
+    private static let copiedTitle = "Copied"
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private func stateText(_ value: String, visible: Bool) -> some View {
-        Text(value).modifier(CopyLabelStateModifier(visible: visible))
+    /// "Copy code" and "Copied" begin with the same letters, and those stay
+    /// where they are: only the end of the word changes, rising out as the
+    /// new one rises in, and the label closes up around whichever is there.
+    private var words: some View {
+        let shared = String(self.title.commonPrefix(with: Self.copiedTitle))
+        let stem = shared.count >= 3 ? shared : ""
+        let before = String(self.title.dropFirst(stem.count))
+        let after = String(Self.copiedTitle.dropFirst(stem.count))
+        return HStack(spacing: 0) {
+            Text(stem)
+            Text(self.copied ? after : before).hidden()
+                .overlay(alignment: .leading) {
+                    ZStack(alignment: .leading) {
+                        self.ending(before, visible: !self.copied, leavesUp: true)
+                        self.ending(after, visible: self.copied, leavesUp: false)
+                    }
+                    .fixedSize()
+                }
+        }
+    }
+
+    private func ending(_ value: String, visible: Bool, leavesUp: Bool) -> some View {
+        Text(value)
+            .modifier(CopyLabelStateModifier(visible: visible))
+            .offset(y: visible || self.reduceMotion ? 0 : leavesUp ? -6 : 6)
     }
 }
 
@@ -873,5 +897,49 @@ struct NativeCenteredFlow: Layout {
         }
         if !line.pieces.isEmpty { lines.append(line) }
         return lines
+    }
+}
+
+/// A field saying no: a short, damped shake from side to side. Driven by a
+/// count, so each new refusal shakes once and the view is still in between.
+struct NativeShake: GeometryEffect {
+    var shakes: CGFloat
+
+    var animatableData: CGFloat {
+        get { self.shakes }
+        set { self.shakes = newValue }
+    }
+
+    func effectValue(size _: CGSize) -> ProjectionTransform {
+        let progress = self.shakes - self.shakes.rounded(.down)
+        let x = 6 * (1 - progress) * sin(progress * .pi * 5)
+        return ProjectionTransform(CGAffineTransform(translationX: x, y: 0))
+    }
+}
+
+/// A wave along a line of text, one glyph after another, for the moment the
+/// text is taken: each glyph lifts a few points and settles as the crest
+/// passes. The text stays one `Text`, selectable and scaled as before.
+struct NativeGlyphWave: TextRenderer {
+    /// 0 at rest; a whole number more for each wave that has gone by.
+    var waves: CGFloat
+
+    var animatableData: CGFloat {
+        get { self.waves }
+        set { self.waves = newValue }
+    }
+
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        let progress = self.waves - self.waves.rounded(.down)
+        let glyphs = layout.flatMap { line in line.flatMap { run in run.map { $0 } } }
+        for (index, glyph) in glyphs.enumerated() {
+            // The crest takes 0.45 of the wave to pass a glyph and the rest
+            // of it to get from the first glyph to the last.
+            let start = glyphs.count > 1 ? 0.55 * CGFloat(index) / CGFloat(glyphs.count - 1) : 0
+            let local = min(max((progress - start) / 0.45, 0), 1)
+            var copy = context
+            copy.translateBy(x: 0, y: -4 * sin(local * .pi))
+            copy.draw(glyph)
+        }
     }
 }
