@@ -103,26 +103,16 @@ struct NativeGroupsSettingsView: View {
                     if owner { nameField } else { Text(members.group.name).padding(.vertical, 4) }
                 }
                 NativeFormRow("Invite link", alignment: .center) {
-                    HStack(spacing: 8) {
-                        Picker("Link can be used", selection: $model.usageLimit) {
-                            Text("Once").tag(1)
-                            Text("5 times").tag(5)
-                            Text("10 times").tag(10)
-                            Text("25 times").tag(25)
-                        }
-                        .labelsHidden()
-                        .fixedSize()
-                        Button(action: model.copyInvite) {
-                            NativeCopyButtonLabel(
-                                title: "Copy invite link",
-                                copied: model.copied,
-                                loadingTitle: "Creating…",
-                                isLoading: model.operation == "invite"
-                            )
-                        }
-                        .nativeSettingsActionButton()
+                    Button(action: model.copyInvite) {
+                        NativeCopyButtonLabel(
+                            title: "Copy invite link",
+                            copied: model.copied,
+                            loadingTitle: "Creating…",
+                            isLoading: model.operation == "invite"
+                        )
                     }
-                    NativeFormHint(text: "Choose how many people can join with one link.")
+                    .nativeSettingsActionButton()
+                    NativeFormHint(text: "Anyone with this link can join for 24 hours.")
                 }
                 NativeFormRow("Members") {
                     VStack(alignment: .leading, spacing: 0) {

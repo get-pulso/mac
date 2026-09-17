@@ -158,7 +158,7 @@ enum InviteMocks {
             return self.json("""
             {"personalInviteCode":"\(self.ownCode)","personalInviteLink":"https://firstlight.sh/join/\(
                 self.ownCode
-            )","tokensAvailable":5}
+            )"}
             """)
 
         case ("GET", "/api/friends/requests"):
@@ -198,7 +198,7 @@ enum InviteMocks {
         case ("GET", "/api/invite/info"):
             let token = query?["token"] ?? nil
             try await Task.sleep(for: .milliseconds(900))
-            if token == "expired" { return self.fail(410, "This invitation has expired or was used up.") }
+            if token == "expired" { return self.fail(410, "This invitation has expired.") }
             return self.json("""
             {"invite":{"groupName":"Runway","inviterName":"Anna K.","inviterAvatarUrl":null,
             "memberCount":6,"isUniversal":false}}

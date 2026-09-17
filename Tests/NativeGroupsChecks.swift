@@ -37,7 +37,7 @@ struct NativeGroupsChecks {
         var eligibleRequests = 0
         var createdNames: [String] = []
         var renames: [String] = []
-        var inviteLimits: [Int] = []
+        var invitedGroups: [String] = []
         var copiedLinks: [String] = []
         var removed: [Bool] = []
         var removedMembers: [String] = []
@@ -70,7 +70,7 @@ struct NativeGroupsChecks {
                 eligibleRequests += 1
                 return currentMembers.contains(where: { $0.id == eligibleFriend.id }) ? [] : [eligibleFriend]
             },
-            invite: { _, limit in inviteLimits.append(limit); return "https://example.invalid/invite/\(limit)" },
+            invite: { id in invitedGroups.append(id); return "https://example.invalid/invite/\(id)" },
             copy: { copiedLinks.append($0); return true },
             didChange: { _ in refreshes += 1 }
         )
@@ -146,12 +146,7 @@ struct NativeGroupsChecks {
         expect(model.copied && copiedLinks.count == 1, "Copy is acknowledged in the button")
         model.copyInvite()
         try await settle { !model.busy }
-        expect(inviteLimits == [1] && copiedLinks.count == 2, "Repeated copying reuses the created link")
-        model.usageLimit = 5
-        expect(!model.copied, "Changing invitation options clears feedback")
-        model.copyInvite()
-        try await settle { !model.busy }
-        expect(inviteLimits == [1, 5], "New options generate a new invitation")
+        expect(invitedGroups == ["one"] && copiedLinks.count == 2, "Repeated copying reuses the group's link")
 
         model.open(.addMembers("one"))
         try await settle { model.loaded && !model.loading }

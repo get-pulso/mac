@@ -890,11 +890,9 @@ final class SocialStore: ObservableObject {
         self.feedbackToast = .loading("Creating link…")
         self.run("Creating invitation…", key: "copy-group-invite-\(groupID)") {
             do {
-                struct Options: Encodable { let usageLimit: Int }
                 let result: NativeInviteLink = try await self.network.request(
                     path: "/api/groups/\(groupID)/invite",
-                    method: .post,
-                    body: Options(usageLimit: 1)
+                    method: .post
                 )
                 self.writeToPasteboard(result.inviteLink)
                 self.feedbackToast = .success("Copied")

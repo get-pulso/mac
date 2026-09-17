@@ -25,7 +25,7 @@ struct NativeGroupsClient {
     var removeMember: (String, String) async throws -> Void
     var addMembers: (String, [String]) async throws -> Void
     var eligibleMembers: (String) async throws -> [NativePerson]
-    var invite: (String, Int) async throws -> String
+    var invite: (String) async throws -> String
     var copy: (String) -> Bool
     var didChange: ([NativeGroup]) -> Void
     /// The groups the popover already has. Settings and the popover ask the
@@ -63,10 +63,6 @@ final class NativeGroupsModel: ObservableObject {
     @Published var name = ""
     @Published var selectedMembers = Set<String>()
 
-    @Published var usageLimit = 1 {
-        didSet { if oldValue != self.usageLimit { self.clearInvite() } }
-    }
-
     var busy: Bool { self.operation != nil }
     var normalizedName: String { self.name.trimmingCharacters(in: .whitespacesAndNewlines) }
     var validName: Bool { !self.normalizedName.isEmpty && self.normalizedName.count <= 80 }
@@ -94,7 +90,6 @@ final class NativeGroupsModel: ObservableObject {
         self.loadError = nil
         self.selectedMembers = []
         self.clearInvite()
-        self.usageLimit = 1
         self.restoreCachedValue(for: destination)
         self.load(force: false)
         self.prefetch(for: destination)
@@ -218,12 +213,11 @@ final class NativeGroupsModel: ObservableObject {
 
     func copyInvite() {
         guard let id = page.groupID else { return }
-        let limit = self.usageLimit
         self.run("invite") {
             let link: String
             if let cached = self.inviteLink { link = cached }
             else {
-                link = try await self.client.invite(id, limit)
+                link = try await self.client.invite(id)
                 self.inviteLink = link
             }
             guard self.client.copy(link) else { throw NativeError.message("Couldn't copy the link. Try again.") }

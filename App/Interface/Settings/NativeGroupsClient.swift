@@ -36,9 +36,9 @@ extension NativeGroupsClient {
             eligibleMembers: { id in
                 try await network.request(path: "/api/groups/\(id)/addable-members", method: .get)
             },
-            invite: { id, limit in
+            invite: { id in
                 let result: NativeInviteLink = try await network.request(
-                    path: "/api/groups/\(id)/invite", method: .post, body: ["usageLimit": limit]
+                    path: "/api/groups/\(id)/invite", method: .post
                 )
                 return result.inviteLink
             },

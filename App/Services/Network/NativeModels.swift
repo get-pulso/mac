@@ -134,7 +134,6 @@ struct NativeMembers: Decodable {
 struct NativePersonalInvite: Decodable {
     let personalInviteCode: String
     let personalInviteLink: String
-    let tokensAvailable: Int
 }
 
 struct NativeInviteLink: Decodable { let token: String; let inviteLink: String; let expiresAt: String }
