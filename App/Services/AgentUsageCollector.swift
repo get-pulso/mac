@@ -57,8 +57,7 @@ final class AgentUsageCollector: ObservableObject {
 
     /// On unless the account turned it off. Reading how long the coding
     /// agents worked is part of what the app records, like the foreground
-    /// app, so it needs no switch of its own; pausing activity tracking
-    /// pauses this too.
+    /// app, so it needs no switch of its own.
     func isEnabled(for userID: String) -> Bool {
         Defaults[.agentTrackingAccounts][userID] ?? true
     }
@@ -87,13 +86,6 @@ final class AgentUsageCollector: ObservableObject {
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.scheduleIncrementalScan() }
-            .store(in: &self.subscriptions)
-        // The pause switch is a plain default written by the settings view.
-        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
-            .map { _ in UserDefaults.standard.bool(forKey: "firstlight.trackingPaused") }
-            .removeDuplicates()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.reconcile() }
             .store(in: &self.subscriptions)
         self.reconcile()
     }
@@ -161,9 +153,7 @@ final class AgentUsageCollector: ObservableObject {
     }
 
     private func reconcile() {
-        // One pause switch covers everything the app records, this included.
-        let paused = UserDefaults.standard.bool(forKey: "firstlight.trackingPaused")
-        guard let userID = Defaults[.currentUserID], self.isEnabled(for: userID), !paused else {
+        guard let userID = Defaults[.currentUserID], self.isEnabled(for: userID) else {
             self.stop()
             return
         }

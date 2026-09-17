@@ -170,8 +170,7 @@ final class Tracker {
     }
 
     private func heartbeat() throws {
-        guard let userID = Defaults[.currentUserID],
-              !UserDefaults.standard.bool(forKey: "firstlight.trackingPaused") else { return }
+        guard let userID = Defaults[.currentUserID] else { return }
         self.logger.info("Heartbeat")
 
         let trackedEvents: [CGEventType] = [.mouseMoved, .keyDown, .scrollWheel]

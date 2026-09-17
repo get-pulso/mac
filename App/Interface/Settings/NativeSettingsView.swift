@@ -34,7 +34,6 @@ struct NativeSettingsView: View {
     }()
 
     @AppStorage("firstlight.appearance") private var appearance = "system"
-    @AppStorage("firstlight.trackingPaused") private var trackingPaused = false
     @State private var confirming = false
     @State private var confirmTitle = ""
     @State private var confirmAction: (() -> Void)?
@@ -163,28 +162,11 @@ struct NativeSettingsView: View {
                     NativeInlineError(message: launchAtLoginError)
                 }
             }
-            panel {
-                Toggle("Pause activity tracking", isOn: $trackingPaused)
-                    .toggleStyle(.switch).controlSize(.small)
-                Text(
-                    "Firstlight records active time, the foreground app and how long your coding agents work, never window titles, prompts or file names. Tracking pauses while your Mac is idle or locked."
-                )
-                .font(.callout).foregroundStyle(.secondary)
-                Button(role: .destructive) {
-                    confirm("Permanently delete all activity history for your account?") { model.resetActivity() }
-                } label: {
-                    NativeAsyncButtonLabel(
-                        title: "Clear activity history…",
-                        loadingTitle: "Clearing…",
-                        isLoading: model.isRunning("clear-activity")
-                    )
-                }
-                .nativeSettingsActionButton()
-                .disabled(model.busy)
-            }
             // Coding agents are read like any other activity, so they live
             // here rather than behind a switch of their own: which ones this
-            // Mac has, and the one choice worth making about them.
+            // Mac has, and what is recorded of them. Recording has no switch
+            // either — there is no pause — and nothing that destroys data sits
+            // beside the theme: clearing the history is in Security.
             panel {
                 ForEach(agentUsage.toolStatuses()) { item in
                     HStack(spacing: 10) {
@@ -200,8 +182,10 @@ struct NativeSettingsView: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
-                Text("What friends see of this is in Privacy.")
-                    .font(.callout).foregroundStyle(.secondary)
+                Text(
+                    "Firstlight records active time, the foreground app and how long your coding agents work, never window titles, prompts or file names. Tracking pauses while your Mac is idle or locked. What friends see of this is in Privacy."
+                )
+                .font(.callout).foregroundStyle(.secondary)
                 if let error = agentUsage.status.lastError { NativeInlineError(message: error) }
             }
             Button("Quit Firstlight") { NSApp.terminate(nil) }
@@ -299,6 +283,19 @@ struct NativeSettingsView: View {
                 } else if model.sessions.isEmpty,
                           model.sessionsLoaded { Text("No other signed-in devices.").foregroundStyle(.secondary) }
             }
+            // Both actions that destroy data wait here at the bottom of
+            // Security, out of the way, and both ask before they run.
+            Button(role: .destructive) {
+                confirm("Permanently delete all activity history for your account?") { model.resetActivity() }
+            } label: {
+                NativeAsyncButtonLabel(
+                    title: "Clear activity history…",
+                    loadingTitle: "Clearing…",
+                    isLoading: model.isRunning("clear-activity")
+                )
+            }
+            .nativeSettingsActionButton()
+            .disabled(model.busy)
             if session.user?
                 .deleteSelfEnabled ==
                 true
@@ -311,9 +308,7 @@ struct NativeSettingsView: View {
             // one to begin with. All three are on screen rather than folded
             // into a pair of switches: the middle level is the whole point
             // of the design, and nobody discovers it by toggling. Presence
-            // is not here — the time board is what everyone came for, and
-            // the way to stop recording is "Pause activity tracking" in
-            // General.
+            // is not here — the time board is what everyone came for.
             let loading = model.sharing == nil
             panel {
                 sharingRow(
