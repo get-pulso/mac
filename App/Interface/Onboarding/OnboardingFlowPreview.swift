@@ -28,22 +28,25 @@ enum OnboardingFlowPreview {
         // A step to land on without a hand at the keyboard, once the window is up.
         if let raw = value("--flow-jump") {
             let step: OnboardingStage.Step? = switch raw {
-            case "name": .name
-            case "about": .about
+            case "day": .day
+            case "friends": .friends
+            case "profile": .profile
+            case "privacy": .privacy
+            case "invite": .invite
             case "handoff": .handoff
             default: nil
             }
             if let step {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     model.jump(to: step)
-                    // Filled chips, for a look at the profile lines without typing.
+                    // A filled form, for a look at the row without typing.
                     if args.contains("--flow-filled") {
-                        model.draft.bio = "Building a design tool at 21st.dev"
-                        model.draft.location = "San Francisco"
-                        model.draft.twitter = "alex"
-                        model.draft.telegram = "t.me/alex"
-                        model.draft.website = "21st.dev"
+                        model.flow.draft.firstName = "Alex"
+                        model.flow.draft.bio = "Building a design tool, mostly at night"
+                        model.flow.draft.location = "San Francisco"
                     }
+                    // A row of a showing chapter to land on.
+                    if let row = value("--flow-row").flatMap(Int.init) { model.stage.open(row: row) }
                 }
             }
         }
@@ -126,11 +129,11 @@ final class OnboardingFlowPreviewModel: ObservableObject {
     @Published private(set) var signingIn = false
     @Published private(set) var signInLabel = "Opening Google…"
     @Published private(set) var signInError: String?
-    @Published var name = ""
-    @Published var draft = ProfileDraft()
-    @Published private(set) var saving = false
-    @Published private(set) var saveError: String?
     @Published private(set) var panelOpen = false
+
+    /// The real flow, on a backend that answers from the fixtures: the same
+    /// chapters, saves that wait and fail on request, nothing sent anywhere.
+    private(set) lazy var flow = OnboardingFlow(backend: self.backend, stage: self.stage)
 
     var inviterName: String? {
         switch self.fixtures.invite {
@@ -150,10 +153,7 @@ final class OnboardingFlowPreviewModel: ObservableObject {
         self.signingIn = false
         self.signInLabel = "Opening Google…"
         self.signInError = nil
-        self.name = ""
-        self.draft = ProfileDraft()
-        self.saving = false
-        self.saveError = nil
+        self.flow.reset()
         self.closePanel()
         self.ensureMenuBar()
         self.controller.onClose = nil
@@ -171,12 +171,13 @@ final class OnboardingFlowPreviewModel: ObservableObject {
         self.controller.finishAnimation()
         switch step {
         case .welcome: self.start(replayIntro: false)
-        case .name:
-            self.name = ""
-            self.stage.advance(to: .name)
-        case .about:
-            if self.name.isEmpty { self.name = "Alex" }
-            self.stage.advance(to: .about)
+        case .day,
+             .friends,
+             .profile,
+             .privacy,
+             .invite:
+            if step > .profile, !self.flow.hasName { self.flow.draft.firstName = "Alex" }
+            self.stage.advance(to: step)
         case .handoff: self.handoff()
         }
     }
@@ -210,11 +211,6 @@ final class OnboardingFlowPreviewModel: ObservableObject {
         }
     }
 
-    func continueFromName() {
-        guard !self.name.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        self.stage.advance(to: .about)
-    }
-
     func locate() async -> String? {
         switch self.fixtures.location {
         case .system: return await OnboardingCityLookup.city()
@@ -224,22 +220,6 @@ final class OnboardingFlowPreviewModel: ObservableObject {
         case .denied:
             try? await Task.sleep(for: .seconds(1.2))
             return nil
-        }
-    }
-
-    func save() {
-        guard !self.saving else { return }
-        let ticket = self.generation
-        self.saveError = nil
-        self.saving = true
-        self.after(1.1) { [self] in
-            guard ticket == self.generation else { return }
-            self.saving = false
-            if self.fixtures.save == .error {
-                self.saveError = "Could not save your profile."
-            } else {
-                self.handoff()
-            }
         }
     }
 
@@ -305,14 +285,40 @@ final class OnboardingFlowPreviewModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { work() }
     }
 
+    private var backend: OnboardingBackend {
+        OnboardingBackend(
+            saveProfile: { [unowned self] _ in
+                try? await Task.sleep(for: .seconds(1.1))
+                if self.fixtures.save == .error { throw NativeError.message("Could not save your profile.") }
+            },
+            saveSharing: { [unowned self] _ in
+                try? await Task.sleep(for: .seconds(0.6))
+                if self.fixtures.save == .error { throw NativeError.message("Could not save your choice.") }
+            },
+            inviteLink: {
+                try? await Task.sleep(for: .seconds(0.5))
+                return "https://firstlight.sh/join/K7M2QX"
+            },
+            addByCode: { [unowned self] _ in
+                try? await Task.sleep(for: .seconds(0.9))
+                if self.fixtures.save == .error { throw NativeError.message("No one has that code.") }
+                return self.fixtures.invite == .none ? .requested("Anika") : .connected("Anika")
+            },
+            locate: { [unowned self] in await self.locate() },
+            uploadPhoto: { _ in
+                try? await Task.sleep(for: .seconds(1.0))
+                return nil
+            },
+            finish: { [unowned self] in self.handoff() }
+        )
+    }
+
     private func next() {
         if self.fixtures.profileFilled {
             self.handoff()
-        } else if self.fixtures.googleName {
-            self.name = "Alex"
-            self.stage.advance(to: .about)
         } else {
-            self.stage.advance(to: .name)
+            self.flow.draft.firstName = self.fixtures.googleName ? "Alex" : ""
+            self.stage.advance(to: .day)
         }
     }
 
@@ -403,19 +409,13 @@ private struct OnboardingFlowPreviewContent: View {
             switch self.stage.step {
             case .welcome:
                 self.welcomeEntry
-            case .name:
-                OnboardingNameStep(
-                    name: self.$model.name, avatarURL: nil, namespace: self.travel,
-                    onContinue: self.model.continueFromName
-                )
-                .transition(OnboardingStage.forward)
-            case .about:
-                OnboardingAboutStep(
-                    draft: self.$model.draft, name: self.model.name, avatarURL: nil, namespace: self.travel,
-                    busy: self.model.saving, error: self.model.saveError,
-                    locate: self.model.locate, onSubmit: self.model.save
-                )
-                .transition(OnboardingStage.forward)
+            case .day,
+                 .friends,
+                 .profile,
+                 .privacy,
+                 .invite:
+                OnboardingChaptersView(flow: self.model.flow)
+                    .transition(OnboardingStage.chapters)
             case .handoff:
                 Color.clear
             }
@@ -426,7 +426,6 @@ private struct OnboardingFlowPreviewContent: View {
     // MARK: Private
 
     @ObservedObject private var stage = OnboardingStage.shared
-    @Namespace private var travel
 
     /// The same column `LoginView.welcomeEntry` lays out: an error line when
     /// there is one, and the pill.
@@ -487,8 +486,14 @@ private struct OnboardingFlowPreviewPalette: View {
             Section("Jump to") {
                 HStack {
                     Button("Welcome") { self.model.jump(to: .welcome) }
-                    Button("Name") { self.model.jump(to: .name) }
-                    Button("About") { self.model.jump(to: .about) }
+                    Button("Day") { self.model.jump(to: .day) }
+                    Button("Friends") { self.model.jump(to: .friends) }
+                }
+                .controlSize(.small)
+                HStack {
+                    Button("Profile") { self.model.jump(to: .profile) }
+                    Button("Privacy") { self.model.jump(to: .privacy) }
+                    Button("Invite") { self.model.jump(to: .invite) }
                     Button("Handoff") { self.model.jump(to: .handoff) }
                 }
                 .controlSize(.small)
@@ -545,10 +550,12 @@ private struct OnboardingFlowPreviewPanel: View {
             self.row(name: "Max", location: "Berlin", line: "Shipping a game engine", time: "1h 02m")
             self.row(name: "Julia", location: nil, line: "In Xcode · 2 agents now", time: "41m")
             Divider().padding(.horizontal, 12).padding(.vertical, 4)
-            let bio = self.model.draft.bio.trimmingCharacters(in: .whitespacesAndNewlines)
+            let draft = self.model.flow.draft
+            let bio = draft.bio.trimmingCharacters(in: .whitespacesAndNewlines)
+            let city = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
             self.row(
-                name: self.model.name.isEmpty ? "You" : self.model.name,
-                location: OnboardingProfileChip.location.display(self.model.draft.location),
+                name: draft.firstName.isEmpty ? "You" : draft.firstName,
+                location: city.isEmpty ? nil : city,
                 line: bio.isEmpty ? "Add a few words about yourself" : bio, time: "0m"
             )
             Spacer(minLength: 8)

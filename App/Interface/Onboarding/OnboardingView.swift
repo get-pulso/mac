@@ -75,6 +75,10 @@ struct OnboardingView: View {
         .preferredColorScheme(.dark)
         .ignoresSafeArea()
         .task(id: session.pendingInvite) { await invite.load(session.pendingInvite) }
+        // Kept past Welcome: the last chapter says who is already waiting.
+        .onChange(of: self.invite.inviter, initial: true) { _, inviter in
+            if let inviter { self.stage.inviter = inviter }
+        }
     }
 
     // MARK: Private

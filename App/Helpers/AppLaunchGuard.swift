@@ -29,6 +29,13 @@ enum AppLaunchGuard {
         // instance of it: it gets its own lock and leaves the user's alone.
         if CommandLine.arguments.contains(where: { $0.hasPrefix("--preview-") }) {
             lockName = "sh.firstlight.mac.preview.lock"
+            // Two sessions previewing at once each name their own lock, so
+            // neither has to wait for, or close, the other's window.
+            let arguments = CommandLine.arguments
+            if let flag = arguments.firstIndex(of: "--preview-lock"), flag + 1 < arguments.count {
+                let name = arguments[flag + 1].filter { $0.isLetter || $0.isNumber || $0 == "-" }
+                if !name.isEmpty { lockName = "sh.firstlight.mac.preview.\(name).lock" }
+            }
         }
         #endif
         let path = FileManager.default.temporaryDirectory

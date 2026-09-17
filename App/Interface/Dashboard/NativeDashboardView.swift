@@ -3528,16 +3528,35 @@ struct FirstlightAvatar: View {
     /// photo — Clerk's blue one, Google's coloured squares — is shown as this
     /// too.
     private var monogram: some View {
-        ZStack {
+        let letter = AvatarMonogram.letter(for: self.name)
+        return ZStack {
             Color.primary.opacity(0.08)
-            if let letter = AvatarMonogram.letter(for: self.name) {
-                AvatarLetter(letter: letter, size: self.size * 0.44)
-            } else {
-                Image(systemName: "person.fill")
-                    .font(.system(size: self.size * 0.42, weight: .medium))
-                    .foregroundStyle(.secondary)
+            // A name being typed changes what stands here: the figure gives
+            // way to the first letter, one letter to another. The new mark
+            // comes up from below and pushes the old one out through the top,
+            // so the face is seen to become the person rather than being
+            // swapped under the reader. The portrait's own circle clips both.
+            ZStack {
+                if let letter {
+                    AvatarLetter(letter: letter, size: self.size * 0.44)
+                        .id(letter)
+                        .transition(self.markTransition)
+                } else {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: self.size * 0.42, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .transition(self.markTransition)
+                }
             }
+            .animation(self.reduceMotion ? .easeOut(duration: 0.12) : .spring(duration: 0.32, bounce: 0.3), value: letter)
         }
+    }
+
+    private var markTransition: AnyTransition {
+        .asymmetric(
+            insertion: .offset(y: self.size * 0.22).combined(with: .opacity).combined(with: .blur),
+            removal: .offset(y: -self.size * 0.22).combined(with: .opacity).combined(with: .blur)
+        )
     }
 
     /// The ring sits outside the portrait with a hairline of room, so it reads as
@@ -3603,7 +3622,7 @@ private struct FirstlightPresenceRing: Shape {
 /// agents is left to the chart further down the profile. The app's name stays
 /// plain text beside it and needs no separator — the capsule's edge is the
 /// separator.
-private struct NativePresenceLine: View {
+struct NativePresenceLine: View {
     // MARK: Internal
 
     /// The app in front. The caller has already decided it is recent.
@@ -3911,7 +3930,7 @@ struct AgentBucket: Identifiable, Equatable {
 /// figures, the chart at the period's own scale, and the tools. The period
 /// control at the top of the popover is the zoom; the Agents screen, which
 /// this same card opens and then heads, is the depth.
-private struct AgentsPanel: View {
+struct AgentsPanel: View {
     // MARK: Internal
 
     /// Nil, or without data, until the summary answers: the card then holds
@@ -4587,7 +4606,7 @@ private extension Array {
     subscript(safe index: Int) -> Element? { self.indices.contains(index) ? self[index] : nil }
 }
 
-private struct NativeTrackedAppIcon: View {
+struct NativeTrackedAppIcon: View {
     let url: String?
     /// Used to ask this Mac for the icon when the server has none: a mock
     /// person's apps, or a real one whose Mac has not uploaded the icon yet.

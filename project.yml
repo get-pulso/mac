@@ -52,11 +52,16 @@ targets:
           - Resources/Firstlight.entitlements
           - Resources/OnboardingShaders
           - Resources/BumpEmoji
+          - Resources/OnboardingFaces
       # Runtime Metal compilation; folder resource avoids an optional Metal-toolchain build step.
       - path: App/Resources/OnboardingShaders
         type: folder
         buildPhase: resources
       - path: App/Resources/BumpEmoji
+        type: folder
+        buildPhase: resources
+      # Portraits for the people the onboarding's previews show.
+      - path: App/Resources/OnboardingFaces
         type: folder
         buildPhase: resources
       # The onboarding light condenses into the original AppIcon mark, sampled

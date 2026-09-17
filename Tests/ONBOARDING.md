@@ -90,12 +90,49 @@ The desktop dimming is authored in real seconds: 0 → 72% over 0–1.1 s, resto
   An expanded form owns the whole window; the mark leaves the pane with the title.
 - Signed in from the onboarding window (`OnboardingWindowController.isPresented`),
   the window stays: the pill says `Signing in…` while `userInfo()` runs, and
-  `OnboardingFlow.continueAfterSignIn` picks what is still missing. No first name
-  from Google → the name step; an empty bio → the About step (the question is the
-  title, the placeholder an example, the field live once the step's 0.34 s spring
-  has arrived — focused 60 ms in, it froze the motion twice, 5–9 frames — a location and links
-  as chips that grow into fields where they stand, one button that says
-  `Skip for now` until something is typed). A filled profile skips both. The save
+  `OnboardingFlow.continueAfterSignIn` decides who is new. A name and a bio
+  already written → straight to the menu bar, as before. Anyone else gets the
+  chapters (`OnboardingStage.Step.chapters`, one frame: `OnboardingChaptersView`):
+  words on the left — a tag, a serif title, a line — the thing itself on the
+  right, and a footer that never leaves: Back, one dash per chapter, Close, and
+  the one violet button whose label morphs.
+  - **Your day** and **Friends** show. Their rows open one after another:
+    Continue opens the next row before it leaves the chapter, a 6 s clock does
+    the same and stops at the last row, the pointer over the rows holds it, and
+    the open row's surface is one shape that travels. Their right side is one
+    popover for both chapters (`OnboardingPanelPreview`, 350 × 440, never
+    rebuilt), drawn with the app's own views on fixtures
+    (`OnboardingTourFixtures`; portraits in `Resources/OnboardingFaces`, apps
+    taken from what this Mac has installed so every icon is real). Your day
+    walks in: the profile with the real `AgentsPanel`, then the Agents screen
+    with the real sections, by the panel's own push (16 pt in, 7 pt back,
+    `SocialStore.navigationTransition`, the card carried by matched geometry,
+    the title riding up into the material band). On arrival a drawn pointer
+    hovers three columns of the chart, driving the card's real `hovered`; then
+    the screen scrolls itself to the end once over 10 s. The reader's pointer
+    over the popover holds either; a scroll of theirs takes it over for good.
+    Friends walks back out to the list by the panel's pop: the Friends tab, the
+    YC group's tab and then the Leaderboard by the tab slide, and a bump —
+    `Alex says On fire` with the real `BumpEmojiBurst` — that comes over
+    whatever is up, as it does in the app, and then moves the chapter on by
+    itself. No notch island anywhere in onboarding.
+  - **Your profile**, **Your privacy** and **Your friends** ask, with every
+    control in sight. The row friends will see (`OnboardingYouCard`) stands over
+    the first two and is one view for both: between them it stays put and only
+    what it says changes. With no bio the name is level with the face; a line
+    arriving lifts it. Profile: the Google photo with Change…, name (the one
+    required field), About, City with Locate. Privacy: three answers
+    (`OnboardingSharePreset`: Everything / Totals only / Just my time) that set
+    both sharing channels at once; Settings still holds them apart. Friends: the
+    invite link with Copy, a friend's code with Add and the row that produces; who
+    came by an invitation is greeted by the inviter's face on top (`OnboardingStage.inviter`).
+    Its button says `Skip for now` until one of them is used.
+  Saves happen where they are asked: leaving the profile, leaving privacy
+  (`PATCH /api/user/sharing`). Close leaves for the menu bar, saving the
+  profile first if that is where it was pressed; with no name it lands on the
+  profile instead. `OnboardingBackend` is everything that leaves the window; a
+  rehearsal and the fixture preview swap it for one that answers from memory.
+  The profile save
   is the profile editor's (Clerk name, unsafe metadata, `syncNativeProfile`); then
   `WindowManager.handoffFromOnboarding`: the step rises out, the name fades, the
   header mark flies into the status item (`OnboardingHandoff`, 0.55 s, quintic),
@@ -207,7 +244,8 @@ a palette beside the window switches the invite (friend, group, none, expired,
 late), Google's name, the sign-in outcome, a filled profile, the location outcome
 (the real system prompt, or granted/denied without one), the save outcome and
 Reduce Motion; `Jump to` lands on a step. Unattended: `--flow-intro no
---flow-invite late --flow-jump about --flow-filled`. A preview process takes its
+--flow-invite late --flow-jump profile --flow-filled` (`day`, `friends`, `profile`,
+`privacy`, `invite`, `handoff`; `--flow-row 1` opens a row of a showing chapter). A preview process takes its
 own instance lock, so it runs beside the user's Firstlight; build it into another
 DerivedData (for example `/tmp/firstlight-derived-flow`) with the same signing
 flags and run the binary directly, never `open`.

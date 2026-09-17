@@ -157,6 +157,9 @@ struct AgentSpendCard: View {
     // MARK: Internal
 
     let month: NativeAgentSummary
+    /// A day named from outside, as if the pointer were on it: the onboarding
+    /// shows the card answering a pointer of its own.
+    var pointed: Int?
 
     var body: some View {
         let days = self.month.days ?? []
@@ -252,6 +255,7 @@ struct AgentSpendCard: View {
             .font(.system(size: 11)).foregroundStyle(Color.primary.opacity(0.55))
             .fixedSize(horizontal: false, vertical: true)
         }
+        .onChange(of: self.pointed) { _, index in self.hovered = index }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -300,6 +304,8 @@ struct AgentStreakSection: View {
     // MARK: Internal
 
     let streak: AgentAnalytics.Streak
+    /// A day named from outside, as if the pointer were on it.
+    var pointed: Int?
 
     var body: some View {
         let pointed = self.hovered.flatMap { index in
@@ -352,6 +358,7 @@ struct AgentStreakSection: View {
             .frame(height: 10)
             .accessibilityHidden(true)
         }
+        .onChange(of: self.pointed) { _, index in self.hovered = index }
         .accessibilityElement(children: .combine)
     }
 
