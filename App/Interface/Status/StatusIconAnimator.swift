@@ -237,11 +237,16 @@ final class StatusIconAnimator {
         let avatars = self.avatarImages
         let asTemplate = avatars.isEmpty
         self.renderedAppearance = self.menuBarAppearance
-        let width = StatusIcon.totalWidth(forAvatarCount: avatars.count, iconSize: Self.iconSize)
+        // The build on the local API wears the mark inverted; see `StatusIcon`.
+        let inverted = AppEnvironment.isLocalBackend
+        let width = StatusIcon.totalWidth(
+            forAvatarCount: avatars.count, iconSize: Self.iconSize, inverted: inverted
+        )
         let view = StatusIcon(
             avatars: avatars,
             iconSize: Self.iconSize,
-            markColor: asTemplate ? .black : self.menuBarMarkColor
+            markColor: asTemplate ? .black : self.menuBarMarkColor,
+            inverted: inverted
         )
         .frame(width: width, height: Self.iconSize)
         let renderer = ImageRenderer(content: view)
@@ -252,7 +257,7 @@ final class StatusIconAnimator {
         let label = if avatars.count == 1 {
             "Firstlight, 1 friend online"
         } else if avatars.isEmpty {
-            "Firstlight"
+            inverted ? "Firstlight, development build" : "Firstlight"
         } else {
             "Firstlight, \(avatars.count) friends online"
         }

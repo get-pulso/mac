@@ -6,14 +6,69 @@ struct StatusIcon: View {
     let avatars: [NSImage]
     let iconSize: CGFloat
     let markColor: Color
+    /// The development build's mark: the same mark cut out of a filled tile,
+    /// so the copy talking to the local API is told from the released one at
+    /// a glance when both sit in the menu bar. With friends online the tile
+    /// leads the avatars, which are otherwise the same row in both.
+    var inverted = false
 
     var body: some View {
         if self.avatars.isEmpty {
-            FirstlightMark()
-                .fill(self.markColor)
-                .frame(width: self.iconSize, height: self.iconSize)
-                .background(Color.clear)
+            if self.inverted {
+                self.invertedMark
+            } else {
+                FirstlightMark()
+                    .fill(self.markColor)
+                    .frame(width: self.iconSize, height: self.iconSize)
+                    .background(Color.clear)
+            }
+        } else if self.inverted {
+            HStack(spacing: Self.invertedGap) {
+                self.invertedMark
+                self.avatarRow
+            }
         } else {
+            self.avatarRow
+        }
+    }
+
+    static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat, inverted: Bool) -> CGFloat {
+        let row = self.totalWidth(forAvatarCount: count, iconSize: iconSize)
+        return inverted && count > 0 ? iconSize + self.invertedGap + row : row
+    }
+
+    static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat) -> CGFloat {
+        guard count > 0 else { return iconSize }
+        let avatarDiameter = iconSize * 0.9
+        let overlap = avatarDiameter * Self.avatarOverlapRatio
+        let count = min(count, 3)
+        return avatarDiameter + CGFloat(count - 1) * (avatarDiameter - overlap)
+    }
+
+    // MARK: Private
+
+    private static let invertedGap: CGFloat = 4
+
+    private static let avatarOverlapRatio: CGFloat = 0.32
+    private static let avatarBorderWidth: CGFloat = 0.5
+
+    /// The mark as a hole in a tile. Drawn with alpha alone, so it still
+    /// works as a template image and follows the bar's colour.
+    private var invertedMark: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: self.iconSize * 0.24, style: .continuous)
+                .fill(self.markColor)
+            FirstlightMark()
+                .fill(Color.black)
+                .frame(width: self.iconSize * 0.74, height: self.iconSize * 0.74)
+                .blendMode(.destinationOut)
+        }
+        .compositingGroup()
+        .frame(width: self.iconSize, height: self.iconSize)
+    }
+
+    private var avatarRow: some View {
+        Group {
             let avatarDiameter = self.iconSize * 0.9
             let overlap = avatarDiameter * Self.avatarOverlapRatio
             let count = min(self.avatars.count, 3)
@@ -38,19 +93,6 @@ struct StatusIcon: View {
             .background(Color.clear)
         }
     }
-
-    static func totalWidth(forAvatarCount count: Int, iconSize: CGFloat) -> CGFloat {
-        guard count > 0 else { return iconSize }
-        let avatarDiameter = iconSize * 0.9
-        let overlap = avatarDiameter * Self.avatarOverlapRatio
-        let count = min(count, 3)
-        return avatarDiameter + CGFloat(count - 1) * (avatarDiameter - overlap)
-    }
-
-    // MARK: Private
-
-    private static let avatarOverlapRatio: CGFloat = 0.32
-    private static let avatarBorderWidth: CGFloat = 0.5
 }
 
 /// The Firstlight mark: an eclipse crescent with seven rays, laid out in a 128x128 box.
