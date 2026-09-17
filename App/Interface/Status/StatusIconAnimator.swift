@@ -11,7 +11,9 @@ final class StatusIconAnimator {
 
     init(menu: StatusItemMenu) {
         self.menu = menu
+        Self.seedPreferredPosition()
         self.statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusBarItem.autosaveName = Self.autosaveName
         menu.attach(to: self.statusBarItem)
         self.observePresence()
         self.observeMenuBarAppearance()
@@ -65,6 +67,10 @@ final class StatusIconAnimator {
     private static let iconSize: CGFloat = 20
     private static let maxAvatars = 3
 
+    /// The name the bar files our place under. It never changes: rename it and
+    /// everyone who has dragged the icon somewhere loses where they put it.
+    private static let autosaveName = "Firstlight"
+
     private var statusBarItem: NSStatusItem
     private let menu: StatusItemMenu
     private var presenceCandidates: [StatusPresenceCandidate] = []
@@ -90,6 +96,25 @@ final class StatusIconAnimator {
 
     private var menuBarMarkColor: Color {
         self.menuBarAppearance == .darkAqua ? .white : .black
+    }
+
+    /// The bar reads a preferred position as points from the right edge, where
+    /// smaller is further right and 0 reads as no preference at all, and drops
+    /// the item into the nearest free slot. We ask for the far right once, so
+    /// that a bar too crowded to show everyone hides someone else's icon under
+    /// the app menus and never ours. The number belongs to the user after that:
+    /// the bar writes their own place back here whenever they ⌘-drag the icon.
+    private static func seedPreferredPosition() {
+        let defaults = UserDefaults.standard
+        let key = "NSStatusItem Preferred Position \(Self.autosaveName)"
+        guard defaults.object(forKey: key) == nil else { return }
+        // Until the item had a name of its own the bar filed it under AppKit's,
+        // so an icon already placed by hand stays exactly where it was placed.
+        if let placed = defaults.object(forKey: "NSStatusItem Preferred Position Item-0") {
+            defaults.set(placed, forKey: key)
+        } else {
+            defaults.set(1, forKey: key)
+        }
     }
 
     private func observePresence() {
