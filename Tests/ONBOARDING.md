@@ -95,7 +95,15 @@ The desktop dimming is authored in real seconds: 0 → 72% over 0–1.1 s, resto
   chapters (`OnboardingStage.Step.chapters`, one frame: `OnboardingChaptersView`):
   words on the left — a tag, a serif title, a line — the thing itself on the
   right, and a footer that never leaves: Back, one dash per chapter, Close, and
-  the one violet button whose label morphs.
+  the one violet button whose label morphs. Between chapters the frame turns
+  like a page: what leaves goes sideways (64 pt, `OnboardingStage.turningForward`,
+  well clear of the popover's own 16 pt push), since no words carry over from one
+  chapter to the next; what does carry over — the popover of the two that show,
+  the row friends will see behind the two that ask — takes no transition at all
+  and keeps its place. The vertical pair (24 pt, `OnboardingStage.forward`) is
+  left to what changes inside a chapter, like the form under that row. Welcome
+  leaves the same way a chapter does, and Reduce Motion replaces the travel in
+  all of it with a plain fade.
   - **Your day** and **Friends** show. Their rows open one after another:
     Continue opens the next row before it leaves the chapter, a 6 s clock does
     the same and stops at the last row, the pointer over the rows holds it, and

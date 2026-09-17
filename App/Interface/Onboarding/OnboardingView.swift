@@ -83,6 +83,7 @@ struct OnboardingView: View {
 
     // MARK: Private
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expandedForm = false
     @StateObject private var invite = WelcomeInvite()
     @ObservedObject private var session = NativeSession.shared
@@ -181,7 +182,9 @@ struct OnboardingView: View {
             .offset(y: -(compact ? 22 : 30))
             .opacity(expandedForm ? 0 : 1)
             .accessibilityHidden(expandedForm)
-            .transition(OnboardingStage.forward)
+            // Nothing of the welcome carries into the first chapter but the
+            // header, so it leaves the way a chapter does: sideways.
+            .transition(self.reduceMotion ? .opacity : OnboardingStage.turningForward)
             }
 
             if stage.isWelcome {

@@ -55,12 +55,33 @@ final class OnboardingStage: ObservableObject {
         insertion: .offset(y: -24).combined(with: .opacity).combined(with: .blur),
         removal: .offset(y: 24).combined(with: .opacity).combined(with: .blur)
     )
-    /// The chapters as a whole: they arrive the way a step does, and at the end
-    /// they simply go. What happens next — the mark leaving for the menu bar —
-    /// is the event, and a second flourish under it only competes with it.
-    static let chapters: AnyTransition = .asymmetric(
-        insertion: forward, removal: .opacity.animation(.easeOut(duration: 0.18))
+    /// How far a page turns. Well clear of the 16 pt the popover pushes its
+    /// own screens by, so the window changing chapter is never read as the
+    /// popover moving between screens inside one.
+    static let pageTurn: CGFloat = 64
+    /// The frame changing chapter: the page turns sideways, forward the way
+    /// Continue reads and back the other way. Only what leaves takes this —
+    /// what stays between two chapters, the popover and the row friends will
+    /// see, keeps its place and changes where it stands. Reduce Motion takes
+    /// the travel away and leaves the change itself.
+    static let turningForward: AnyTransition = .asymmetric(
+        insertion: .offset(x: pageTurn).combined(with: .opacity).combined(with: .blur),
+        removal: .offset(x: -pageTurn).combined(with: .opacity).combined(with: .blur)
     )
+    static let turningBackward: AnyTransition = .asymmetric(
+        insertion: .offset(x: -pageTurn).combined(with: .opacity).combined(with: .blur),
+        removal: .offset(x: pageTurn).combined(with: .opacity).combined(with: .blur)
+    )
+    /// The chapters as a whole: they arrive the way one chapter gives way to
+    /// the next, and at the end they simply go. What happens next — the mark
+    /// leaving for the menu bar — is the event, and a second flourish under
+    /// it only competes with it.
+    static func chapters(reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: reduceMotion ? .opacity : turningForward,
+            removal: .opacity.animation(.easeOut(duration: 0.18))
+        )
+    }
     static let stepDuration = 0.34
     static let stepAnimation: Animation = .spring(duration: stepDuration, bounce: 0)
 
@@ -79,7 +100,15 @@ final class OnboardingStage: ObservableObject {
 
     var isWelcome: Bool { self.step == .welcome }
 
+    /// What changes inside a chapter's own frame, which rises and falls.
     var transition: AnyTransition { self.movingForward ? Self.forward : Self.backward }
+
+    /// The frame itself changing chapter, which turns sideways — or, where
+    /// the system asks for less motion, gives way without travelling at all.
+    func turn(reduceMotion: Bool) -> AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return self.movingForward ? Self.turningForward : Self.turningBackward
+    }
 
     /// A step that has just come in has arrived once its spring is done.
     static func arrival() async { try? await Task.sleep(for: .seconds(self.stepDuration)) }

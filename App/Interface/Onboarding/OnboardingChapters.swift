@@ -77,8 +77,13 @@ struct OnboardingChapterCopy {
 /// The frame every chapter shares, under the header that never moves: words
 /// on the left, the thing itself on the right, and one footer that stays put
 /// from the first chapter to the last. Only what differs between two
-/// chapters leaves and arrives; the footer's button keeps its place and
-/// morphs its label, and the dashes slide rather than being redrawn.
+/// chapters leaves and arrives, and it leaves sideways: the words never
+/// carry over from one chapter to the next, so the frame turns like a page
+/// rather than scrolling. What does carry over — the popover of the showing
+/// chapters, the row friends will see behind the two that ask — takes no
+/// transition at all: it keeps its place and changes where it stands. The
+/// footer's button keeps its place and morphs its label, and the dashes
+/// slide rather than being redrawn.
 struct OnboardingChaptersView: View {
     // MARK: Internal
 
@@ -98,7 +103,7 @@ struct OnboardingChaptersView: View {
                         if let copy = OnboardingChapterCopy.copy(for: step) {
                             self.words(copy, step: step, compact: compact)
                                 .id(step)
-                                .transition(self.stage.transition)
+                                .transition(self.stage.turn(reduceMotion: self.reduceMotion))
                         }
                     }
                     .frame(width: left, alignment: .leading)
@@ -107,7 +112,7 @@ struct OnboardingChaptersView: View {
                     ZStack {
                         self.thing(for: step)
                             .id(Self.thingIdentity(step))
-                            .transition(self.stage.transition)
+                            .transition(self.stage.turn(reduceMotion: self.reduceMotion))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
