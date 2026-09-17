@@ -209,6 +209,7 @@ private struct OnboardingProfileForm: View {
                 // rim, and the whole face is the button.
                 Button(action: self.flow.choosePhoto) {
                     OnboardingFace(avatarURL: self.flow.avatarURL, name: self.flow.name, size: 44)
+                        .avatarUploadRing(isUploading: self.flow.uploadingPhoto, failed: self.flow.error != nil)
                         .overlay(alignment: .bottomTrailing) {
                             if missing {
                                 Image(systemName: "plus")

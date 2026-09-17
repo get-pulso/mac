@@ -941,7 +941,12 @@ struct NativeDashboardView: View {
             }
         }
         .animation(.easeOut(duration: 0.22), value: listPhase == .initial)
-        .onChange(of: listPhase == .initial, initial: true) { _, loading in self.rowsRevealed = !loading }
+        .animation(.easeOut(duration: 0.22), value: listPhase == .failedEmpty)
+        // The rows come up the same way whatever stood in their place: the
+        // skeleton, or a failure that Try again has just got past.
+        .onChange(of: listPhase == .initial || listPhase == .failedEmpty, initial: true) { _, covered in
+            self.rowsRevealed = !covered
+        }
     }
 
     /// The list could not be loaded and there is nothing older to show. One
@@ -957,8 +962,11 @@ struct NativeDashboardView: View {
             detail: offline ? nil : failure?.message,
             actionTitle: "Try again",
             action: { Task { await self.store.refresh(force: true) } },
+            actionSymbol: "arrow.clockwise",
+            isWorking: self.retrying,
             minHeight: NativeLayout.peopleListHeight
         )
+        .transition(.opacity.combined(with: .scale(scale: 0.97)))
     }
 
     /// The list loaded and is empty. One line and the way out of it: for
@@ -1266,8 +1274,16 @@ struct NativeDashboardView: View {
         self.session.user?.primaryEmailAddress?.emailAddress ?? "your current account"
     }
 
+    /// Trying again after a failure with nothing to show. The message holds
+    /// its place while the request is out, instead of giving way to a skeleton
+    /// that would give way to the rows: one change, not two.
+    private var retrying: Bool {
+        self.store.loading && self.store.listFailure != nil && self.store.people.isEmpty
+    }
+
     private var listPhase: ContentLoadPhase {
-        ContentLoadPhase.resolve(
+        if self.retrying { return .failedEmpty }
+        return ContentLoadPhase.resolve(
             isLoading: self.store.loading && !self.store.hasLoadedCurrentList,
             hasContent: !self.store.people.isEmpty,
             hasError: self.store.listFailure != nil
@@ -1779,7 +1795,7 @@ struct NativeDashboardView: View {
     ) -> some View {
         Button { if !answered { action() } } label: {
             ZStack {
-                MorphingLabel(text: title, reduceMotion: self.reduceMotion)
+                NativeMorphText(title)
                     .opacity(isLoading ? 0 : 1)
                 if isLoading {
                     ProgressView().controlSize(.small).tint(.white).transition(.opacity)
@@ -2401,22 +2417,31 @@ struct NativeDashboardView: View {
         let appName = self.profileText(person.activeApp(at: now)?.name)
         let live = person.liveAgents(at: now)
 
+        let present = appName != nil || live != nil
         // Presence alone may have no activity to show; keep the bio in that case.
-        if appName != nil || live != nil {
-            // The same phrase the profile carries, from the same view.
-            NativePresenceLine(appName: appName, live: live)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else if let bio = self.profileText(person.bio) {
-            Text(bio)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .help(bio)
-        } else {
-            Color.clear.frame(maxWidth: .infinity)
+        ZStack(alignment: .leading) {
+            if present {
+                // The same phrase the profile carries, from the same view.
+                NativePresenceLine(appName: appName, live: live)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+            } else if let bio = self.profileText(person.bio) {
+                Text(bio)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(bio)
+                    .transition(.opacity)
+            } else {
+                Color.clear.frame(maxWidth: .infinity)
+            }
         }
+        // Somebody sitting down or getting up: the one line hands over to the
+        // other rather than being swapped under the reader. The timeline this
+        // is drawn on carries no animation of its own.
+        .animation(self.reduceMotion ? nil : .easeOut(duration: 0.2), value: present)
     }
 
     /// A place every row carries, whether or not the person did anything this
@@ -3408,46 +3433,6 @@ private struct NativeCapsuleGlassButtons: ViewModifier {
     }
 }
 
-/// A label that changes by the word. Words the old and new text share keep
-/// their identity and slide to their new place; the words that differ leave
-/// upwards and arrive from below. "Join group" becomes "Join Runway" by
-/// moving one word, the way Family turns Continue into Confirm.
-private struct MorphingLabel: View {
-    // MARK: Internal
-
-    let text: String
-    var reduceMotion = false
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(self.words, id: \.id) { word in
-                Text(word.text)
-                    .fixedSize()
-                    .transition(self.reduceMotion ? .opacity : .asymmetric(
-                        insertion: .offset(y: 8).combined(with: .opacity),
-                        removal: .offset(y: -8).combined(with: .opacity)
-                    ))
-            }
-        }
-        .animation(self.reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.35, bounce: 0.1), value: self.text)
-        .accessibilityLabel(self.text)
-    }
-
-    // MARK: Private
-
-    /// Words identified by their text and how many times it has already
-    /// appeared, so a repeated word still gets an identity of its own.
-    private var words: [(id: String, text: String)] {
-        var seen: [String: Int] = [:]
-        return self.text.split(separator: " ").map { part in
-            let word = String(part)
-            let count = seen[word, default: 0]
-            seen[word] = count + 1
-            return (id: "\(word)#\(count)", text: word)
-        }
-    }
-}
-
 extension AnyTransition {
     /// A request row accepted: it slides off to the left, where the list is
     /// (Back goes that way), rather than fading on the spot.
@@ -3741,9 +3726,8 @@ struct NativePresenceLine: View {
     var body: some View {
         HStack(spacing: 7) {
             if let appName {
-                Text("In \(appName)")
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                // "In" holds still; only the app's name changes under it.
+                NativeMorphText("In \(appName)")
                     .help(appName)
             }
             if let live {

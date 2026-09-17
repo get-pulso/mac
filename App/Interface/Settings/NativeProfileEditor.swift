@@ -67,13 +67,10 @@ struct NativeProfileEditor: View {
     private var photo: some View {
         HStack(spacing: 12) {
             FirstlightAvatar(url: session.user?.imageUrl, name: model.firstName, size: 44)
-                .overlay {
-                    if model.isRunning("upload-photo") {
-                        Circle().fill(.regularMaterial)
-                        NativeProgress(label: "Uploading photo")
-                    }
-                }
                 .overlay { NativeSettingsAvatarBorder() }
+                // The upload is drawn on the face it is for; the button
+                // beside it says the word.
+                .avatarUploadRing(isUploading: model.isRunning("upload-photo"), failed: model.error != nil)
             Button(action: model.choosePhoto) {
                 NativeAsyncButtonLabel(
                     title: "Change photo…",

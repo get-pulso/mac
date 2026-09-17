@@ -460,6 +460,12 @@ struct NativeStateMessage: View {
     var actionTitle: String?
     var action: (() -> Void)?
     var actionMorph: NativeTrayMorph?
+    /// A mark for the action, turning while the action runs: the button that
+    /// was pressed is the one that shows the work.
+    var actionSymbol: String?
+    /// The action is running. The message stays where it is, quieter, until
+    /// there is something to put in its place.
+    var isWorking = false
     /// The space the message is centred in. Lists pass the height their rows
     /// would take, so the message sits in the middle of it, not at the top.
     var minHeight: CGFloat = 150
@@ -478,6 +484,7 @@ struct NativeStateMessage: View {
             Text(title).font(.system(size: 14, weight: .semibold))
                 .multilineTextAlignment(.center)
                 .help(detail ?? "")
+                .opacity(isWorking ? 0.45 : 1)
             if let message {
                 Text(message).font(.callout).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
@@ -485,8 +492,10 @@ struct NativeStateMessage: View {
             }
             if let actionTitle, let action {
                 actionButton(actionTitle, action: action).padding(.top, 14)
+                    .allowsHitTesting(!isWorking)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: isWorking)
         .frame(maxWidth: 250)
         .padding(24)
         .frame(maxWidth: .infinity, minHeight: minHeight)
@@ -495,6 +504,8 @@ struct NativeStateMessage: View {
 
     // MARK: Private
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// The same capsule the popover's other standalone buttons wear.
     @ViewBuilder private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
         if let actionMorph {
@@ -502,11 +513,23 @@ struct NativeStateMessage: View {
                 Text(title).font(.system(size: 13, weight: .medium))
             }
         } else if #available(macOS 26.0, *) {
-            Button(title, action: action)
+            Button(action: action) { actionLabel(title) }
                 .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.regular)
         } else {
-            Button(title, action: action)
+            Button(action: action) { actionLabel(title) }
                 .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.regular)
+        }
+    }
+
+    private func actionLabel(_ title: String) -> some View {
+        HStack(spacing: 5) {
+            if let actionSymbol {
+                Image(systemName: actionSymbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .symbolEffect(.rotate, options: .repeat(.continuous), isActive: isWorking && !reduceMotion)
+                    .accessibilityHidden(true)
+            }
+            Text(title)
         }
     }
 }

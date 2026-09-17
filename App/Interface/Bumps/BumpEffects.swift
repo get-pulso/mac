@@ -558,18 +558,29 @@ private struct BumpSurface: ViewModifier {
                             }
                         }
                         HStack(spacing: 5) {
-                            if !cooling { bumpIcon }
-                            // Only the digit that changed rolls; the words
-                            // around it hold still.
-                            Text(cooling ? cooldownTitle : "Bump")
-                                .contentTransition(cooling ? .numericText(countsDown: true) : .identity)
-                                .animation(
-                                    cooling ? .snappy(duration: 0.22, extraBounce: 0) : nil,
-                                    value: cooldownTitle
-                                )
+                            if !cooling { bumpIcon.transition(.scale(scale: 0.5).combined(with: .opacity)) }
+                            ZStack {
+                                if cooling {
+                                    // Only the digit that changed rolls; the
+                                    // words around it hold still.
+                                    Text(cooldownTitle)
+                                        .contentTransition(.numericText(countsDown: true))
+                                        .animation(.snappy(duration: 0.22, extraBounce: 0), value: cooldownTitle)
+                                        .transition(.scale(scale: 0.95).combined(with: .opacity))
+                                } else {
+                                    Text("Bump").transition(.scale(scale: 0.95).combined(with: .opacity))
+                                }
+                            }
                         }
                     }
                     .font(.system(size: 12, weight: .medium)).monospacedDigit().frame(minHeight: 22)
+                    // The wait ending is the button waking: the countdown
+                    // lets go, the capsule draws in round the word and the
+                    // mark comes back, in one sprung move rather than a cut.
+                    .animation(
+                        systemReduced || effects.reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.25),
+                        value: cooling
+                    )
                 }
                 .disabled(effects.sending || cooling)
                 .help(cooling ? accessibleCountdown : "Send a little encouragement")
@@ -628,7 +639,7 @@ private struct BumpSurface: ViewModifier {
 
     private var trayChoices: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-            ForEach(BumpEffect.allCases) { effect in
+            ForEach(Array(BumpEffect.allCases.enumerated()), id: \.element.id) { index, effect in
                 BumpGlassButton(prominent: false) {
                     withAnimation(.easeOut(duration: 0.18)) { effects.trayOpen = false }
                     effects.schedule(effect, systemReduced: systemReduced)
@@ -637,6 +648,7 @@ private struct BumpSurface: ViewModifier {
                         .font(.system(size: 12, weight: .medium)).frame(maxWidth: .infinity).frame(height: 31)
                 }
                 .accessibilityIdentifier("bump-\(effect.rawValue)")
+                .modifier(BumpChoiceWake(index: index, still: systemReduced || effects.reduceMotion))
                 .onHover { hovered in
                     if hovered { Task { await BumpEmojiLibrary.shared.prepare(effect) } }
                 }
@@ -680,4 +692,28 @@ struct BumpGlassButton<Label: View>: View {
                 .buttonBorderShape(circular ? .circle : .capsule).controlSize(.regular)
         }
     }
+}
+
+/// The choices wake one after another as the tray opens, a beat behind the
+/// surface they sit on: the tray arrives, then what it offers.
+private struct BumpChoiceWake: ViewModifier {
+    // MARK: Internal
+
+    let index: Int
+    let still: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(self.awake || self.still ? 1 : 0)
+            .scaleEffect(self.awake || self.still ? 1 : 0.92)
+            .onAppear {
+                withAnimation(.spring(duration: 0.35, bounce: 0.25).delay(0.08 + Double(self.index) * 0.04)) {
+                    self.awake = true
+                }
+            }
+    }
+
+    // MARK: Private
+
+    @State private var awake = false
 }
