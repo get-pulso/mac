@@ -146,13 +146,30 @@ private struct CopyLabelStateModifier: ViewModifier {
 /// fast requests never flash a loader. Pulse is disabled with Reduce Motion.
 struct NativeSkeletonShape: View {
     var width: CGFloat?
-    var height: CGFloat
+    /// No height fills the space the shape is given, which is how it stands
+    /// behind a line of text.
+    var height: CGFloat?
     var radius: CGFloat = 4
 
     var body: some View {
         RoundedRectangle(cornerRadius: radius, style: .continuous)
             .fill(Color.primary.opacity(0.10))
             .frame(width: width, height: height)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A bar standing in for a line of text, drawn on a line of the current font
+/// rather than on a number: it takes the room the sentence will take, and the
+/// rows that line their columns up on the first line of a field agree with the
+/// text about where that line is.
+struct NativeSkeletonTextLine: View {
+    var width: CGFloat
+
+    var body: some View {
+        Text(verbatim: " ")
+            .frame(width: width)
+            .background { NativeSkeletonShape().padding(.vertical, 2) }
             .accessibilityHidden(true)
     }
 }
