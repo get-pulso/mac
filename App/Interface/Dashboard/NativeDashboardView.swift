@@ -4661,11 +4661,7 @@ extension NativeDashboardView {
                 NativeTrackedAppIcon(url: app.icon_url, bundleIdentifier: bundle, size: 56)
                     .matchedGeometryEffect(id: self.appMorphID(bundle), in: self.appMorph)
                     .zIndex(1)
-                Text(app.name).font(.system(size: 20, weight: .semibold)).lineLimit(1)
-                    .matchedGeometryEffect(
-                        id: self.appMorphID(bundle, element: "name"),
-                        in: self.appMorph, properties: .position
-                    )
+                self.appName(app.name, bundle: bundle)
                 if let category = app.category {
                     Text(category).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
@@ -4673,14 +4669,16 @@ extension NativeDashboardView {
                     Text(description).font(.system(size: 12)).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 }
-                // The address it goes to, not the word "Website".
-                if let raw = app.website_url, let url = URL(string: raw), url.scheme == "https" {
-                    Link(destination: url) { Label(url.displayAddress, systemImage: "arrow.up.right").lineLimit(1) }
-                        .font(.system(size: 11)).buttonStyle(.bordered).buttonBorderShape(.capsule)
-                        .help(url.absoluteString)
+                // The same pill a person's site gets, so the two are pressed
+                // the same way and say the address the same way.
+                if let link = ProfileLink(.website, app.website_url), link.url.scheme == "https" {
+                    self.profileLinkPill(link)
                 }
             }
             .frame(maxWidth: .infinity).padding(.top, 30).padding(.bottom, 4)
+            // Over the rows coming up to it while the name holds the row of
+            // buttons, as on a profile.
+            .zIndex(self.profileTitleProgress > 0 ? 2 : 0)
 
             if let source = page?.source {
                 HStack(spacing: 8) {
@@ -4752,6 +4750,31 @@ extension NativeDashboardView {
             Color.clear.frame(height: 1)
                 .task(id: key) { await self.appDirectory.load(bundle, period: self.store.period) }
         }
+    }
+
+    /// The app's name, handed to the row of buttons the way a profile's name
+    /// is. See `profileName`: the same text with the same order of modifiers,
+    /// flying in from the app's row instead of a person's.
+    private func appName(_ name: String, bundle: String) -> some View {
+        let progress = self.profileTitleProgress
+        return Text(name)
+            .font(.system(size: 20, weight: .semibold))
+            .lineLimit(1)
+            .matchedGeometryEffect(
+                id: self.appMorphID(bundle, element: "name"),
+                in: self.appMorph, properties: .position
+            )
+            .scaleEffect(1 - CGFloat(progress) * (1 - Self.profileTitleRowScale))
+            .background(alignment: .center) { profileNameBand }
+            .offset(y: self.profileTitleStick)
+            .frame(maxWidth: .infinity)
+            .background(GeometryReader { geometry in
+                Color.clear.preference(
+                    key: ProfileTitleCenter.self,
+                    value: geometry.frame(in: .named(NativeLayout.popoverScrollSpace)).midY
+                )
+            })
+            .zIndex(progress > 0 ? 2 : 0)
     }
 
     private func appPersonRow(_ person: NativePerson, bundle: String) -> some View {
