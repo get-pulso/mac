@@ -72,16 +72,6 @@ final class OnboardingStage: ObservableObject {
         insertion: .offset(x: -pageTurn).combined(with: .opacity).combined(with: .blur),
         removal: .offset(x: pageTurn).combined(with: .opacity).combined(with: .blur)
     )
-    /// The chapters as a whole: they arrive the way one chapter gives way to
-    /// the next, and at the end they simply go. What happens next — the mark
-    /// leaving for the menu bar — is the event, and a second flourish under
-    /// it only competes with it.
-    static func chapters(reduceMotion: Bool) -> AnyTransition {
-        .asymmetric(
-            insertion: reduceMotion ? .opacity : turningForward,
-            removal: .opacity.animation(.easeOut(duration: 0.18))
-        )
-    }
     static let stepDuration = 0.34
     static let stepAnimation: Animation = .spring(duration: stepDuration, bounce: 0)
 
@@ -103,15 +93,26 @@ final class OnboardingStage: ObservableObject {
     /// What changes inside a chapter's own frame, which rises and falls.
     var transition: AnyTransition { self.movingForward ? Self.forward : Self.backward }
 
+    /// The chapters as a whole: they arrive the way one chapter gives way to
+    /// the next, and at the end they simply go. What happens next — the mark
+    /// leaving for the menu bar — is the event, and a second flourish under
+    /// it only competes with it.
+    static func chapters(reduceMotion: Bool) -> AnyTransition {
+        .asymmetric(
+            insertion: reduceMotion ? .opacity : self.turningForward,
+            removal: .opacity.animation(.easeOut(duration: 0.18))
+        )
+    }
+
+    /// A step that has just come in has arrived once its spring is done.
+    static func arrival() async { try? await Task.sleep(for: .seconds(self.stepDuration)) }
+
     /// The frame itself changing chapter, which turns sideways — or, where
     /// the system asks for less motion, gives way without travelling at all.
     func turn(reduceMotion: Bool) -> AnyTransition {
         guard !reduceMotion else { return .opacity }
         return self.movingForward ? Self.turningForward : Self.turningBackward
     }
-
-    /// A step that has just come in has arrived once its spring is done.
-    static func arrival() async { try? await Task.sleep(for: .seconds(self.stepDuration)) }
 
     func advance(to step: Step, row: Int = 0) {
         guard self.step != step else { return }

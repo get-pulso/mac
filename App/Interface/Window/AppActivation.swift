@@ -18,11 +18,6 @@ enum AppActivation {
     /// window made key while another app is still active is key only within
     /// this app, and the typing goes elsewhere.
     static func bringForward(_ window: NSWindow) {
-        // A request from the menu bar belongs to the desktop the person is
-        // using, even if this window was last open in a different Space.
-        if !window.styleMask.contains(.fullScreen), !window.collectionBehavior.contains(.canJoinAllSpaces) {
-            window.collectionBehavior.insert(.moveToActiveSpace)
-        }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         guard !window.isKeyWindow else { return }

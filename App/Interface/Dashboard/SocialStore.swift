@@ -189,6 +189,13 @@ final class SocialStore: ObservableObject {
     /// list moves to it under the veil. Cleared when the tray closes.
     @Published private(set) var joinedGroupID: String?
 
+    /// Who a just-sent request is waiting on, for as long as the card it was
+    /// sent from stands and says so. A request is the one answer the tray can
+    /// give in place: nothing was gained to show, so nothing is opened and
+    /// nothing is covered — the button that sent it turns, and Home comes
+    /// back once that has been read.
+    @Published private(set) var sentRequestName: String?
+
     @Published var screen: Screen = .list
     @Published var tab = "friends"
     @Published var showsApps = false
@@ -740,6 +747,7 @@ final class SocialStore: ObservableObject {
         self.trayLoading = false
         self.cardLoading = false
         self.error = nil
+        self.sentRequestName = nil
         withAnimation(Self.screenTransition) {
             self.tray = nil
             self.joinedGroupID = nil
@@ -1092,12 +1100,12 @@ final class SocialStore: ObservableObject {
                         tray: .connected(known ?? "your friend")
                     )
                 } else {
-                    // A request is not a place to stand: it goes to where
-                    // sent requests wait, and the tray is back where another
-                    // one can be sent.
-                    self.finishInvite(
-                        notice: "Request sent to \(Self.firstName(name ?? result.targetUser?.name ?? "them"))",
-                        tray: .home
+                    // A request is not a place to stand, but it is not a
+                    // reason to leave either: the button that sent it says so
+                    // where it stands, over the card it was sent from, and
+                    // Home comes back on its own once that has been read.
+                    self.answerRequestInPlace(
+                        name: Self.firstName(name ?? result.targetUser?.name ?? "them")
                     )
                 }
                 try? await self.loadRequests()
@@ -1132,6 +1140,7 @@ final class SocialStore: ObservableObject {
     func clearQuery() {
         self.inviteLookup?.cancel()
         self.inviterLookup?.cancel()
+        self.sentRequestName = nil
         self.query = ""
         self.inviteInfo = nil
         self.inviter = nil
@@ -1317,6 +1326,31 @@ final class SocialStore: ObservableObject {
         case "friends": 0
         case "global": self.groups.count + 1
         default: self.groups.firstIndex(where: { $0.id == id }).map { $0 + 1 } ?? 0
+        }
+    }
+
+    /// The reply to a sent request, given where the request was made. The
+    /// capsule keeps its place and turns from the ask into the answer, the
+    /// card under it stays and says what it is now waiting for, and only then
+    /// does the tray fall back to Home. Nothing is said over the list, which
+    /// has nothing new in it: a request is not a friend yet.
+    ///
+    /// With no tray open there is nothing to answer in, and the capsule under
+    /// the header carries the words instead, as it always has.
+    private func answerRequestInPlace(name: String) {
+        guard self.tray != nil else {
+            self.finishInvite(notice: "Request sent to \(name)", tray: .home)
+            return
+        }
+        NativeSession.shared.pendingInvite = nil
+        withAnimation(Self.settle) { self.sentRequestName = name }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(1200))
+            // Closing the tray, or sending again, has already answered this.
+            guard self.sentRequestName == name else { return }
+            self.trayHistory.removeAll()
+            self.present(.home, direction: .back)
+            self.clearQuery()
         }
     }
 

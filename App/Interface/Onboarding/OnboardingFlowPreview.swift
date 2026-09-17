@@ -415,7 +415,7 @@ private struct OnboardingFlowPreviewContent: View {
                  .privacy,
                  .invite:
                 OnboardingChaptersView(flow: self.model.flow)
-                    .transition(OnboardingStage.chapters(reduceMotion: self.reduceMotion))
+                    .transition(OnboardingStage.chapters)
             case .handoff:
                 Color.clear
             }
@@ -425,7 +425,6 @@ private struct OnboardingFlowPreviewContent: View {
 
     // MARK: Private
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var stage = OnboardingStage.shared
 
     /// The same column `LoginView.welcomeEntry` lays out: an error line when

@@ -153,7 +153,6 @@ final class LoginViewModel: ObservableObject {
 
     func oauth(_ provider: String) {
         self.run {
-            try OnboardingWindowController.shared.prepareForAuthentication()
             let result = try await Clerk.shared.auth.signInWithOAuth(provider: OAuthProvider(strategy: provider))
             switch result {
             case let .signIn(value): try await self.advance(value)

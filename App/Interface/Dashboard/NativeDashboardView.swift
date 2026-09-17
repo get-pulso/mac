@@ -1529,9 +1529,13 @@ struct NativeDashboardView: View {
         // A friend's code is not an invitation to send: the card says so and
         // the button opens their profile instead of asking again.
         let friendID: String? = inviter?.inviterId.flatMap { self.store.directFriendIDs.contains($0) ? $0 : nil }
+        // Once the request is away the code has nothing left to say, and the
+        // line under the name says what the card is now: a wait, not an ask.
+        let sent = self.store.sentRequestName != nil
         self.candidateCard(
             title: isOwn ? "That's your own code" : inviter?.inviterName ?? (waiting ? nil : "Someone on Firstlight"),
-            subtitle: friendID != nil ? "Already friends" : "Friend code \(self.displayFriendCode(code))",
+            subtitle: sent ? "Waiting for their answer"
+                : friendID != nil ? "Already friends" : "Friend code \(self.displayFriendCode(code))",
             aboutID: isOwn ? nil : inviter?.inviterId
         ) {
             ZStack {
@@ -1568,10 +1572,17 @@ struct NativeDashboardView: View {
                 self.store.openFriend(friendID)
             }
         } else {
+            // The ask becomes the answer in the capsule that sent it, and only
+            // the verb is replaced: whoever it went to was already named here
+            // and stays, so the words say what changed and nothing else.
+            // `MorphingLabel` keeps a word by its text, so the name holds its
+            // place while the verb above it is swapped.
             self.trayActionButton(
-                "Add \(inviter.map { Self.firstName(of: $0.inviterName) } ?? "friend")",
+                sent ? "Asked \(self.store.sentRequestName ?? "them")"
+                    : "Add \(inviter.map { Self.firstName(of: $0.inviterName) } ?? "friend")",
                 isLoading: self.store.isRunning("accept-invite"),
-                enabled: !isOwn
+                enabled: !isOwn,
+                answered: sent
             ) { self.store.addFromQuery() }
         }
     }
@@ -1707,13 +1718,19 @@ struct NativeDashboardView: View {
 
     /// The tray's one action. Its words change by the word that changed;
     /// while it works, the words give way to a spinner and the width holds.
+    ///
+    /// `answered` is the same capsule after it has been pressed and answered:
+    /// it keeps its place and its size, takes the colour of a thing that is
+    /// done, and stops being pressable without dimming, since it is not
+    /// unavailable — it is finished.
     private func trayActionButton(
         _ title: String,
         isLoading: Bool,
         enabled: Bool = true,
+        answered: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button { if !answered { action() } } label: {
             ZStack {
                 MorphingLabel(text: title, reduceMotion: self.reduceMotion)
                     .opacity(isLoading ? 0 : 1)
@@ -1728,10 +1745,16 @@ struct NativeDashboardView: View {
         }
         .modifier(NativeCapsuleProminentButton())
         .controlSize(.large)
-        .tint(.firstlight)
-        .disabled(!enabled || self.store.busy)
-        .opacity(enabled ? 1 : 0.45)
+        .tint(answered ? .green : .firstlight)
+        // An answered capsule is never disabled: the work it started may still
+        // be finishing, and a disabled prominent button drains its own fill,
+        // which would take the colour the answer is made of. It refuses the
+        // press instead, and the Return key with it.
+        .disabled(!answered && (!enabled || self.store.busy))
+        .opacity(enabled || answered ? 1 : 0.45)
+        .allowsHitTesting(!answered)
         .animation(.easeOut(duration: 0.25), value: enabled)
+        .animation(self.reduceMotion ? nil : .easeOut(duration: 0.3), value: answered)
         .keyboardShortcut(.defaultAction)
     }
 
