@@ -148,6 +148,7 @@ work_dir=$(mktemp -d "/tmp/firstlight-release.${release_version}.XXXXXX")
 remote_appcast="$work_dir/current-appcast.xml"
 
 cleanup() {
+    rm -f -- "$work_dir/sparkle-private-key"
     if [[ "${FIRSTLIGHT_KEEP_RELEASE_WORKDIR:-0}" == "1" ]]; then
         print "Kept release workspace: $work_dir"
     else
@@ -285,6 +286,24 @@ else
     [[ "$built_version" == "$release_version" ]] || fail "Archived version is $built_version, expected $release_version"
     [[ "$built_build" == "$release_build" ]] || fail "Archived build is $built_build, expected $release_build"
 
+    # Archive alone does not re-sign Sparkle's embedded helpers. This pipeline
+    # packages the archive directly, so sign them inside out before notarizing.
+    # https://sparkle-project.org/documentation/sandboxing/#code-signing
+    sparkle_framework="$app_path/Contents/Frameworks/Sparkle.framework"
+    sparkle_version="$sparkle_framework/Versions/B"
+    for helper in \
+        "$sparkle_version/XPCServices/Installer.xpc" \
+        "$sparkle_version/Autoupdate" \
+        "$sparkle_version/Updater.app"; do
+        [[ -e "$helper" ]] || fail "Missing Sparkle helper: $helper"
+        codesign --force --sign "$signing_identity" --options runtime --timestamp "$helper"
+    done
+    codesign --force --sign "$signing_identity" --options runtime --timestamp \
+        --preserve-metadata=entitlements "$sparkle_version/XPCServices/Downloader.xpc"
+    codesign --force --sign "$signing_identity" --options runtime --timestamp "$sparkle_framework"
+    codesign --force --sign "$signing_identity" --options runtime --timestamp \
+        --preserve-metadata=identifier,entitlements "$app_path"
+
     codesign --verify --deep --strict --verbose=2 "$app_path"
     signing_details=$(codesign -dv --verbose=4 "$app_path" 2>&1)
     grep -F "Authority=$signing_identity" <<<"$signing_details" >/dev/null || \
@@ -306,7 +325,8 @@ else
     # The DMG carries the same stapled app in a styled Finder window. Sparkle
     # keeps updating from the ZIP; the DMG is what the website hands out.
     release_dmg="$work_dir/${release_version}.dmg"
-    "$script_dir/build-dmg.sh" "$app_path" "$release_dmg" --sign
+    dmg_builder=${FIRSTLIGHT_DMG_BUILDER:-$script_dir/build-dmg.sh}
+    "$dmg_builder" "$app_path" "$release_dmg" --sign
     xcrun notarytool submit "$release_dmg" --keychain-profile "$notary_profile" --wait
     xcrun stapler staple "$release_dmg"
     xcrun stapler validate "$release_dmg"
