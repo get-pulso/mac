@@ -77,9 +77,19 @@ final class StatusIconAnimator {
 
     @Dependency(\.network) private var network
 
-    private var menuBarMarkColor: Color {
+    /// The appearance the icon was last drawn for. Setting the button's image
+    /// makes the status item redraw its replicants, and that redraw reports an
+    /// appearance change of its own; without this, the two feed each other at
+    /// the display rate and the main thread never comes back.
+    private var renderedAppearance: NSAppearance.Name?
+
+    private var menuBarAppearance: NSAppearance.Name {
         let appearance = self.statusBarItem.button?.effectiveAppearance ?? NSApp.effectiveAppearance
-        return appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
+        return appearance.bestMatch(from: [.aqua, .darkAqua]) ?? .aqua
+    }
+
+    private var menuBarMarkColor: Color {
+        self.menuBarAppearance == .darkAqua ? .white : .black
     }
 
     private func observePresence() {
@@ -185,7 +195,15 @@ final class StatusIconAnimator {
     private func observeMenuBarAppearance() {
         self.appearanceObservation = self.statusBarItem.button?
             .observe(\.effectiveAppearance) { [weak self] _, _ in
-                Task { @MainActor in self?.renderIcon() }
+                Task { @MainActor in
+                    guard let self else { return }
+                    // A template mark follows the bar by itself; only the
+                    // avatar row is drawn in the bar's colour, and only a
+                    // colour that actually flipped is worth drawing again.
+                    guard !self.avatarImages.isEmpty, self.menuBarAppearance != self.renderedAppearance
+                    else { return }
+                    self.renderIcon()
+                }
             }
     }
 
@@ -211,6 +229,7 @@ final class StatusIconAnimator {
     private func renderIcon() {
         let avatars = self.avatarImages
         let asTemplate = avatars.isEmpty
+        self.renderedAppearance = self.menuBarAppearance
         let width = StatusIcon.totalWidth(forAvatarCount: avatars.count, iconSize: Self.iconSize)
         let view = StatusIcon(
             avatars: avatars,

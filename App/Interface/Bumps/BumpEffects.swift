@@ -477,6 +477,7 @@ private struct BumpSurface: ViewModifier {
                 Color(nsColor: .windowBackgroundColor).opacity(0.64)
                     .onTapGesture { closeTray() }
                     .accessibilityLabel("Dismiss bump choices")
+    @State private var trayGeneration = 0
                     .transition(.opacity.animation(.easeOut(duration: 0.14)))
             }
             NativeTrayMorphContainer {
@@ -501,6 +502,17 @@ private struct BumpSurface: ViewModifier {
             ),
             value: effects.trayOpen
         )
+            // Rebuilt once the tray has folded back into the button: the
+            // glass container keeps the tray's footprint after it closes
+            // and swallows the wheel over that part of the profile.
+            .id(trayGeneration)
+        }
+        .onChange(of: effects.trayOpen) { _, open in
+            guard !open else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(320))
+                if !effects.trayOpen { trayGeneration += 1 }
+            }
     }
 
     private var buttonMorph: NativeTrayMorph {

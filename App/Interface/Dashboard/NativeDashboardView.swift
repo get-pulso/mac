@@ -1294,8 +1294,12 @@ struct NativeDashboardView: View {
         NativeTrayMorph(
             id: origin == .footerInvite ? "invite-footer" : "invite-empty",
             namespace: self.inviteMorph,
-            isExpanded: self.store.tray != nil && self.store.trayOrigin == origin,
-            usesGlass: origin == .footerInvite
+            isExpanded: self.store.tray != nil && (origin == .footerInvite || self.store.trayOrigin == origin),
+            // No glass on this tray: a glass surface around a focused field
+            // sends SwiftUI's key-view loop rebuild into a cycle and the app
+            // hangs at 100% CPU (2026-09-16, reproduced with the focus
+            // deferred too). The bump tray has no field and keeps its glass.
+            usesGlass: false
         )
     }
 
@@ -1665,7 +1669,17 @@ struct NativeDashboardView: View {
         )
         .shadow(color: .black.opacity(0.16), radius: 18, y: 6)
         .onChange(of: tray, initial: true) { previous, value in
-            if value == .home { self.inviteFieldFocused = true }
+            // The field takes the keyboard once the tray has finished growing
+            // out of the button. Asked for in the same frame as the glass
+            // surface's matched-geometry transition, focus makes SwiftUI
+            // rebuild its key-view loop without end and the app hangs.
+            if value == .home {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(320))
+                    guard self.store.tray == .home else { return }
+                    self.inviteFieldFocused = true
+                }
+            }
             if !value.isConnected { self.resultCheckShown = false }
             if case .joined = value {} else {
                 self.joinedCheckShown = false
