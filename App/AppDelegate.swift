@@ -14,6 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // equivalents are how ⌘V reaches the field in the popover.
         MainMenu.install()
         #if DEBUG
+        if UpdateDiagnostics.showIfRequested() { return }
         if OnboardingPreview.showIfRequested() { return }
         if NotchIslandPreview.showIfRequested() { return }
         PerformanceHUD.restore()
@@ -68,6 +69,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        #if DEBUG
+        if UpdateDiagnostics.showIfRequested() { return true }
+        #endif
         self.windowManager.show()
         return true
     }

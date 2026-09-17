@@ -1,15 +1,14 @@
-import Alamofire
 import AppKit
 import Combine
 import Foundation
 import Sparkle
 
-final class Updater {
+final class Updater: ObservableObject {
     // MARK: Lifecycle
 
     init() {
         self.sparkleDelegate = SparkleDelegate()
-        self.driver = Driver(hostBundle: .main, delegate: self.sparkleDelegate)
+        self.driver = UpdateDriver()
         self.updater = SPUUpdater(
             hostBundle: .main,
             applicationBundle: .main,
@@ -20,6 +19,8 @@ final class Updater {
         // Keep this assignment for existing installs: older Firstlight versions persisted
         // automatic downloads as disabled in Sparkle's user defaults.
         self.updater.automaticallyDownloadsUpdates = true
+        self.observation = self.driver.state.sink { [weak self] in self?.state = $0 }
+        self.driver.focus = { Task { @MainActor in SettingsWindowController.shared.show(section: .about) } }
     }
 
     // MARK: Internal
@@ -29,68 +30,60 @@ final class Updater {
         case newVersionAvailable
     }
 
+    @Published private(set) var state: UpdateDriver.State = .idle
+
+    var canCancel: Bool { self.driver.cancellation != nil }
+
     var statusPublisher: AnyPublisher<Status, Never> {
-        self.driver.pendingUpdateSubject
-            .map {
-                $0 == nil ? .upToDate : .newVersionAvailable
+        self.driver.state
+            .map { state in
+                switch state {
+                case .available,
+                     .ready: .newVersionAvailable
+                default: .upToDate
+                }
             }
             .eraseToAnyPublisher()
     }
 
     func start() {
-        try? self.updater.start()
+        guard !self.started else { return }
+        do {
+            try self.updater.start()
+            self.started = true
+        } catch {
+            self.driver.fail(error)
+        }
     }
 
     func installUpdate() {
-        self.driver.pendingUpdateSubject.value?.actionCallback(.install)
+        self.driver.install()
     }
 
-    func checkForUpdates() { self.updater.checkForUpdates() }
+    func checkForUpdates() {
+        self.start()
+        guard self.started else { return }
+        self.updater.checkForUpdates()
+    }
+
+    func cancel() { self.driver.cancel() }
+
+    func allowAutomaticChecks(_ allowed: Bool) { self.driver.allowAutomaticChecks(allowed) }
 
     func skipUpdate() {
-        self.driver.pendingUpdateSubject.value?.actionCallback(.skip)
+        self.driver.skip()
     }
 
     // MARK: Private
 
     private let sparkleDelegate: SparkleDelegate
-    private let driver: Driver
+    private let driver: UpdateDriver
     private let updater: SPUUpdater
+    private var observation: AnyCancellable?
+    private var started = false
 }
 
-private final class Driver: SPUStandardUserDriver, SPUStandardUserDriverDelegate {
-    struct PendingUpdate {
-        let appcast: SUAppcastItem
-        let actionCallback: (SPUUserUpdateChoice) -> Void
-    }
-
-    let pendingUpdateSubject = CurrentValueSubject<PendingUpdate?, Never>(nil)
-
-    override func showUpdateFound(
-        with appcastItem: SUAppcastItem,
-        state: SPUUserUpdateState,
-        reply: @escaping (SPUUserUpdateChoice) -> Void
-    ) {
-        let update = PendingUpdate(appcast: appcastItem, actionCallback: reply)
-        self.pendingUpdateSubject.send(update)
-    }
-
-    override func showUpdaterError(_ error: any Error, acknowledgement: @escaping () -> Void) {
-        super.showUpdaterError(error, acknowledgement: acknowledgement)
-        self.pendingUpdateSubject.send(nil)
-    }
-
-    override func dismissUpdateInstallation() {
-        super.dismissUpdateInstallation()
-        self.pendingUpdateSubject.send(nil)
-    }
-}
-
-private final class SparkleDelegate: NSObject, SPUStandardUserDriverDelegate, SPUUpdaterDelegate {
-    var supportsGentleScheduledUpdateReminders: Bool {
-        true
-    }
-
+private final class SparkleDelegate: NSObject, SPUUpdaterDelegate {
     func updater(
         _ updater: SPUUpdater,
         shouldPostponeRelaunchForUpdate item: SUAppcastItem,

@@ -460,7 +460,7 @@ struct OnboardingFlowSteps: View {
         ZStack {
             if self.stage.step.isChapter {
                 OnboardingChaptersView(flow: self.flow)
-                    .transition(OnboardingStage.chapters)
+                    .transition(OnboardingStage.chapters(reduceMotion: self.reduceMotion))
             }
         }
         .animation(OnboardingStage.stepAnimation, value: self.stage.step.isChapter)
@@ -468,6 +468,7 @@ struct OnboardingFlowSteps: View {
 
     // MARK: Private
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject private var flow = OnboardingFlow.shared
     @ObservedObject private var stage = OnboardingStage.shared
 }
