@@ -293,12 +293,9 @@ enum OnboardingProfileChip: String, CaseIterable, Identifiable {
         guard !value.isEmpty else { return nil }
         switch self {
         case .location: return value
-        case .x: return ProfileDraft.socialHandle(value, hosts: ["x.com", "twitter.com"]).map { "@\($0)" }
-        case .telegram: return ProfileDraft.socialHandle(value, hosts: ["t.me", "telegram.me"]).map { "@\($0)" }
-        case .website:
-            guard let url = ProfileDraft.websiteURL(value), let host = url.host else { return nil }
-            let path = url.path == "/" ? "" : url.path
-            return (host.hasPrefix("www.") ? String(host.dropFirst(4)) : host) + path
+        case .x: return ProfileLink(.x, value)?.label
+        case .telegram: return ProfileLink(.telegram, value)?.label
+        case .website: return ProfileLink(.website, value)?.label
         }
     }
 }

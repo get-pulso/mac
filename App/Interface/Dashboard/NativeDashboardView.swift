@@ -2367,23 +2367,8 @@ struct NativeDashboardView: View {
             }
 
             // Links sit with the person, right under who they are, as small
-            // pills in one row; the numbers below are about what they did.
-            if [person.website, person.twitter, person.telegram].contains(where: { $0?.isEmpty == false }) {
-                HStack(spacing: 6) {
-                    profileLinkPill("Website", assetImage: "ProfileWebsite", raw: person.website)
-                    profileLinkPill(
-                        "X",
-                        assetImage: "ProfileX",
-                        raw: person.twitter.map { $0.hasPrefix("https://") ? $0 : "https://x.com/\($0)" }
-                    )
-                    profileLinkPill(
-                        "Telegram",
-                        assetImage: "ProfileTelegram",
-                        raw: person.telegram.map { $0.hasPrefix("https://") ? $0 : "https://t.me/\($0)" }
-                    )
-                }
-                .frame(maxWidth: .infinity)
-            }
+            // pills; the numbers below are about what they did.
+            self.profileLinks(website: person.website, twitter: person.twitter, telegram: person.telegram)
 
             // What is happening this minute, in one line of words: the app in
             // front, and the agent writing, with how long it has been at it.
@@ -2516,58 +2501,47 @@ struct NativeDashboardView: View {
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    @ViewBuilder private func profileLinkPill(_ label: String, assetImage: String, raw: String?) -> some View {
-        if let raw, let url = URL(string: raw), ["https", "http"].contains(url.scheme ?? "") {
-            Link(destination: url) {
-                HStack(spacing: 5) {
-                    Image(assetImage)
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 12, height: 12)
-                    Text(label).font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(Color.primary.opacity(0.055), in: Capsule())
-                .contentShape(Capsule())
+    /// Where to find a person. Each pill says the address itself — the site,
+    /// the @handle — because the glyph already names the service, and
+    /// "Website" or "X" told nobody where the link goes. A pill that does not
+    /// fit the row starts a second one rather than cutting a handle short.
+    @ViewBuilder private func profileLinks(website: String?, twitter: String?, telegram: String?) -> some View {
+        let links = [ProfileLink(.website, website), ProfileLink(.x, twitter), ProfileLink(.telegram, telegram)]
+            .compactMap { $0 }
+        if !links.isEmpty {
+            NativeCenteredFlow(spacing: 6) {
+                ForEach(links, id: \.kind) { self.profileLinkPill($0) }
             }
-            // A link is pressed the way a group tab is pressed: the fill firms
-            // up under the pointer and the pill gives a little on mouse down.
-            // The same style, so the two never drift apart.
-            .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion, shape: AnyShape(Capsule())))
-            .help(label)
-            .accessibilityLabel("Open \(label)")
+            .frame(maxWidth: .infinity)
         }
     }
 
-    @ViewBuilder private func profileLink(_ label: String, assetImage: String, raw: String?) -> some View {
-        if let raw, let url = URL(string: raw), ["https", "http"].contains(url.scheme ?? "") {
-            Link(destination: url) {
-                VStack(spacing: 7) {
-                    Image(assetImage)
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 18, height: 18)
-                        .foregroundStyle(.primary)
-                    Text(label).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 70)
-                .contentShape(Rectangle())
-                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-                }
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity)
-            .help(label)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Open \(label)")
+    private func profileLinkPill(_ link: ProfileLink) -> some View {
+        let (assetImage, spoken) = switch link.kind {
+        case .website: ("ProfileWebsite", link.label)
+        case .x: ("ProfileX", "\(link.label) on X")
+        case .telegram: ("ProfileTelegram", "\(link.label) on Telegram")
         }
+        return Link(destination: link.url) {
+            HStack(spacing: 5) {
+                Image(assetImage)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 12, height: 12)
+                Text(link.label).font(.system(size: 11, weight: .medium)).lineLimit(1)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Color.primary.opacity(0.055), in: Capsule())
+            .contentShape(Capsule())
+        }
+        // A link is pressed the way a group tab is pressed: the fill firms
+        // up under the pointer and the pill gives a little on mouse down.
+        // The same style, so the two never drift apart.
+        .buttonStyle(NativeTabButtonStyle(reduceMotion: self.reduceMotion, shape: AnyShape(Capsule())))
+        .help(link.url.absoluteString)
+        .accessibilityLabel("Open \(spoken)")
     }
 
     private func trackedAppRow(
@@ -2674,22 +2648,7 @@ struct NativeDashboardView: View {
             }
             // The same pills the profile wears, in the same row under the
             // name: one person, one way of showing where to find them.
-            if [card.website, card.twitter, card.telegram].contains(where: { $0?.isEmpty == false }) {
-                HStack(spacing: 6) {
-                    self.profileLinkPill("Website", assetImage: "ProfileWebsite", raw: card.website)
-                    self.profileLinkPill(
-                        "X",
-                        assetImage: "ProfileX",
-                        raw: card.twitter.map { $0.hasPrefix("https://") ? $0 : "https://x.com/\($0)" }
-                    )
-                    self.profileLinkPill(
-                        "Telegram",
-                        assetImage: "ProfileTelegram",
-                        raw: card.telegram.map { $0.hasPrefix("https://") ? $0 : "https://t.me/\($0)" }
-                    )
-                }
-                .frame(maxWidth: .infinity)
-            }
+            self.profileLinks(website: card.website, twitter: card.twitter, telegram: card.telegram)
             if card.isBare {
                 Text("They haven't written anything about themselves yet.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -4499,9 +4458,11 @@ extension NativeDashboardView {
                     Text(description).font(.system(size: 12)).foregroundStyle(.secondary)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 }
+                // The address it goes to, not the word "Website".
                 if let raw = app.website_url, let url = URL(string: raw), url.scheme == "https" {
-                    Link(destination: url) { Label("Website", systemImage: "arrow.up.right") }
+                    Link(destination: url) { Label(url.displayAddress, systemImage: "arrow.up.right").lineLimit(1) }
                         .font(.system(size: 11)).buttonStyle(.bordered).buttonBorderShape(.capsule)
+                        .help(url.absoluteString)
                 }
             }
             .frame(maxWidth: .infinity).padding(.top, 30).padding(.bottom, 4)

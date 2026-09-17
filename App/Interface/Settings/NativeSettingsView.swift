@@ -106,9 +106,9 @@ struct NativeSettingsView: View {
             }.padding(.vertical, 6)
             if [\NativeProfileAbout.website, \.twitter, \.telegram].contains(where: { !model.aboutText($0).isEmpty }) {
                 panel {
-                    profileLink("Website", raw: model.aboutText(\.website))
-                    profileLink("X", raw: model.aboutText(\.twitter), host: "x.com")
-                    profileLink("Telegram", raw: model.aboutText(\.telegram), host: "t.me")
+                    profileLink("Website", .website, raw: model.aboutText(\.website))
+                    profileLink("X", .x, raw: model.aboutText(\.twitter))
+                    profileLink("Telegram", .telegram, raw: model.aboutText(\.telegram))
                 }
             }
             if let error = model.aboutError { NativeInlineError(message: error) { Task { await model.loadAbout() } } }
@@ -534,18 +534,13 @@ struct NativeSettingsView: View {
         }
     }
 
-    @ViewBuilder private func profileLink(_ title: String, raw: String, host: String? = nil) -> some View {
+    /// The row keeps the service as its title; the link itself says the
+    /// address, the same words the pill on the profile says.
+    @ViewBuilder private func profileLink(_ title: String, _ kind: ProfileLink.Kind, raw: String) -> some View {
         if !raw.isEmpty {
-            let url = host.flatMap { host in
-                ProfileDraft.socialHandle(
-                    raw,
-                    hosts: host == "x.com" ? ["x.com", "twitter.com"] : ["t.me", "telegram.me"]
-                )
-                .flatMap { URL(string: "https://\(host)/\($0)") }
-            } ?? (host == nil ? ProfileDraft.websiteURL(raw) : nil)
             LabeledContent(title) {
-                if let url {
-                    Link(host == nil ? url.host ?? raw : "@\(url.lastPathComponent)", destination: url).lineLimit(1)
+                if let link = ProfileLink(kind, raw) {
+                    Link(link.label, destination: link.url).lineLimit(1)
                 } else { Text(raw).foregroundStyle(.secondary).lineLimit(1) }
             }
         }

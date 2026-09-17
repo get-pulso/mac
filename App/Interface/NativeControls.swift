@@ -760,3 +760,63 @@ struct NativeLocalClock: View {
         return formatter
     }
 }
+
+/// Small pieces set like words in a centered paragraph: what does not fit the
+/// line starts the next one instead of being cut short. Only a piece wider
+/// than the whole width is offered that width, to shorten itself.
+struct NativeCenteredFlow: Layout {
+    // MARK: Internal
+
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
+        let lines = self.lines(subviews, width: proposal.width ?? .infinity)
+        return CGSize(
+            width: lines.map(\.width).max() ?? 0,
+            height: lines.map(\.height).reduce(0, +) + self.spacing * CGFloat(max(lines.count - 1, 0))
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
+        var y = bounds.minY
+        for line in self.lines(subviews, width: bounds.width) {
+            var x = bounds.minX + (bounds.width - line.width) / 2
+            for (index, size) in line.pieces {
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y + (line.height - size.height) / 2),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + self.spacing
+            }
+            y += line.height + self.spacing
+        }
+    }
+
+    // MARK: Private
+
+    private struct Line {
+        var pieces: [(index: Int, size: CGSize)] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func lines(_ subviews: Subviews, width: CGFloat) -> [Line] {
+        var lines: [Line] = []
+        var line = Line()
+        for index in subviews.indices {
+            var size = subviews[index].sizeThatFits(.unspecified)
+            if size.width > width { size = subviews[index].sizeThatFits(ProposedViewSize(width: width, height: nil)) }
+            if !line.pieces.isEmpty, line.width + self.spacing + size.width > width {
+                lines.append(line)
+                line = Line()
+            }
+            // The same sum the test above made, so placing, which lays the
+            // lines out again in the width measured here, breaks them alike.
+            line.width = line.pieces.isEmpty ? size.width : line.width + self.spacing + size.width
+            line.height = max(line.height, size.height)
+            line.pieces.append((index, size))
+        }
+        if !line.pieces.isEmpty { lines.append(line) }
+        return lines
+    }
+}

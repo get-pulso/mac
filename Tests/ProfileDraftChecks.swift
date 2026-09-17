@@ -44,6 +44,21 @@ struct ProfileDraftChecks {
         var edited = saved
         edited.bio = "An unsaved draft."
         expect(saved.normalized != edited.normalized)
-        print("Profile draft checks passed: \(checks); multiline text, limits, normalization, invalid links and dirty comparison.")
+        for (raw, label) in [("firstlight.sh", "firstlight.sh"), ("https://www.21st.dev/", "21st.dev"),
+                             ("https://github.com/serafimcloud/", "github.com/serafimcloud")] {
+            expect(ProfileLink(.website, raw)?.label == label)
+        }
+        expect(ProfileLink(.website, "firstlight.sh")?.url.absoluteString == "https://firstlight.sh")
+        for raw in ["serafimcloud", "@serafimcloud", "https://twitter.com/serafimcloud"] {
+            expect(ProfileLink(.x, raw)?.label == "@serafimcloud")
+            expect(ProfileLink(.x, raw)?.url.absoluteString == "https://x.com/serafimcloud")
+        }
+        expect(ProfileLink(.telegram, "t.me/serafim")?.url.absoluteString == "https://t.me/serafim")
+        for (kind, raw) in [(ProfileLink.Kind.website, nil), (.website, ""), (.x, " "), (.x, "https://x.com/user/status/123"),
+                            (.telegram, "https://evil.example/serafim")] {
+            expect(ProfileLink(kind, raw) == nil)
+        }
+        expect(URL(string: "https://developer.apple.com/xcode/")?.displayAddress == "developer.apple.com/xcode")
+        print("Profile draft checks passed: \(checks); multiline text, limits, normalization, invalid links, link labels and dirty comparison.")
     }
 }

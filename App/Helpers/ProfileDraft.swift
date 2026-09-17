@@ -5,6 +5,8 @@ struct ProfileDraft: Equatable {
 
     static let bioLimit = 280
     static let locationLimit = 120
+    static let xHosts: Set<String> = ["x.com", "twitter.com"]
+    static let telegramHosts: Set<String> = ["t.me", "telegram.me"]
 
     var firstName = ""
     var lastName = ""
@@ -24,9 +26,9 @@ struct ProfileDraft: Equatable {
         result.bio = self.bio.trimmingCharacters(in: .whitespacesAndNewlines)
         result.website = Self.websiteURL(self.website)?.absoluteString ?? self.website
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        result.twitter = Self.socialHandle(self.twitter, hosts: ["x.com", "twitter.com"]) ?? self.twitter
+        result.twitter = Self.socialHandle(self.twitter, hosts: Self.xHosts) ?? self.twitter
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        result.telegram = Self.socialHandle(self.telegram, hosts: ["t.me", "telegram.me"]) ?? self.telegram
+        result.telegram = Self.socialHandle(self.telegram, hosts: Self.telegramHosts) ?? self.telegram
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return result
     }
@@ -40,10 +42,10 @@ struct ProfileDraft: Equatable {
         if !self.website.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, Self.websiteURL(self.website) == nil {
             errors[.website] = "Enter a website, like example.com or https://example.com."
         }
-        if Self.socialHandle(self.twitter, hosts: ["x.com", "twitter.com"]) == nil {
+        if Self.socialHandle(self.twitter, hosts: Self.xHosts) == nil {
             errors[.twitter] = "Enter a username or an X profile link."
         }
-        if Self.socialHandle(self.telegram, hosts: ["t.me", "telegram.me"]) == nil {
+        if Self.socialHandle(self.telegram, hosts: Self.telegramHosts) == nil {
             errors[.telegram] = "Enter a username or a Telegram profile link."
         }
         return errors
@@ -75,5 +77,51 @@ struct ProfileDraft: Equatable {
                   (65 ... 90).contains($0) || (97 ... 122).contains($0) || (48 ... 57).contains($0) || $0 == 95 })
         else { return nil }
         return value
+    }
+}
+
+/// A link on a profile, said the way it is found: a site by its address, X
+/// and Telegram by the handle with its @. Never by the name of the service —
+/// the glyph beside it already says which one it is.
+struct ProfileLink: Equatable {
+    // MARK: Lifecycle
+
+    /// Nil for an empty field, and for a value the profile editor would not
+    /// take: with no address to say there is no link to show.
+    init?(_ kind: Kind, _ raw: String?) {
+        guard let raw else { return nil }
+        self.kind = kind
+        switch kind {
+        case .website:
+            guard let url = ProfileDraft.websiteURL(raw) else { return nil }
+            self.url = url
+            self.label = url.displayAddress
+        case .x,
+             .telegram:
+            let (host, hosts) = kind == .x ? ("x.com", ProfileDraft.xHosts) : ("t.me", ProfileDraft.telegramHosts)
+            guard let handle = ProfileDraft.socialHandle(raw, hosts: hosts), !handle.isEmpty,
+                  let url = URL(string: "https://\(host)/\(handle)") else { return nil }
+            self.url = url
+            self.label = "@\(handle)"
+        }
+    }
+
+    // MARK: Internal
+
+    enum Kind: Hashable { case website, x, telegram }
+
+    let kind: Kind
+    let url: URL
+    let label: String
+}
+
+extension URL {
+    /// Host and path without what every address has: the scheme, a leading
+    /// www and the lone slash of a front page. `https://www.figma.com/design/`
+    /// reads `figma.com/design`.
+    var displayAddress: String {
+        guard let host, !host.isEmpty else { return self.absoluteString }
+        let bare = host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        return self.path == "/" ? bare : bare + self.path
     }
 }
